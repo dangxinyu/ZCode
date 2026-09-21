@@ -13,8 +13,8 @@ export const INDICATOR_SHADOW_INSET = { top: 6, right: 8, bottom: 12, left: 8 } 
 
 function indicatorCopy(locale: Locale): { text: string; width: number } {
   return locale === "zh-CN"
-    ? { text: "ZCode 正在操作电脑", width: 234 }
-    : { text: "ZCode is controlling your computer", width: 308 };
+    ? { text: "Don’t-think 正在操作电脑", width: 280 }
+    : { text: "Don’t-think is controlling your computer", width: 356 };
 }
 
 export function indicatorWindowSize(locale: Locale): { width: number; height: number } {

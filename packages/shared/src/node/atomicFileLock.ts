@@ -211,7 +211,7 @@ export async function acquireFileLock(
         currentOwners.length !== 1 ||
         currentOwners[0] !== `owner-${token}.json`
       ) {
-        throw Object.assign(new Error("ZCode file lock ownership changed during acquire"), {
+        throw Object.assign(new Error("Don’t-think file lock ownership changed during acquire"), {
           code: "EEXIST",
         });
       }

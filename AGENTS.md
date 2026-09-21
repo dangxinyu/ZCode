@@ -34,6 +34,7 @@
 - `apps/zcode-cli`：Agent CLI 与运行时。
 - `CONTEXT.md`：插件商店领域词汇；修改相关 UI 前阅读。
 - `DESIGN.md`：UI 设计规范；修改 UI 前阅读。
+- `ARCHITECTURE.md`：架构与改动索引；定位"改什么去哪"时先查。
 
 ## 实现与验证
 

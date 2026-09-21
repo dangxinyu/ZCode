@@ -1,8 +1,8 @@
 {
   "name": "@zcode/desktop",
   "private": true,
-  "description": "ZCode Desktop App",
-  "author": "ZCode",
+  "description": "Don’t-think Desktop App",
+  "author": "Don’t-think",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
@@ -82,5 +82,5 @@
     "typescript": "^6.0.2",
     "vite": "^8.0.2"
   },
-  "productName": "ZCode"
+  "productName": "Don’t-think"
 }
