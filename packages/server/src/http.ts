@@ -36,6 +36,7 @@ import {
   type ServerRemoteWorkspaceInfo,
 } from "@zcode/shared";
 import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
+import { registerWindowControllerReplayService } from "./windowControllerReplay.js";
 import { createHostCapabilityStore } from "./hostCapability.js";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
@@ -300,6 +301,9 @@ export function createHttpServer(
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const hostCapabilities = createHostCapabilityStore();
+  // web 端任务列表（置顶/已归档/搜索）走 window-controller channel；
+  // server 宿主没有窗口 Host，这里补 replayable 实现，已有实现不覆盖。
+  registerWindowControllerReplayService(services);
 
   const authToken = options.authToken?.trim();
   if (authToken) {
