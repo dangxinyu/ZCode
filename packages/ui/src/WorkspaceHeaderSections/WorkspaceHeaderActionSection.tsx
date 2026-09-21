@@ -1,9 +1,9 @@
 import { WorkspaceEditorButtonGroup } from "@/WorkspaceEditorButtonGroup.js";
 import { WorkspaceSidePaneToggleButton } from "@/WorkspaceSidePaneToggleButton.js";
 import { WorkspaceTerminalToggleButton } from "@/WorkspaceTerminalToggleButton.js";
+import { WorkspaceSessionReloadButton } from "@/WorkspaceSessionReloadButton.js";
 import { cn } from "@/components/lib/utils.js";
 import type { WorkspaceHeaderActionSectionProps } from "@/WorkspaceHeaderSections/shared.js";
-import { WorkspaceHelpMenuButton } from "@/WorkspaceHelpMenuButton.js";
 import { ConversationShareMenu } from "@/ConversationShareMenu.js";
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
 
@@ -23,9 +23,11 @@ export function WorkspaceHeaderActionSection({
   onToggleTerminal,
   onToggleSidePane,
   toggleSidePaneShortcutLabel,
+  onReloadSession,
+  reloadSessionDisabled,
+  reloadSessionPending,
   onSelectedEditorChange,
   simplifyForNarrowRemote = false,
-  hideHelpMenu = false,
   showWindowControls = false,
   useWindowsCaptionSpacing = false,
 }: WorkspaceHeaderActionSectionProps) {
@@ -38,6 +40,12 @@ export function WorkspaceHeaderActionSection({
         useWindowsCaptionSpacing ? "-my-2 h-12 gap-0" : "gap-0.5",
       )}
     >
+      <WorkspaceSessionReloadButton
+        onReloadSession={onReloadSession}
+        disabled={reloadSessionDisabled}
+        pending={reloadSessionPending}
+        useWindowsCaptionSpacing={useWindowsCaptionSpacing}
+      />
       {variant === "task" ? (
         <WorkspaceEditorButtonGroup
           disabledReason={readOnlyReason}
@@ -56,7 +64,6 @@ export function WorkspaceHeaderActionSection({
       ) : null}
       {!simplifyForNarrowRemote ? (
         <>
-          {!hideHelpMenu ? <WorkspaceHelpMenuButton isDesktop={Boolean(isDesktop)} /> : null}
           {/* 远程控制移动端头部空间过窄，终端入口在这里会和核心操作争抢宽度。*/}
           <WorkspaceTerminalToggleButton
             isTerminalOpen={isTerminalOpen}

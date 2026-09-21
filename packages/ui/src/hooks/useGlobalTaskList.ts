@@ -12,6 +12,7 @@ import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { stabilizeTaskListItems } from "@/v4/taskListItemStabilization.js";
 import { getWindowControllerTaskListRegistry } from "@/v4/windowControllerTaskListRegistry.js";
 import type { WindowControllerTaskListVersion } from "@/v4/windowControllerTaskListRegistry.js";
+import { useTaskListManualRefreshSerial } from "@/v4/taskListManualRefresh.js";
 
 type GlobalTaskListItem = WindowHostControllerTaskListItem;
 
@@ -109,6 +110,8 @@ export function useGlobalTaskList(params: {
   const [loading, setLoading] = useState(workspaceScopes.length > 0);
   const requestSerialRef = useRef(0);
   const manualRefreshSerialRef = useRef(0);
+  // 头部刷新按钮 bump 的全局串行号；与 hook 局部 serial 相加进入版本键，两条触发路径都强制缓存 miss。
+  const globalManualRefreshSerial = useTaskListManualRefreshSerial();
 
   const query = useMemo(
     () => ({
@@ -186,9 +189,9 @@ export function useGlobalTaskList(params: {
       controllerRevision,
       taskListVersionSignature,
       workspaceSourceGenerationSignature,
-      manualRefreshSerial: manualRefreshSerialRef.current,
+      manualRefreshSerial: manualRefreshSerialRef.current + globalManualRefreshSerial,
     });
-  }, [controllerRevision, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
+  }, [controllerRevision, globalManualRefreshSerial, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
 
   useEffect(() => {
     // 远程 workspace 从断开占位恢复为在线 session 时 identity/path 不变，
@@ -198,8 +201,9 @@ export function useGlobalTaskList(params: {
       controllerRevision,
       taskListVersionSignature,
       workspaceSourceGenerationSignature,
+      manualRefreshSerial: manualRefreshSerialRef.current + globalManualRefreshSerial,
     });
-  }, [controllerRevision, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
+  }, [controllerRevision, globalManualRefreshSerial, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
 
   const hasRemoteScope = params.workspaceTabs.some((tab) => Boolean(tab.workspaceIdentity));
   return {

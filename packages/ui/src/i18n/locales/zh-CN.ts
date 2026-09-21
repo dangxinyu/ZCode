@@ -1099,6 +1099,8 @@ const zhCN: Record<string, string> = {
   "appHeader.workspaceSessionActionLoading": "正在应用会话变更...",
   "appHeader.copyLogPath": "复制日志路径",
   "appHeader.copySessionId": "复制会话 ID",
+  "workspaceHeader.taskListRefresh": "刷新任务列表",
+  "workspaceHeader.reloadConversation": "刷新当前对话",
   "workspaceHeader.help.menu": "帮助",
   "workspaceHeader.help.issueReport": "问题上报",
   "workspaceHeader.help.productRequest": "给产品提需求",

@@ -212,8 +212,10 @@ export function WorkspaceHeader({
           onToggleTerminal={onToggleTerminal}
           onToggleSidePane={onToggleSidePane}
           toggleSidePaneShortcutLabel={toggleSidePaneShortcutLabel}
+          onReloadSession={onReloadSession}
+          reloadSessionDisabled={reloadSessionDisabled}
+          reloadSessionPending={reloadSessionPending}
           simplifyForNarrowRemote={simplifyForNarrowRemote}
-          hideHelpMenu={false}
           showWindowControls={usesInlineWindowControls}
           // 面板操作按钮沿用 macOS 紧凑样式，Windows/Linux 窗控跟随最右侧 Header。
           onSelectedEditorChange={setSelectedEditor}

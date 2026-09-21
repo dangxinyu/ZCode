@@ -70,9 +70,11 @@ export interface WorkspaceHeaderActionSectionProps {
   onToggleTerminal: () => void;
   onToggleSidePane: () => void;
   toggleSidePaneShortcutLabel?: string;
+  onReloadSession?: (options?: WorkspaceHeaderReloadSessionOptions) => void | Promise<void>;
+  reloadSessionDisabled?: boolean;
+  reloadSessionPending?: boolean;
   onSelectedEditorChange?: (editor: EditorInfo | null) => void;
   simplifyForNarrowRemote?: boolean;
-  hideHelpMenu?: boolean;
   showWindowControls?: boolean;
   useWindowsCaptionSpacing?: boolean;
 }

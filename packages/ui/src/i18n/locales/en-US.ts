@@ -1181,6 +1181,8 @@ const enUS: Record<string, string> = {
   "fileActions.copyRelativePath": "Copy relative path",
   "appHeader.copyTaskPath": "Copy task path",
   "appHeader.copySessionId": "Copy session ID",
+  "workspaceHeader.taskListRefresh": "Refresh task list",
+  "workspaceHeader.reloadConversation": "Refresh current conversation",
   "appHeader.reloadSession": "Reload session",
   "appHeader.reloadSessionSuccess": "Session reloaded",
   "appHeader.reloadSessionFailed": "Could not reload session",

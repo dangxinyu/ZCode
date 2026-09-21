@@ -43,6 +43,10 @@ export const TID_THEME_TOGGLE = "theme-toggle";
 export const TID_LOGOUT_BUTTON = "logout-button";
 /** 终端显隐切换按钮 */
 export const TID_TERMINAL_TOGGLE = "terminal-toggle";
+/** 侧栏底部任务列表刷新按钮 */
+export const TID_TASK_LIST_REFRESH = "task-list-refresh";
+/** 头部刷新当前对话按钮 */
+export const TID_SESSION_RELOAD = "session-reload";
 export const TID_SIDE_PANE_TOGGLE = "side-pane-toggle";
 /** 终端面板关闭按钮 */
 export const TID_TERMINAL_CLOSE_BUTTON = "terminal-close-button";
