@@ -42,6 +42,7 @@ import {
   BrowserTabResidencyCoordinator,
   type BrowserTabResidencyRecord,
 } from "./browserTabResidencyCoordinator.js";
+import { buildUserScriptsBootstrap, loadUserScriptEntries } from "./browserUserScripts.js";
 import type {
   BrowserTabPageStateRecord,
   BrowserTabRecoveryStore,
@@ -3164,14 +3165,75 @@ export class BrowserGuestManager {
     };
   }
 
+  /**
+   * userscripts 注册：读 {zcodeDataRoot}/userscripts 并把引导脚本挂到当前 CDP 会话。
+   * 每次 attach/会话恢复时执行；文件即配置，编辑后对新文档生效。
+   */
+  private async registerUserScriptsOnGuestCdpSession(
+    tab: ManagedTab,
+    guest: GuestWebContents,
+  ): Promise<void> {
+    const entries = await loadUserScriptEntries((message) => this.log?.(message));
+    if (!entries) return;
+    // 读取是异步的：期间 guest 可能已换代/关闭，注入必须落在同一个会话上。
+    if (this.tabs.get(tab.tabId)?.guest !== guest || tab.lifecycle === "closed") return;
+    await this.sendGuestCdpCommandRaw(tab, guest, "Page.addScriptToEvaluateOnNewDocument", {
+      source: buildUserScriptsBootstrap(entries),
+    });
+    this.log?.(
+      `[browser-use] userscripts registered tabId=${tab.tabId} count=${entries.length}`,
+    );
+  }
+
+  /**
+   * userscripts 注入兜底：主帧导航后在页面上下文执行引导脚本。
+   * 与 browserCommandScripts 的快照脚本同一 Runtime.evaluate 通路（已被验证可用）；
+   * 引导内 marker 幂等，失败仅 warn。
+   */
+  private async evaluateUserScriptsInGuest(
+    tab: ManagedTab,
+    guest: GuestWebContents,
+  ): Promise<void> {
+    try {
+      const entries = await loadUserScriptEntries((message) => this.log?.(message));
+      if (!entries) return;
+      if (this.tabs.get(tab.tabId)?.guest !== guest || tab.lifecycle === "closed") return;
+      await this.sendGuestCdpCommandRaw(tab, guest, "Runtime.evaluate", {
+        expression: buildUserScriptsBootstrap(entries),
+      });
+    } catch (error) {
+      this.warn(`browser guest userscripts evaluate failed tabId=${tab.tabId}`, error);
+    }
+  }
+
   private setupDialogTracking(tab: ManagedTab, guest: GuestWebContents): void {
     const tabId = tab.tabId;
-    void this.sendGuestCdpCommand(tab, guest, "Page.enable").catch((error: unknown) => {
-      this.log?.(`[browser-use] Page.enable failed tabId=${tabId}: ${String(error)}`);
-    });
+    void (async () => {
+      try {
+        await this.sendGuestCdpCommand(tab, guest, "Page.enable");
+      } catch (error: unknown) {
+        this.log?.(`[browser-use] Page.enable failed tabId=${tabId}: ${String(error)}`);
+        return;
+      }
+      // userscripts 与 Page.enable 同会话注册：失败只 warn，不影响 dialog 追踪主链路。
+      try {
+        await this.registerUserScriptsOnGuestCdpSession(tab, guest);
+      } catch (error) {
+        this.warn(`browser guest userscripts register failed tabId=${tabId}`, error);
+      }
+    })();
     const onMessage = (_event: unknown, method: string, params: unknown): void => {
       const current = this.tabs.get(tabId);
       if (!current || current.guest !== guest || current.lifecycle === "closed") return;
+      // userscripts 注入兜底：addScriptToEvaluateOnNewDocument 在该会话上不保证执行
+      // （Electron debugger 会话语义），主帧导航提交时再走 Runtime.evaluate 补一次。
+      // 引导脚本自带 marker 幂等，两条路径不会重复执行脚本正文。
+      if (method === "Page.frameNavigated") {
+        const frame = (params as { frame?: { parentId?: string } }).frame;
+        if (frame && frame.parentId === undefined) {
+          void this.evaluateUserScriptsInGuest(tab, guest);
+        }
+      }
       if (method === "Page.javascriptDialogOpening") {
         // 打点：dialog 事件到达 main 的时刻，用于区分「事件黑洞」与「dialog 已被 detach
         // 清理」两种 getDialog=null 成因。
@@ -3459,6 +3521,12 @@ export class BrowserGuestManager {
       this.warn(`browser guest Page.enable replay failed tabId=${tab.tabId}`, error);
       this.rollbackGuestCdpRestore(tab, guest);
       throw error;
+    }
+    // userscripts 是 CDP 会话级状态，会话重建后必须重放；失败不纳入恢复屏障契约。
+    try {
+      await this.registerUserScriptsOnGuestCdpSession(tab, guest);
+    } catch (error) {
+      this.warn(`browser guest userscripts replay failed tabId=${tab.tabId}`, error);
     }
     const viewport = tab.viewportOverride ?? tab.backgroundViewportFallback;
     if (viewport) {
