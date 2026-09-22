@@ -63,6 +63,8 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 | 权限/审批/澄清弹窗 | `PermissionDialog.tsx`、`ElicitationDialog.tsx` | 等待徽章统一用 confirmation 色（DESIGN.md） |
 | 移动端 Web 适配 | `src/v4/`、`lib/mobileTextInput.ts` | iOS 输入用 `text-mobile-input-safe`；单列 + 抽屉布局 |
 | 主题/i18n/日志 | `hooks/useTheme.ts`、`i18n/`、`src/logger.ts` | UI 日志只用 `logger.ts`，禁 `console.log`/`window.zcode.log` |
+| 头部动作区按钮 / 侧栏底部按钮 | `WorkspaceHeaderSections/WorkspaceHeaderActionSection.tsx`、`WorkspaceSidebarFooter.tsx` | 刷新当前对话复用 `onReloadSession`；任务列表刷新走 `v4/taskListManualRefresh.ts` + membership bump（spec: `packages/ui/specs/task-list-manual-refresh.md`） |
+| 模型选择器 / 视觉委托下拉 | `V4ComposerToolbar.tsx`（ModelConfigSelect）+ `useDraftConfigControl.ts`（draft 三态） | 视觉下拉仅主模型 `supportsImage !== true` 时显示；提交经 sendText/createSession payload `visionDelegateModel`（spec: `apps/zcode-cli/packages/core/specs/vision-delegate.md`） |
 
 组件访问服务的唯一通道：`hooks/useServices.tsx`（`IServiceAccessor`）与 `hooks/usePlatform.tsx`（`IPlatformService`）。禁止 UI 直调 Repo、直调 `window.zcode`。
 
@@ -103,15 +105,17 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 | 端口与事件契约 | `contracts/`；基础设施实现在 `adapters/`（fs/model/provider/skills/mcp） |
 | Desktop 协议宿主/命令准入 | `bootstrap/src/zcode-protocol-v4/command-inbox.ts`（串行 admission，in-flight pinned / settled LRU / stale 裁决）、`v4-gateway.ts` |
 | 模型工厂 | `bootstrap/src/model-factory.ts`、`model-config.ts` + `adapters/src/model/` |
+| 媒体能力投影（图片/PDF/视频剔除与预算） | `core/src/runtime/helpers/media-capability.ts`、`media-budget.ts` + `contracts/src/model/media-policy.ts` | 主模型 `inputFormat.supportsImage=false` 时图片换占位文本 |
+| 视觉委托（无视觉主模型的图片描述代理） | `core/src/runtime/methods/vision-delegate.ts`（注入点 `methods/model.ts` runModelTextRequest）+ facade `bootstrap/src/app/session-facade.ts#setVisionDelegateSelection`（必须 `allowMissingReasoning: true`）+ 持久化 entry `runtime/vision_delegate` | spec: `core/specs/vision-delegate.md`；sha256 缓存按 runtime 实例，失败回退占位 |
 | TUI 界面 | `tui/src/app-*.tsx`（approval-panel、input-pane 等） |
 | 动态工作流引擎 | `dynamic-workflow/`、`dynamic-workflow-runtime/` |
 | slash 命令中心 | `cli/src/command-center/` |
 
-改完 Agent 侧代码后桌面要重建 agent（`pnpm --filter @zcode/cli... build`，或走 dev 流程自动构建）。
+改完 Agent 侧代码后：桌面重跑 `pnpm dev:desktop` 即可（自动重打）；**web 端必须 `pnpm --filter @zcode/cli build && pnpm --filter @zcode/server build:remote` 再重启 dev:web**（server 的 tsup watch 不会重建 `dist/remote/zcode-server.cjs`，旧 bundle 会把新 payload 字段静默剥掉）。
 
 ### 模型接入（packages/provider + provider-node）
 
-`provider/src/registry.ts`（冻结快照 + revision）→ `sources.ts`（zcodeBuiltin + personal 两层配置合并）→ resolver 计算最终模型选择；Node 落地在 `provider-node/`（配置仓库、内置供应商配置物化/下载/远端同步）。内置兜底配置在根 `config/provider/zcode-builtin.json`。
+`provider/src/registry.ts`（冻结快照 + revision）→ `sources.ts`（zcodeBuiltin + personal 两层配置合并）→ resolver 计算最终模型选择；Node 落地在 `provider-node/`（配置仓库、内置供应商配置物化/下载/远端同步）。内置兜底配置在根 `config/provider/zcode-builtin.json`。新增智谱模型的正式接入：该文件的 `builtinModelIds` 加 ID + `packages/shared/src/official-glm-model-id.ts` 白名单加一行；能力差异才加 `modelConfigRules.modelRules` 条目（正则 `.*glm-5.*` 已兜底覆盖 5 系）。GLM-5.3 标 `supportsImage=true` 是套餐服务端桥接标记。
 
 ### 桌面（packages/desktop）
 
@@ -130,6 +134,7 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 - `packages/server/src/http.ts`：Hono。`/ws`（web-remote-replayable）、`/ws/host`（凭 capability 升级 desktop-continuous）、`/ws/remote/:id`（SSH/Docker/WSL 远程后端）；authToken → HttpOnly Cookie；SPA 静态托管。
 - `packages/zcode-server-cli`：守护进程管理（serve/status/stop/restart/update，Supervisor + crashBudget + generation fork）。`zcode --web` 的分流在发行包 `scripts/zcode-distribution/runner.mjs`。
 - Agent 连接 scope：`packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts`（deliveryProfile 映射、分块 attachment 队列、重连 flow state）。
+- web 端 window-controller channel（置顶/归档/时间线/搜索列表）：`packages/server/src/windowControllerReplay.ts`（http.ts 装配期注册，spec 在 `packages/server/specs/window-controller-replay.md`）。帧语义：`frame.fromSeq` 必须等于消费端上一帧 `toSeq`，否则 registry 判 gap 触发 resync。
 
 ## 关键机制速查
 
