@@ -23,6 +23,7 @@ import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js
 import { getOrCreateReasoningBlock } from "./reasoning-stream.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-session-type.js";
+import { applyVisionDelegateDescriptions } from "./vision-delegate.js";
 import { isOutputTokenLimitFinishReason } from "./turn-output-token-continuation.js";
 
 const TOOL_INPUT_STREAM_DELTA_FALLBACK_FLUSH_CHARS = 4096;
@@ -50,8 +51,16 @@ export async function runModelTextRequest(
     options.messages,
     this.artifactStore,
   );
-  const capabilityProjection = projectMessagesForInputFormat(
+  // 主模型无视觉且配置了视觉委托时，先把将被剔除的图片块换成委托模型的描述文本；
+  // 失败/未配置时原样返回，由下面的 capability projection 走既有占位逻辑。
+  const visionDelegateProjection = await applyVisionDelegateDescriptions(
+    this,
     mediaPathMessages,
+    model.properties.inputFormat,
+    options.traceContext,
+  );
+  const capabilityProjection = projectMessagesForInputFormat(
+    visionDelegateProjection.messages,
     model.properties.inputFormat,
   );
   logMediaCapabilityProjection(this.logger, options.traceContext, capabilityProjection, {

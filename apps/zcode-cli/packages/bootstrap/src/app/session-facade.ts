@@ -4,6 +4,7 @@ import { resolveLocale } from "@zcode/i18n";
 import { normalizeModelSelection, type ModelSelection } from "@zcode/provider";
 import {
   SESSION_ENTRY_MODEL_SELECTION,
+  SESSION_ENTRY_VISION_DELEGATE,
   traceContextToLogContext,
   type CollaborationMode,
   type ExecutionPort,
@@ -74,6 +75,7 @@ type SessionFacade = Pick<
   | "setMode"
   | "setModel"
   | "setThoughtLevel"
+  | "setVisionDelegateSelection"
   | "setLocale"
   | "setTarget"
   | "updateTargetStatus"
@@ -504,6 +506,43 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
         traceId: deps.traceContext.traceId,
       };
     },
+    setVisionDelegateSelection: async (selection) => {
+      // 委托选择与主模型同一 Registry 事实源；清除（null）时跳过校验直接置空并落清除标记。
+      if (!selection) {
+        deps.runtime.setVisionDelegateSelection(undefined);
+        await persistSessionVisionDelegateSelection(deps, undefined);
+        return;
+      }
+      // Bug 原因：委托选择不带 reasoning 档位（下拉只选身份）；默认校验会抛
+      // reasoning-level-missing 并连带拒绝整次提交（用户看到"发送失败"）。这里允许
+      // 缺省档位，描述调用由 runtime 用模型默认档位执行。
+      const registrySelection = resolveRegistryOwnedModelSelection(
+        deps.providerRegistry,
+        selection,
+        { allowMissingReasoning: true },
+      );
+      if (!registrySelection) {
+        throw new Error(
+          `Provider Registry 中不存在 Model: ${selection.providerId}/${selection.modelId}`,
+        );
+      }
+      deps.runtime.setVisionDelegateSelection({
+        providerId: registrySelection.selection.providerId,
+        modelId: registrySelection.selection.modelId,
+      });
+      await persistSessionVisionDelegateSelection(deps, {
+        providerId: registrySelection.selection.providerId,
+        modelId: registrySelection.selection.modelId,
+      });
+      deps.logger.info("Session vision delegate updated", {
+        ...traceContextToLogContext(deps.traceContext),
+        event: "session.vision_delegate.updated",
+        module: "bootstrap",
+        providerId: registrySelection.selection.providerId,
+        modelId: registrySelection.selection.modelId,
+        status: "completed",
+      });
+    },
     setThoughtLevel: async (level) => {
       const registryState = currentRegistrySelection();
       if (registryState.owned) {
@@ -685,6 +724,34 @@ async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Prom
 /** 仅供仍以 provider/model 字符串工作的内部 App facade；不是 ModelSelection 序列化。 */
 function formatLegacyRuntimeModelValue(selection: ModelSelection | undefined): string {
   return selection ? `${selection.providerId}/${selection.modelId}` : "";
+}
+
+/** 视觉委托选择的 session entry 持久化；清除时写 cleared 标记，恢复读到即视为未配置。 */
+async function persistSessionVisionDelegateSelection(
+  deps: CreateSessionFacadeDeps,
+  selection: { providerId: string; modelId: string } | undefined,
+): Promise<void> {
+  if (!deps.sessionStore.saveSessionEntry) return;
+  const timestamp = Date.now();
+  try {
+    await deps.sessionStore.saveSessionEntry({
+      id: `${deps.sessionId}:runtime-vision-delegate`,
+      sessionID: deps.sessionId,
+      type: SESSION_ENTRY_VISION_DELEGATE,
+      touchSession: false,
+      time: { created: timestamp, updated: timestamp },
+      data: selection ?? { cleared: true },
+    });
+  } catch (error) {
+    // 委托已在当前 runtime 生效；持久化失败不反向伪装成切换失败，但必须留生产日志。
+    deps.logger.warn("Session vision delegate persistence failed", {
+      ...traceContextToLogContext(deps.traceContext),
+      error: error instanceof Error ? error.message : String(error),
+      event: "session.vision_delegate.persist_failed",
+      module: "bootstrap",
+      status: "failed",
+    });
+  }
 }
 
 type GoalStateChangeReminderAction = "paused" | "resumed" | "cleared";

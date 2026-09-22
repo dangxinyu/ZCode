@@ -81,6 +81,8 @@ export interface AgentRuntimeCoreMethods {
   ): Promise<void>;
   getSessionModelSelection(): ModelSelection | undefined;
   setSessionModelSelection(selection: ModelSelection | undefined): void;
+  getVisionDelegateSelection(): ModelSelection | undefined;
+  setVisionDelegateSelection(selection: ModelSelection | undefined): void;
   getProjectId(): ProjectId;
   setWorkingDirectory(cwd: string): void;
   ensureSessionPersistedForExternalActivity(

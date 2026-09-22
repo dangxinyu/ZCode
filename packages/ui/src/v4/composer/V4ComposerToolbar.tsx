@@ -22,7 +22,9 @@ import {
   resolveModelProviderFamilySpecByProviderId,
   TID_V4_MODEL_CONFIG,
   TID_V4_COMPOSER_INPUT,
+  TID_VISION_DELEGATE_SELECT,
   ZCODE_AGENT_PROVIDER,
+  type ModelSelection,
   type ProviderFamilyConnectionSelection,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
@@ -81,7 +83,11 @@ import { logger } from "@/logger.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { useCodingPlanEntitlements } from "@/settings/model-provider-section/useCodingPlanEntitlements.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
-import { buildRegistryModelSelectGroups } from "@/lib/modelSelectionGroups.js";
+import {
+  buildRegistryModelSelectGroups,
+  resolveModelDisplayName,
+  type ModelProviderGroupLabelOptions,
+} from "@/lib/modelSelectionGroups.js";
 import {
   buildCodingPlanUsageSources,
   type CodingPlanUsageSource,
@@ -105,6 +111,8 @@ export { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerModeControls.js";
 
 const V4_COMPOSER_INPUT_SELECTOR = `[data-testid="${TID_V4_COMPOSER_INPUT}"]`;
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
+/** 视觉委托下拉的「不使用视觉模型」清除项 value；onValueChange 时映射为 (…, null)。 */
+const VISION_DELEGATE_NONE_VALUE = "__none__";
 
 /** 稳定空回调（热键 hook 单实例只处理本组件拥有的选项，其余动作占位）。 */
 function noop(): void {}
@@ -352,6 +360,10 @@ export interface V4ComposerToolbarProps {
   ) => void;
   /** 选中思考深度；modelContext 固定本次用户操作的目标模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
+  /** 视觉委托模型草稿；null=用户显式清除，undefined=未选择。主模型不支持图片输入时渲染委托下拉。 */
+  visionDelegateModel?: ModelSelection | null;
+  /** 选择视觉委托模型；modelId 传 null 表示清除会话级委托。 */
+  onSelectVisionDelegate?: (providerId: string, modelId: string | null) => void;
   onSwitchMode: (mode: string) => void;
   /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
   onRecoverCustomModelSelection?: (
@@ -378,6 +390,8 @@ function V4ComposerModelControlsImpl({
   onConfigPickerOpenChange,
   onSelectModel,
   onSelectThought,
+  visionDelegateModel,
+  onSelectVisionDelegate,
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
 }: V4ComposerToolbarProps) {
@@ -729,9 +743,9 @@ function V4ComposerModelControlsImpl({
     });
   }, [draftMode, effectiveConfig, modelSelectionView?.revision]);
 
-  const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
-    if (!modelSelectionView) return [];
-    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, {
+  // 主模型与视觉委托下拉共用同一份分组徽标文案，避免两处构造漂移。
+  const providerGroupLabels = useMemo<ModelProviderGroupLabelOptions>(
+    () => ({
       apiKeyLabel: intl.formatMessage({ id: "settings.modelProvider.apiKey" }),
       apiKeyBadgeLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.apiKeyBadge",
@@ -754,8 +768,81 @@ function V4ComposerModelControlsImpl({
       teamPlanFallbackLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.teamPlan",
       }),
-    });
-  }, [displayProvider, intl, modelSelectionView]);
+    }),
+    [intl],
+  );
+
+  const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
+    if (!modelSelectionView) return [];
+    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, providerGroupLabels);
+  }, [displayProvider, modelSelectionView, providerGroupLabels]);
+
+  // 主模型是否原生支持图片输入：只读原始能力位 supportsImage（不用
+  // shouldShowModelVisionBadge——它会把套餐 GLM-5.3 的服务端桥接误判成视觉模型，
+  // 从而错误隐藏委托入口）。模型不在目录（未选/失效/合成）按 false 处理，保守展示下拉。
+  const mainModelSupportsImage = useMemo(() => {
+    if (!effectiveConfig?.provider || !effectiveConfig.model) return false;
+    return (
+      modelSelectionView?.providers
+        .find((provider) => provider.providerId === effectiveConfig.provider)
+        ?.models.find((model) => model.modelId === effectiveConfig.model)
+        ?.config.properties?.inputFormat?.supportsImage === true
+    );
+  }, [effectiveConfig?.model, effectiveConfig?.provider, modelSelectionView]);
+
+  // 视觉委托候选：把 view 过滤为只剩 supportsImage===true 的模型，再复用
+  // buildRegistryModelSelectGroups 生成组（保留 provider 徽标与连接方式呈现）。
+  const visionModelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
+    if (!modelSelectionView) return [];
+    const visionView: ModelSelectionView = {
+      ...modelSelectionView,
+      providers: modelSelectionView.providers
+        .map((provider) => ({
+          ...provider,
+          models: provider.models.filter(
+            (model) => model.config.properties?.inputFormat?.supportsImage === true,
+          ),
+        }))
+        .filter((provider) => provider.models.length > 0),
+    };
+    return buildRegistryModelSelectGroups(displayProvider, visionView, providerGroupLabels);
+  }, [displayProvider, modelSelectionView, providerGroupLabels]);
+  const hasVisionDelegateOptions = visionModelSelectGroups.some(
+    (group) => group.items.length > 0,
+  );
+
+  // 委托下拉的受控值：已选=目录编码值；null（显式清除）=清除项；undefined（未选择）=空。
+  const visionDelegateValue = visionDelegateModel
+    ? encodeCustomModelValue(visionDelegateModel.providerId, visionDelegateModel.modelId)
+    : visionDelegateModel === null
+      ? VISION_DELEGATE_NONE_VALUE
+      : "";
+  const visionDelegateTriggerLabel = useMemo(() => {
+    if (!visionDelegateModel) {
+      return visionDelegateModel === null
+        ? intl.formatMessage({ id: "chat.toolbar.visionModel.none" })
+        : intl.formatMessage({ id: "chat.toolbar.visionModel" });
+    }
+    return (
+      resolveModelDisplayName(visionModelSelectGroups, visionDelegateValue) ??
+      visionDelegateModel.modelId
+    );
+  }, [intl, visionDelegateModel, visionDelegateValue, visionModelSelectGroups]);
+
+  const handleVisionDelegateValueChange = useCallback(
+    (value: string) => {
+      if (!onSelectVisionDelegate) return;
+      // 清除项映射为 (providerId, null)：协议约定 null 表达清除会话级委托。
+      if (value === VISION_DELEGATE_NONE_VALUE) {
+        onSelectVisionDelegate("", null);
+        return;
+      }
+      const decoded = decodeCustomModelValue(value);
+      if (!decoded?.providerId || !decoded.modelName) return;
+      onSelectVisionDelegate(decoded.providerId, decoded.modelName);
+    },
+    [onSelectVisionDelegate],
+  );
 
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {
@@ -1069,6 +1156,34 @@ function V4ComposerModelControlsImpl({
           triggerIconClassName="inline-flex @sm/composer:hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
           focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
           providerSubmenuClassName={providerSubmenuClassName}
+        />
+      ) : null}
+      {!mainModelSupportsImage && hasVisionDelegateOptions && onSelectVisionDelegate ? (
+        <ModelConfigSelect
+          modelGroups={visionModelSelectGroups}
+          normalizedValue={visionDelegateValue}
+          triggerLabel={visionDelegateTriggerLabel}
+          leadingItems={[
+            {
+              key: "vision-delegate:none",
+              value: VISION_DELEGATE_NONE_VALUE,
+              name: intl.formatMessage({ id: "chat.toolbar.visionModel.none" }),
+            },
+          ]}
+          showManageModelsAction={false}
+          lockReasonMessage=""
+          isItemLocked={isModelOptionLocked}
+          onValueChange={handleVisionDelegateValueChange}
+          disabled={disabled || modelSelectionState.status !== "ready"}
+          // tooltipTitle 同时充当触发器 aria-label（组件内 triggerAriaLabel = tooltipTitle ?? label）。
+          tooltipTitle={intl.formatMessage({ id: "chat.toolbar.visionModel" })}
+          triggerTestId={TID_VISION_DELEGATE_SELECT}
+          focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
+          labelVisibilityClassName="hidden @sm/composer:inline-flex"
+          triggerLabelClassName="min-w-0 max-w-40 truncate text-left"
+          // 与现有 trigger 一致的手机布局收缩；委托下拉无自定义图标位（组件图标固定为
+          // PackageIcon，triggerIconClassName 只控制显隐），保持默认隐藏走纯文本。
+          triggerClassName="@max-sm/composer:size-7 @max-sm/composer:justify-center @max-sm/composer:gap-0 @max-sm/composer:p-0"
         />
       ) : null}
       {thoughtOption ? (

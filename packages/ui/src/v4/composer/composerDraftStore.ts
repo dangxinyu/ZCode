@@ -24,6 +24,8 @@ export interface V4ComposerDraft {
   lastPlanTransitionId?: string;
   lastPermissionGrantId?: string;
   modelSelection?: ModelSelection;
+  /** 视觉委托模型草稿；null=用户显式清除（提交随 payload 传达清除语义），undefined=未选择。 */
+  visionDelegateModel?: ModelSelection | null;
   /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
   initializeFromNewTask?: true;
   updatedAt: number;
@@ -105,6 +107,12 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     : identity?.success
       ? identity.data
       : undefined;
+  // 视觉委托模型与 modelSelection 同 scope 持久化：null（显式清除）与已选对象都要保留，
+  // 否则重载后丢失清除意图；坏值静默退回未选择，不连带丢弃其余草稿字段。
+  const visionDelegateModel = modelSelectionSchema
+    .nullable()
+    .optional()
+    .safeParse(value.visionDelegateModel);
   const mention = value.mention;
   const hasMention =
     isRecord(mention) &&
@@ -133,6 +141,9 @@ function readDraft(value: unknown): V4ComposerDraft | null {
       ? { lastPlanTransitionId: value.lastPlanTransitionId }
       : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(visionDelegateModel.success && visionDelegateModel.data !== undefined
+      ? { visionDelegateModel: visionDelegateModel.data }
+      : {}),
     ...(value.initializeFromNewTask === true && !mode.success
       ? { initializeFromNewTask: true as const }
       : {}),
@@ -188,6 +199,8 @@ export function persistV4ComposerDraft(
     !draft.mention &&
     !draft.mode &&
     !draft.modelSelection &&
+    // 已选视觉委托（非 null/undefined）也是显式用户意图，不能让空文本 scope 被清掉。
+    !draft.visionDelegateModel &&
     !draft.initializeFromNewTask
   ) {
     delete file.scopes[scopeId];

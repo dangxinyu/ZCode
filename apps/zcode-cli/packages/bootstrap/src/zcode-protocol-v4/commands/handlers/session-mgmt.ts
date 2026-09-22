@@ -86,6 +86,10 @@ async function createSession(
         record.app,
         payload.firstInput.attachments,
       );
+      // 视觉委托是会话级配置：首发携带即应用（与 config 同一先行语义），不进 intent 快照。
+      if (payload.firstInput.visionDelegateModel !== undefined) {
+        await record.app.setVisionDelegateSelection(payload.firstInput.visionDelegateModel);
+      }
       const intent = inputIntentMetadata(envelope, {
         text: payload.firstInput.text,
         requestedDelivery: "startNow",

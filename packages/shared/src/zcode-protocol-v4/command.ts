@@ -49,6 +49,8 @@ export const commandPayloadSchemas = {
         text: z.string(),
         attachments: z.array(attachmentRefSchema).optional(),
         modelSelection: modelSelectionSchema.optional(),
+        // 视觉委托模型（主模型无视觉时描述图片）；null=显式清除，会话级生效。
+        visionDelegateModel: modelSelectionSchema.nullable().optional(),
         mode: submissionModeSchema.optional(),
         planEnabled: z.boolean().optional(),
       })
@@ -95,6 +97,9 @@ export const commandPayloadSchemas = {
       // 迁移期允许旧发送端缺省；CLI admission 会把当前 Session Selection 固定进
       // canonical intent。Renderer 切换完成后，第一方用户提交始终显式携带这两项。
       modelSelection: modelSelectionSchema.optional(),
+      // 视觉委托模型：主模型无视觉时随提交更新会话级委托（null=显式清除）。
+      // 与 modelSelection 同语义：提交时应用，不进 intent 快照。
+      visionDelegateModel: modelSelectionSchema.nullable().optional(),
       mode: submissionModeSchema.optional(),
       planEnabled: z.boolean().optional(),
       // 本次执行仍使用上面的标准 Selection；这里只携带不持久化语义、动态鉴权和 child 策略。

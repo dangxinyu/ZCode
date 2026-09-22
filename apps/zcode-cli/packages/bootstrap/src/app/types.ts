@@ -634,6 +634,11 @@ export interface ZCodeApp {
     thoughtLevel: string;
     traceId: TraceContext["traceId"];
   }>;
+  /**
+   * 视觉委托模型（会话级）：主模型 inputFormat.supportsImage=false 时由它描述图片。
+   * null = 显式清除。经 Registry 校验；立即生效并持久化为 session entry。
+   */
+  setVisionDelegateSelection(selection: ModelSelection | null): Promise<void>;
   setLocale(locale: UiLocale): Promise<SetLocaleResult>;
   stopExpertWorkflow(options?: {
     abortSignal?: AbortSignal;

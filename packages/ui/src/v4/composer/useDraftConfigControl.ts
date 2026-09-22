@@ -97,6 +97,10 @@ interface DraftConfigControl {
   handleDraftSelectModel: (modelProvider: string, model: string) => void;
   handleDraftSelectThought: (thought: string) => void;
   handleDraftSwitchMode: (mode: string) => void;
+  /** 视觉委托模型草稿当前值；null=用户显式清除，undefined=未选择。 */
+  visionDelegateModel: ModelSelection | null | undefined;
+  /** 选择视觉委托模型；modelId 传 null 表示显式清除会话级委托。 */
+  handleDraftSelectVisionDelegate: (providerId: string, modelId: string | null) => void;
 }
 
 export function useDraftConfigControl(params: {
@@ -187,8 +191,11 @@ export function useDraftConfigControl(params: {
       provider: effectiveSelection?.providerId ?? "",
       model: effectiveSelection?.modelId ?? "",
       thought: effectiveSelection?.options?.reasoningLevel ?? "",
+      // 不能写成 `?? undefined`：?? 对 null 也生效，会把「显式清除」降级成「未选择」，
+      // 提交时就丢失清除语义。这里三态原样透传给 Submission。
+      visionDelegateModel: draft.visionDelegateModel,
     }),
-    [draft.mode, draft.planEnabled, effectiveSelection],
+    [draft.mode, draft.planEnabled, draft.visionDelegateModel, effectiveSelection],
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
@@ -223,6 +230,8 @@ export function useDraftConfigControl(params: {
         provider: selection?.providerId ?? "",
         model: selection?.modelId ?? "",
         thought: selection?.options?.reasoningLevel ?? "",
+        // 同上：visionDelegateModel 三态（未选/已选/显式清除 null）原样进投影。
+        visionDelegateModel: next.visionDelegateModel,
       };
       setStoredState(nextState);
       persistV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, next);
@@ -457,6 +466,19 @@ export function useDraftConfigControl(params: {
     [updateDraftConfig],
   );
 
+  const handleDraftSelectVisionDelegate = useCallback(
+    (providerId: string, modelId: string | null) => {
+      // 委托模型只表达身份（无 reasoning 档位），不走 updateDraftConfig 的
+      // modelSelection 校验链（那条链会要求补齐 thought/完整选择）；
+      // null=显式清除，提交时随 payload 传达会话级清除语义。
+      updateComposerDraft((current) => ({
+        ...current,
+        visionDelegateModel: modelId === null ? null : { providerId, modelId },
+      }));
+    },
+    [updateComposerDraft],
+  );
+
   const handleDraftSwitchMode = useCallback(
     (mode: string) => {
       if (mode === "plan" || mode === "plan-off") {
@@ -493,6 +515,8 @@ export function useDraftConfigControl(params: {
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
+    visionDelegateModel: draft.visionDelegateModel,
+    handleDraftSelectVisionDelegate,
   };
 }
 

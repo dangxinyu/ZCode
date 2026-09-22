@@ -25,6 +25,8 @@ export const sessionConfigStateSchema = z.object({
       planEnabled: z.boolean(),
     })
     .optional(),
+  /** 视觉委托模型；仅 UI 草稿态携带，createSession config 覆盖面不消费（走 firstInput/sendText）。 */
+  visionDelegateModel: modelSelectionSchema.nullable().optional(),
 });
 export type SessionConfigState = z.infer<typeof sessionConfigStateSchema>;
 

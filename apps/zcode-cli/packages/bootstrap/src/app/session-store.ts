@@ -3,6 +3,7 @@ import { SqliteSessionStore } from "@zcode/adapters/storage";
 import { resolvePath, type ConfigResult } from "@zcode/adapters/config";
 import {
   SESSION_ENTRY_MODEL_SELECTION,
+  SESSION_ENTRY_VISION_DELEGATE,
   parseModelSelectionValue,
   type SessionId,
   type SessionStorePort,
@@ -65,6 +66,20 @@ export async function readSessionModelSelection(
     return parseModelSelectionValue({ providerId: current.providerId, modelId: current.modelId });
   }
   return undefined;
+}
+
+/** 读取 Session 最近一次视觉委托选择；条目缺失或 cleared 标记都视为未配置。 */
+export async function readSessionVisionDelegateSelection(
+  store: Pick<SessionStorePort, "sessionEntries">,
+  sessionID: SessionId,
+): Promise<ModelSelection | undefined> {
+  if (!store.sessionEntries) return undefined;
+  const entries = await store.sessionEntries({
+    sessionID,
+    type: SESSION_ENTRY_VISION_DELEGATE,
+  });
+  const data = entries.at(-1)?.data;
+  return parseModelSelectionValue(data) ?? undefined;
 }
 
 export function closeSessionStore(store: SqliteSessionStore): void {

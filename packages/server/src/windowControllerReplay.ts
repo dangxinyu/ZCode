@@ -166,7 +166,13 @@ export function createWindowControllerReplayService(
       fromSeq: 0,
       toSeq,
       sentAt: Date.now(),
-      payload: { kind: "snapshot", snapshot: { tasks: [] } },
+      // 快照 schema 已收紧为 strict（必须携带 protocolVersion/logEpoch 与帧头的
+      // (logEpoch, seq) 对齐）；空 snapshot 缺字段会让消费端解析失败，
+      // gap 自愈重置反而断流，这里补齐同一 envelope 字段。
+      payload: {
+        kind: "snapshot",
+        snapshot: { protocolVersion: 1, logEpoch, tasks: [] },
+      },
     });
   }
 

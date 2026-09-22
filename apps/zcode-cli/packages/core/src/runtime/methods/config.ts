@@ -103,6 +103,27 @@ export function setSessionModelSelection(
   this.sessionModelSelection = selection && cloneModelSelection(selection);
 }
 
+export function getVisionDelegateSelection(this: AgentRuntimeInternal): ModelSelection | undefined {
+  return (
+    this.sessionVisionDelegateSelection && cloneModelSelection(this.sessionVisionDelegateSelection)
+  );
+}
+
+export function setVisionDelegateSelection(
+  this: AgentRuntimeInternal,
+  selection: ModelSelection | undefined,
+): void {
+  // 切换委托模型后旧描述可能失真（不同模型看图侧重不同），缓存必须随之失效。
+  const previous = this.sessionVisionDelegateSelection;
+  this.sessionVisionDelegateSelection = selection && cloneModelSelection(selection);
+  if (
+    previous?.providerId !== selection?.providerId ||
+    previous?.modelId !== selection?.modelId
+  ) {
+    this.visionDelegateDescriptionCache.clear();
+  }
+}
+
 export function getProjectId(this: AgentRuntimeInternal): ProjectId {
   // Bash cd 会改变执行 cwd，但 project identity 不能随工具内 cwd 漂移。
   return projectIdFromDirectory(this.workspaceRoot);

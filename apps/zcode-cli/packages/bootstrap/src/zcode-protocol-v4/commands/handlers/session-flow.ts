@@ -193,6 +193,10 @@ async function sendText(
   }
   const attachments = await mapAttachmentRefsToTurnAttachments(record.app, payload.attachments);
   const submittedExecutionState = resolveSubmittedExecutionState(record, payload);
+  // 视觉委托是会话级配置：提交即应用（null=清除），不进 intent/queue 快照。
+  if (payload.visionDelegateModel !== undefined) {
+    await record.app.setVisionDelegateSelection(payload.visionDelegateModel);
+  }
   const submissionIntent = (options: Parameters<typeof inputIntentMetadata>[1]) =>
     inputIntentMetadata(envelope, { ...options, ...submittedExecutionState });
   const routingMode = host.getInputRoutingMode?.(envelope.sessionId ?? "") ?? null;

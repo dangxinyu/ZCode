@@ -4482,6 +4482,10 @@ const enUS: Record<string, string> = {
   "chat.toolbar.model.manageModels": "Manage models",
   "chat.toolbar.model.searchPlaceholder": "Search models...",
   "chat.toolbar.model.empty": "No models found",
+  "chat.toolbar.visionModel": "Vision model",
+  "chat.toolbar.visionModel.none": "No vision model",
+  "chat.toolbar.visionModel.tooltip":
+    "This model describes images when the main model cannot process them",
   "chat.toolbar.modelSwitch.stage.settingModel": "Switching model...",
   "chat.toolbar.modelSwitch.stage.fallbackConfigOption": "Falling back to config option API...",
   "chat.toolbar.modelSwitch.stage.applyingCustomProvider": "Applying custom model provider...",

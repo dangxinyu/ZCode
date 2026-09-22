@@ -83,6 +83,10 @@ export interface AgentRuntimeInternal
   browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
   sessionModelSelection: ModelSelection | undefined;
+  /** 视觉委托模型（主模型无视觉时描述图片用）；undefined = 未配置，走占位投影。 */
+  sessionVisionDelegateSelection: ModelSelection | undefined;
+  /** 视觉描述缓存：图片内容 hash → 描述 Promise；进程内存态，失败不缓存。 */
+  visionDelegateDescriptionCache: Map<string, Promise<string>>;
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
   cachedTools: ModelToolContract[] | null;

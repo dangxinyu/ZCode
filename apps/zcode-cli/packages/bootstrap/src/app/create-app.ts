@@ -62,6 +62,7 @@ import {
   openStartupSessionStore,
   readProjectPermissionMode,
   readSessionModelSelection,
+  readSessionVisionDelegateSelection,
 } from "./session-store.js";
 import { createWorkflowFacade } from "./workflow-facade.js";
 import { createInputFacade } from "./input-facade.js";
@@ -473,6 +474,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       return selection;
     };
 
+    const restorePersistedVisionDelegateSelection = async (): Promise<void> => {
+      try {
+        const selection = await readSessionVisionDelegateSelection(sessionStore, sessionId);
+        // 与主模型不同：委托模型只在描述图片时才使用，恢复阶段不做 Registry 严格校验，
+        // 描述失败会按既有语义回退占位文本，不阻断会话。
+        getRuntime().setVisionDelegateSelection(selection);
+      } catch (error) {
+        logger.warn("Session vision delegate restore failed", {
+          error: error instanceof Error ? error.message : String(error),
+          event: "session.vision_delegate.restore_failed",
+          sessionId,
+        });
+      }
+    };
+
     const resumeFromStore = async (resumeOptions?: ResumeOptions): Promise<ResumeSessionResult> => {
       const runtime = getRuntime();
       const unsubscribe = resumeOptions?.onEvent
@@ -482,6 +498,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       try {
         const resumeTraceContext = resumeOptions?.traceContext ?? traceContext;
         const modelSelection = await restorePersistedModelSelection();
+        await restorePersistedVisionDelegateSelection();
         await initializeSessionShellEnvironment();
         const result = await runtime.resumeFromStore({
           ...(resumeOptions?.abortSignal ? { abortSignal: resumeOptions.abortSignal } : {}),
