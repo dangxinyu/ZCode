@@ -5,6 +5,7 @@
  * 手机远控复用同一组件，但继续保留 20px 紧凑标题；桌面草稿首页才按标题自身宽度适配。
  */
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Network } from "lucide-react";
 import darkEmptyStateLogoUrl from "@/assets/Z.svg";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -77,7 +78,14 @@ function resolveGreetingFontSizePx({
   );
 }
 
-export function ConversationDraftEmptyState({ className }: { className?: string }) {
+export function ConversationDraftEmptyState({
+  className,
+  variant = "default",
+}: {
+  className?: string;
+  /** 编排草稿的视觉标识（spec: orchestration-tasks.md）：新建入口二选一后，草稿态必须能区分。 */
+  variant?: "default" | "orchestration";
+}) {
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const [greetingDate, setGreetingDate] = useState(() => new Date());
@@ -205,6 +213,14 @@ export function ConversationDraftEmptyState({ className }: { className?: string 
         </span>
         <span>{greeting}</span>
       </p>
+      {variant === "orchestration" ? (
+        <div className="relative z-10 mt-3 flex w-full justify-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-ui-base text-foreground-subtle">
+            <Network aria-hidden="true" className="size-3.5 shrink-0" />
+            {intl.formatMessage({ id: "chat.empty.orchestrationBadge" })}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

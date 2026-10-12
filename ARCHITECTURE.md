@@ -109,6 +109,7 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 | 视觉委托（无视觉主模型的图片描述代理） | `core/src/runtime/methods/vision-delegate.ts`（注入点 `methods/model.ts` runModelTextRequest）+ facade `bootstrap/src/app/session-facade.ts#setVisionDelegateSelection`（必须 `allowMissingReasoning: true`）+ 持久化 entry `runtime/vision_delegate` | spec: `core/specs/vision-delegate.md`；sha256 缓存按 runtime 实例，失败回退占位 |
 | TUI 界面 | `tui/src/app-*.tsx`（approval-panel、input-pane 等） |
 | 动态工作流引擎 | `dynamic-workflow/`、`dynamic-workflow-runtime/` |
+| 编排任务（主任务派生/关联普通子任务） | 协议 `shared/src/zcode-protocol/index.ts`（orchestration/* 方法族）+ CLI 工具面 `core/src/tool/handlers/orchestration.ts`（注册门 `runtime-tools.ts` includeOrchestration；orchestration_child 结构性禁用在 `runtime/helpers/tool-allowlist.ts`）+ 反向 RPC `bootstrap/src/zcode-protocol/orchestration-port.ts` + 服务 `services/src/zcode-agent/orchestrationTaskService.ts`（关系唯一写入点，orchestration_links 表 migration 0004）+ UI「编排」分区 `ui/src/WorkspaceOrchestrationTasksSection.tsx` | spec: `packages/services/specs/orchestration-tasks.md`；会话级 taskType（orchestration_parent/child）驱动工具注入与禁用，非 turn 级 denylist |
 | slash 命令中心 | `cli/src/command-center/` |
 
 改完 Agent 侧代码后：桌面重跑 `pnpm dev:desktop` 即可（自动重打）；**web 端必须 `pnpm --filter @zcode/cli build && pnpm --filter @zcode/server build:remote` 再重启 dev:web**（server 的 tsup watch 不会重建 `dist/remote/zcode-server.cjs`，旧 bundle 会把新 payload 字段静默剥掉）。

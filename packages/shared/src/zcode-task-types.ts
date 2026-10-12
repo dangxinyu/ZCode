@@ -64,6 +64,33 @@ export function isOffPeakTask(task: Pick<ZCodeTaskMeta, "offPeakTaskId">): boole
   return Boolean(task.offPeakTaskId);
 }
 
+/** 编排任务角色：主任务负责派生/关联子任务并统筹汇总；子任务行为仍是普通任务。 */
+export type { ZCodeOrchestrationRole } from "./zcode-task-types-core.js";
+
+/** 判断一个 task 是否为编排主任务（仅进「编排」分区，不出现在 # 引用候选）。 */
+export function isOrchestrationTask(task: Pick<ZCodeTaskMeta, "orchestrationRole">): boolean {
+  return task.orchestrationRole === "orchestrator";
+}
+
+/** 判断一个 task 是否为编排子任务（派生/关联产生，列表带编排标记，会话内禁用编排工具）。 */
+export function isOrchestrationChildTask(task: Pick<ZCodeTaskMeta, "orchestrationRole">): boolean {
+  return task.orchestrationRole === "child";
+}
+
+/**
+ * 协议 sessionKind → 编排身份（spec: packages/services/specs/orchestration-tasks.md）。
+ * adapter 的 snapshotToMeta 与 syncer 的 buildMetaFromSnapshot 两份快照转换必须共用本
+ * helper：任何一处漏映射都会让 tasks-index 行丢 role，被项目视图的排除逻辑漏出
+ * （点击任务触发回源写行后复现，联调实测）。
+ */
+export function zcodeSessionKindToOrchestrationRole(
+  sessionKind: string | undefined,
+): ZCodeTaskMeta["orchestrationRole"] {
+  if (sessionKind === "orchestration_parent") return "orchestrator";
+  if (sessionKind === "orchestration_child") return "child";
+  return undefined;
+}
+
 // ---- ZCode Provider ----
 export type ZCodeTaskTarget = ZCodeTaskGoal;
 // ---- ZCode task 模式 ----

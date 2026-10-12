@@ -1575,8 +1575,17 @@ export const zcodeSessionCreateParamsSchema = z
     // 动态工作流灰度：与 offPeakToolEnabled 同一
     // 模式——host 裁决后下发，缺省不下发 = 不注册工作流工具簇（fail-closed）。
     dynamicWorkflowEnabled: z.boolean().optional(),
+    // 编排任务身份（spec: packages/services/specs/orchestration-tasks.md）：
+    // "orchestrator" 由 UI 创建编排任务时下发；"child" 仅限 host 派生链路（spawn）使用，
+    // 且必须携带 orchestrationParentTaskId（refine 校验）。additive，旧 CLI 静默丢弃。
+    orchestrationRole: z.enum(["orchestrator", "child"]).optional(),
+    orchestrationParentTaskId: nonEmptyString.optional(),
   })
-  .strict();
+  .strict()
+  .refine((input) => input.orchestrationRole !== "child" || input.orchestrationParentTaskId !== undefined, {
+    message: "orchestrationRole=child requires orchestrationParentTaskId",
+    path: ["orchestrationParentTaskId"],
+  });
 export type ZCodeSessionCreateParams = z.infer<typeof zcodeSessionCreateParamsSchema>;
 
 export const zcodeSessionResumeParamsSchema = z
@@ -3493,6 +3502,99 @@ export type ZCodeAutomationDeleteProtocolParams = z.infer<typeof zcodeAutomation
 export const zcodeAutomationDeleteResultSchema = z.object({ deleted: z.boolean() }).strict();
 export type ZCodeAutomationDeleteProtocolResult = z.infer<typeof zcodeAutomationDeleteResultSchema>;
 
+// ---- 编排任务（orchestration）反向请求协议 ----
+// 与 automation/offPeak 兄弟并列的独立方法族。CLI 的编排工具（SpawnSubTask/LinkTask/
+// ListOrchestrationChildren/ListWorkspaceTasks）经此请求 host 域执行：任务创建、关系
+// 落库与盖标记的所有权都在 host/services（spec: packages/services/specs/orchestration-tasks.md）。
+// sessionId 为发起编排工具调用的会话，host 以此定位编排任务与 workspace；跨 workspace 拒绝。
+export const zcodeOrchestrationSpawnParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    prompt: nonEmptyString,
+  })
+  .strict();
+export type ZCodeOrchestrationSpawnProtocolParams = z.infer<
+  typeof zcodeOrchestrationSpawnParamsSchema
+>;
+
+export const zcodeOrchestrationSpawnResultSchema = z
+  .object({ childTaskId: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationSpawnProtocolResult = z.infer<
+  typeof zcodeOrchestrationSpawnResultSchema
+>;
+
+export const zcodeOrchestrationLinkParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    childTaskId: nonEmptyString,
+  })
+  .strict();
+export type ZCodeOrchestrationLinkProtocolParams = z.infer<
+  typeof zcodeOrchestrationLinkParamsSchema
+>;
+
+export const zcodeOrchestrationLinkResultSchema = z
+  .object({ childTaskId: nonEmptyString, alreadyLinked: z.boolean() })
+  .strict();
+export type ZCodeOrchestrationLinkProtocolResult = z.infer<
+  typeof zcodeOrchestrationLinkResultSchema
+>;
+
+export const zcodeOrchestrationChildSummaryProtocolSchema = z
+  .object({
+    taskId: nonEmptyString,
+    title: z.string(),
+    kind: z.enum(["derived", "linked"]),
+    status: z.enum(["running", "completed", "error"]).nullable(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ZCodeOrchestrationChildSummaryProtocol = z.infer<
+  typeof zcodeOrchestrationChildSummaryProtocolSchema
+>;
+
+export const zcodeOrchestrationListChildrenParamsSchema = z
+  .object({ sessionId: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationListChildrenProtocolParams = z.infer<
+  typeof zcodeOrchestrationListChildrenParamsSchema
+>;
+
+export const zcodeOrchestrationListChildrenResultSchema = z
+  .object({ children: z.array(zcodeOrchestrationChildSummaryProtocolSchema) })
+  .strict();
+export type ZCodeOrchestrationListChildrenProtocolResult = z.infer<
+  typeof zcodeOrchestrationListChildrenResultSchema
+>;
+
+export const zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema = z
+  .object({
+    taskId: nonEmptyString,
+    title: z.string(),
+    status: z.enum(["running", "completed", "error"]).nullable(),
+    orchestrationRole: z.enum(["orchestrator", "child"]).nullable(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ZCodeOrchestrationWorkspaceTaskSummaryProtocol = z.infer<
+  typeof zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema
+>;
+
+export const zcodeOrchestrationListWorkspaceTasksParamsSchema = z
+  .object({ sessionId: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationListWorkspaceTasksProtocolParams = z.infer<
+  typeof zcodeOrchestrationListWorkspaceTasksParamsSchema
+>;
+
+export const zcodeOrchestrationListWorkspaceTasksResultSchema = z
+  .object({ tasks: z.array(zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema) })
+  .strict();
+export type ZCodeOrchestrationListWorkspaceTasksProtocolResult = z.infer<
+  typeof zcodeOrchestrationListWorkspaceTasksResultSchema
+>;
+
 // ---- Off-Peak（闲时任务）会话内创建协议----
 // 与 automation 兄弟并列（独立域，禁止互相复用标记/表）。workspace 由 host 端从
 // 当前 session 注入，不进协议参数（对称 automation/create）。permissionMode 只开放产品
@@ -3646,6 +3748,11 @@ export const zcodeProtocolMethods = {
   // Off-Peak 会话内创建：与 automation 兄弟并列的独立方法族。
   offPeakCreate: "offPeak/create",
   offPeakList: "offPeak/list",
+  // 编排任务派生/关联/查询：与 offPeak 同模式的独立方法族（spec: orchestration-tasks.md）。
+  orchestrationSpawnSubTask: "orchestration/spawnSubTask",
+  orchestrationLinkTask: "orchestration/linkTask",
+  orchestrationListChildren: "orchestration/listChildren",
+  orchestrationListWorkspaceTasks: "orchestration/listWorkspaceTasks",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。
   // 仅剩 CLI server 的 wire 兼容 case；随旧词整体删除时一并移除。
   usageStats: "usage/stats",

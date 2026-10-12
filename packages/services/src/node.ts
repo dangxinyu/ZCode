@@ -345,6 +345,10 @@ import type { ZCodeAgentCommandResolver } from "./zcode-agent/zcodeAgentProcessM
 import { buildAgentTelemetrySpawnEnv } from "./zcode-agent/agentTelemetryEnv.js";
 import { resolveZCodeAgentPresentationSurface } from "./zcode-agent/zcodeAgentPresentationSurface.js";
 import { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";
+import {
+  createOrchestrationTaskService,
+  type IOrchestrationTaskService,
+} from "./zcode-agent/orchestrationTaskService.js";
 import { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 import { createZCodeTaskIndexSyncer } from "./zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
@@ -2066,6 +2070,9 @@ export function createLocalServices(options: {
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
+  // 编排服务前向引用（同款惰性绑定）：agent service 先建、orchestration service 依赖
+  // 其后的 zcodeTaskService；orchestration/* 请求只会在装配完成后发生。
+  let orchestrationTaskServiceForAgent: IOrchestrationTaskService | undefined;
   // desktop-attached-remote 装配不暴露 Off-Peak 工具面（远程不在支持范围）。
   const offPeakToolWiring =
     options?.serviceAuthorityMode === "desktop-attached-remote"
@@ -2074,6 +2081,11 @@ export function createLocalServices(options: {
           resolveOffPeakClientConfig: () => codingPlanSubscriptionService.getOffPeakClientConfig(),
           resolveOffPeakTaskService: () => offPeakTaskServiceForAgent,
         };
+  // 编排任务在本地与 desktop-attached-remote Host 上都可用：关系落 tasks-index（host 本地），
+  // 子任务创建走本 host 的 zcodeTaskService，与 workspace 远近无关。
+  const orchestrationToolWiring = {
+    resolveOrchestrationTaskService: () => orchestrationTaskServiceForAgent,
+  };
   const zcodeAgentService = createZCodeAgentService({
     ...(agentAccountProviderConfigSource
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
@@ -2082,6 +2094,7 @@ export function createLocalServices(options: {
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
+    ...orchestrationToolWiring,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
@@ -2328,6 +2341,14 @@ export function createLocalServices(options: {
     settingService,
     cuaProductMcpServerResolver,
   });
+  // 编排任务服务（spec: orchestration-tasks.md）：spawn/link 的关系写入路径唯一。
+  // 在 zcodeAgentService 之后创建，经前向 holder 供 orchestration/* 反向请求 handler 使用。
+  const orchestrationTaskService = createOrchestrationTaskService({
+    taskService: zcodeTaskService,
+    taskIndexRepo,
+    zcodeAgentService,
+  });
+  orchestrationTaskServiceForAgent = orchestrationTaskService;
   const oauthService = createOAuthService(credentialService, {
     apiClient,
     onProviderLogout: handleOAuthProviderLogout,

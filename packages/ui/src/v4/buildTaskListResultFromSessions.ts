@@ -1,6 +1,7 @@
 // 左侧列表投影：tasks-index 决定持久行集合与 membership，sessions-index 只补实时 activity/detail。
 // 这里保持纯函数，供 Project/Timeline/Pinned/Archived/Grouped 共用同一字段权威。
 import type { ZCodeTaskMeta } from "@zcode/shared";
+import { isOrchestrationTask } from "@zcode/shared";
 import { matchesTaskListMembershipKind } from "@zcode/shared/zcode-protocol-v4";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
@@ -67,6 +68,10 @@ function mergeTaskIndexRowWithSession(
     updatedAt: (activity?.lastActivityAt ?? sessionTask.updatedAt) || taskIndexTask.updatedAt,
     status: sessionTask.status ?? taskIndexTask.status,
     forkedFromTaskId: sessionTask.forkedFromTaskId ?? taskIndexTask.forkedFromTaskId,
+    // 编排身份以 sessions-index summary（taskType 投影）为实时权威（spec: orchestration-tasks.md）：
+    // 行的 role 靠回源盖写存在时序（新任务/冷启动可能滞后），排除逻辑若只读行会把编排任务
+    // 漏进项目视图（点击任务触发回源写行后复现，联调实测）。
+    orchestrationRole: sessionTask.orchestrationRole ?? taskIndexTask.orchestrationRole,
     // pending interaction 属于当前 session 投影；summary 已到达但字段为空时必须清掉旧持久值。
     pendingInteraction: sessionTask.pendingInteraction,
   };
@@ -183,6 +188,13 @@ export function buildTaskListResult(params: BuildTaskListParams): BuildTaskListR
     // CLI session store 不会随归档列表“永久删除”一起物理清理；若不先应用
     // deleted 负向 membership，冷启动 sessions-index 会把它当成非 archived 普通任务复活。
     if (params.deletedIds?.has(task.taskId)) return false;
+    // 编排主任务只进「编排」分区，active/timeline 查询排除（spec: orchestration-tasks.md）。
+    // archived 查询放行：归档视图（windowController 数据链，非本函数）按 tab 分流——
+    // 普通归档历史排除编排任务、编排 tab 的归档历史只显示编排任务（组件层过滤）；
+    // 置顶的编排任务在 pinned 查询可见。
+    if (params.kind !== "archived" && params.kind !== "pinned" && isOrchestrationTask(task)) {
+      return false;
+    }
     const pinned = params.pinnedIds.has(task.taskId);
     const archived = params.archivedIds.has(task.taskId);
     if (!matchesTaskListMembershipKind({ pinned, archived }, params.kind)) return false;

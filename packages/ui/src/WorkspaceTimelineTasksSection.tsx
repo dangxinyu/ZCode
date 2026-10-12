@@ -1,7 +1,10 @@
 /* eslint-disable max-lines -- timeline 同时承载本地 scoped 查询、远端主动缓存和任务操作分发，先集中保持链路清晰。 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
+import { isOrchestrationTask } from "@zcode/shared";
+import { OrchestrationChildrenList } from "@/OrchestrationChildrenList.js";
+import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
@@ -47,6 +50,9 @@ export function WorkspaceTimelineTasksSection({
   groupByDate = true,
   taskRowVariant = "timeline",
   emptyMessage,
+  excludeOrchestration = true,
+  orchestrationOnly = false,
+  onOrchestrationChildJump,
   onSelectTask,
 }: {
   workspaceTabs: WorkspaceTabState[];
@@ -57,6 +63,23 @@ export function WorkspaceTimelineTasksSection({
   groupByDate?: boolean;
   taskRowVariant?: "default" | "timeline";
   emptyMessage?: string;
+  /**
+   * 普通时间线默认排除编排主任务（spec: orchestration-tasks.md）。
+   * 行 role 来自 tasks-index 标记，首次 spawn 自愈盖标记前可能滞后（短暂双显，已知降级）。
+   */
+  excludeOrchestration?: boolean;
+  /** 「编排」分区模式：只显示编排主任务，行交互与项目/时间线完全一致（归档→归档区删除）。 */
+  orchestrationOnly?: boolean;
+  /**
+   * 子任务跳转覆盖（spec: orchestration-tasks.md）：编排分区里点击子任务时，
+   * 由侧栏注入"切到项目视图 + 选中该任务"的组合动作；缺省回落 onSelectTask。
+   */
+  onOrchestrationChildJump?: (
+    targetWorkspacePath: string,
+    taskId: string,
+    targetWorkspaceIdentity?: string,
+    expectedUnreadAt?: number,
+  ) => void;
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -173,10 +196,37 @@ export function WorkspaceTimelineTasksSection({
     );
   }, [remoteTimelineItemsByWorkspaceKey, remoteWorkspaceKeys]);
   const sortedItems = useMemo(() => {
-    return [...localItems, ...remoteItems].sort((left, right) =>
-      compareZCodeTaskListItems(left, right, taskSortBy),
-    );
-  }, [localItems, remoteItems, taskSortBy]);
+    return [...localItems, ...remoteItems]
+      .filter((item) =>
+        orchestrationOnly
+          ? isOrchestrationTask(item)
+          : excludeOrchestration && isOrchestrationTask(item)
+            ? false
+            : true,
+      )
+      .sort((left, right) => compareZCodeTaskListItems(left, right, taskSortBy));
+  }, [excludeOrchestration, localItems, orchestrationOnly, remoteItems, taskSortBy]);
+  // 编排分区的子任务索引（spec: orchestration-tasks.md）：子任务行 meta 自带
+  // orchestrationParentTaskId，与列表同源合并数据按 parent 分组，零新增查询。
+  // 注意用未过滤的合并全集——子任务不是 orchestrator，会被上面的过滤剔除。
+  const orchestrationChildrenByParentId = useMemo(() => {
+    if (!orchestrationOnly) return null;
+    const byParent = new Map<string, ZCodeTaskMeta[]>();
+    for (const item of [...localItems, ...remoteItems]) {
+      const parentId = item.orchestrationParentTaskId?.trim();
+      if (!parentId) continue;
+      const list = byParent.get(parentId);
+      if (list) {
+        list.push(item);
+      } else {
+        byParent.set(parentId, [item]);
+      }
+    }
+    return byParent;
+  }, [localItems, orchestrationOnly, remoteItems]);
+  // 子任务折叠态：共享 hook（编排分区与置顶区同步），localStorage 持久化、默认展开。
+  const { isCollapsed: isOrchestrationChildrenCollapsed, toggleCollapsed: toggleOrchestrationChildren } =
+    useOrchestrationChildrenCollapsed();
   const items = sortedItems.slice(0, visibleTaskLimit);
   const itemByKey = useMemo(() => {
     const nextItemByKey = new Map<string, ZCodeTaskMeta>();
@@ -695,30 +745,64 @@ export function WorkspaceTimelineTasksSection({
                         return null;
                       }
                       const handlers = getTimelineTaskItemHandlers(itemKey);
+                      // 编排分区的子任务展开器挂在编排行行首（TaskListItem 的
+                      // orchestrationExpander）：无子任务也显示图标，展开后才见
+                      // "尚未派生"提示（空态常驻太吵，联调用户反馈）。
+                      const orchestrationChildTasks = orchestrationChildrenByParentId
+                        ? (orchestrationChildrenByParentId.get(item.taskId) ?? [])
+                        : [];
+                      const orchestrationChildrenCollapsed = isOrchestrationChildrenCollapsed(
+                        item.taskId,
+                      );
                       return (
-                        <MemoTaskItem
-                          key={itemKey}
-                          workspacePath={item.workspacePath}
-                          remoteSessionId={workspaceServices.remoteSessionId}
-                          task={item}
-                          isPinned={false}
-                          variant={taskRowVariant}
-                          isActive={
-                            // timeline 是跨 workspace 视图，active 判断必须使用 workspaceKey，避免同路径远端串高亮。
-                            buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) ===
-                              activeWorkspaceKey && item.taskId === activeTaskId
-                          }
-                          onSelectTask={handlers.onSelectTask}
-                          onArchiveTaskInline={handlers.onArchiveTaskInline}
-                          onCancelArchiveConfirm={handleCancelArchiveConfirm}
-                          isArchiveConfirming={pendingArchiveItemKey === itemKey}
-                          onTogglePinTask={handlers.onTogglePinTask}
-                          onStartRenameTask={handlers.onStartRenameTask}
-                          onArchiveTask={handlers.onArchiveTask}
-                          onMarkTaskAsUnread={handlers.onMarkTaskAsUnread}
-                          onOpenTaskContextMenu={handlers.onOpenTaskContextMenu}
-                          intl={intl}
-                        />
+                        <Fragment key={itemKey}>
+                          <MemoTaskItem
+                            workspacePath={item.workspacePath}
+                            remoteSessionId={workspaceServices.remoteSessionId}
+                            task={item}
+                            isPinned={false}
+                            variant={taskRowVariant}
+                            isActive={
+                              // timeline 是跨 workspace 视图，active 判断必须使用 workspaceKey，避免同路径远端串高亮。
+                              buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) ===
+                                activeWorkspaceKey && item.taskId === activeTaskId
+                            }
+                            orchestrationExpander={
+                              orchestrationChildrenByParentId
+                                ? {
+                                    collapsed: orchestrationChildrenCollapsed,
+                                    childCount: orchestrationChildTasks.length,
+                                    onToggle: () => {
+                                      toggleOrchestrationChildren(item.taskId);
+                                    },
+                                  }
+                                : undefined
+                            }
+                            onSelectTask={handlers.onSelectTask}
+                            onArchiveTaskInline={handlers.onArchiveTaskInline}
+                            onCancelArchiveConfirm={handleCancelArchiveConfirm}
+                            isArchiveConfirming={pendingArchiveItemKey === itemKey}
+                            onTogglePinTask={handlers.onTogglePinTask}
+                            onStartRenameTask={handlers.onStartRenameTask}
+                            onArchiveTask={handlers.onArchiveTask}
+                            onMarkTaskAsUnread={handlers.onMarkTaskAsUnread}
+                            onOpenTaskContextMenu={handlers.onOpenTaskContextMenu}
+                            intl={intl}
+                          />
+                          {orchestrationChildrenByParentId && !orchestrationChildrenCollapsed ? (
+                            <OrchestrationChildrenList
+                              parentTaskId={item.taskId}
+                              childTasks={orchestrationChildTasks}
+                              isActiveTaskId={(child) =>
+                                child.taskId === activeTaskId &&
+                                buildTaskWorkspaceKey(child.workspacePath, child.workspaceIdentity) ===
+                                  activeWorkspaceKey
+                              }
+                              onOpenTask={onSelectTask}
+                              onJumpToTask={onOrchestrationChildJump ?? onSelectTask}
+                            />
+                          ) : null}
+                        </Fragment>
                       );
                     })}
                   </ul>

@@ -16,6 +16,8 @@ export interface SessionSummaryDeriveExtra {
   createdAt: number;
   lastActivityAt: number;
   parentSessionId?: string;
+  /** 编排身份（taskType 投影）：orchestrator 进「编排」分区并被 # 引用排除；child 带编排标记。 */
+  orchestrationRole?: "orchestrator" | "child";
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -77,6 +79,7 @@ function deriveSessionSummary(
     sessionId: snapshot.sessionId,
     workspaceId: extra.workspaceId,
     ...(extra.parentSessionId ? { parentSessionId: extra.parentSessionId } : {}),
+    ...(extra.orchestrationRole ? { orchestrationRole: extra.orchestrationRole } : {}),
     title: snapshot.meta.title,
     titleSource: snapshot.meta.titleSource,
     phase: snapshot.control.phase,
@@ -106,6 +109,7 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.sessionId === b.sessionId &&
     a.workspaceId === b.workspaceId &&
     a.parentSessionId === b.parentSessionId &&
+    a.orchestrationRole === b.orchestrationRole &&
     a.title === b.title &&
     a.titleSource === b.titleSource &&
     a.phase === b.phase &&

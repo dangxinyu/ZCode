@@ -1186,6 +1186,11 @@ export function SessionPane({
     (store) =>
       store.getWorkspaceState(workspacePath, workspaceIdentity).draftRuntimeInvalidationVersion,
   );
+  const isOrchestrationDraft = useZCodeSessionStore(
+    (store) =>
+      store.getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource ===
+      "orchestration",
+  );
   const handleExternalTextInsertApplied = useCallback(
     (requestId: number) => {
       useZCodeSessionStore
@@ -2284,13 +2289,25 @@ export function SessionPane({
     enabled: sessionId === null && draftAgentStartupAllowed,
     workspaceKey,
     paneId,
-    invalidationVersion: draftRuntimeInvalidationVersion,
+    invalidationVersion:
+      // 编排身份切换（点「新建编排任务」/切回普通入口）必须作废旧预热会话并重建：
+      // taskType 在创建期定型，复用 interactive 预热会话会让编排工具面永不注册
+      // （spec: orchestration-tasks.md）。用大偏移避免与 runtime invalidation 计数撞档。
+      draftRuntimeInvalidationVersion + (isOrchestrationDraft ? 1_000_000 : 0),
     // SessionDataLayer 来自 workspace connection registry：同 transport generation 的 pane/remount
     // 共享 identity；provider wrapper 重建产生的新 sendCommand 函数不能误判为 transport 换代。
     transportIdentity: layer,
     dispatchCommand,
     // 预热会话只消费当前 Root Composer Draft 的一次性初始化结果。
     resolveInitialConfig: resolveInitialDraftConfig,
+    // 编排任务入口的预热身份：draftCreateSource 在 startDraft 时写入 store，
+    // 预热创建时读取（spec: orchestration-tasks.md）。
+    resolveOrchestrationRole: () =>
+      useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource === "orchestration"
+        ? "orchestrator"
+        : undefined,
   });
   const prewarmBindingRef = useRef(prewarmBinding);
   prewarmBindingRef.current = prewarmBinding;
@@ -2525,6 +2542,12 @@ export function SessionPane({
       options: ConversationComposerSendOptions | undefined,
       createSourceAtSend: SessionCreateSource,
     ) => {
+      // 编排任务入口（draftCreateSource=orchestration）随 createSession 顶层携带身份；
+      // CLI 侧映射 taskType=orchestration_parent 并注入编排工具面（spec: orchestration-tasks.md）。
+      const orchestrationCreatePayload =
+        createSourceAtSend === "orchestration"
+          ? { orchestrationRole: "orchestrator" as const }
+          : {};
       let onAcceptedSelection: (() => void) | undefined;
       const dispatchSubmissionCommand = async (...args: Parameters<typeof dispatchCommand>) => {
         const ack = await dispatchCommand(...args);
@@ -2714,7 +2737,7 @@ export function SessionPane({
         // 委托值随 dispatchSlashCommand 内部 sendText payload 的 ...submission 携带。
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          { workspaceId: workspaceKey, ...draftConfigPayload, ...orchestrationCreatePayload },
           null,
         );
         if (createAck.status !== "accepted") {
@@ -2804,6 +2827,7 @@ export function SessionPane({
               //（含 null 清除语义），无需再显式取 submission.visionDelegateModel。
               firstInput: { text: effectiveText, ...submission },
               ...draftConfigPayload,
+              ...orchestrationCreatePayload,
             },
             null,
             undefined,
@@ -2832,7 +2856,7 @@ export function SessionPane({
         // 不做任何附件上传，也不会让非 ready 附件绕过 composer 门禁。
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          { workspaceId: workspaceKey, ...draftConfigPayload, ...orchestrationCreatePayload },
           null,
         );
         if (createAck.status !== "accepted") {
@@ -4796,7 +4820,9 @@ export function SessionPane({
               emptyState={
                 isDraft ? (
                   <div data-testid={TID_CHAT_EMPTY} className="w-full">
-                    <ConversationDraftEmptyState />
+                    <ConversationDraftEmptyState
+                      variant={isOrchestrationDraft ? "orchestration" : "default"}
+                    />
                   </div>
                 ) : null
               }

@@ -2,6 +2,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   Clock,
   CloudUpload,
   ListTree,
@@ -74,6 +76,16 @@ interface TaskListItemProps {
   intl: TaskListItemIntl;
   actionsDisabled?: boolean;
   actionsDisabledReason?: string;
+  /**
+   * 编排任务的行首子任务展开器（spec: orchestration-tasks.md）。仅编排分区/置顶区的
+   * 编排行传入；普通列表不传，行首布局零变化。memo 比较按值（collapsed/childCount），
+   * onToggle 视为同 key 下稳定（来自共享折叠 hook 的 useCallback）。
+   */
+  orchestrationExpander?: {
+    collapsed: boolean;
+    childCount: number;
+    onToggle: () => void;
+  };
 }
 
 function areJsonFieldsEqual(left: unknown, right: unknown) {
@@ -106,6 +118,15 @@ function areTaskListItemTaskFieldsEqual(left: ZCodeTaskMeta, right: ZCodeTaskMet
   );
 }
 
+function areOrchestrationExpandersEqual(
+  left: TaskListItemProps["orchestrationExpander"],
+  right: TaskListItemProps["orchestrationExpander"],
+) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.collapsed === right.collapsed && left.childCount === right.childCount;
+}
+
 function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemProps) {
   return (
     left.workspacePath === right.workspacePath &&
@@ -120,6 +141,7 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.intl === right.intl &&
     left.actionsDisabled === right.actionsDisabled &&
     left.actionsDisabledReason === right.actionsDisabledReason &&
+    areOrchestrationExpandersEqual(left.orchestrationExpander, right.orchestrationExpander) &&
     left.onSelectTask === right.onSelectTask &&
     left.onArchiveTaskInline === right.onArchiveTaskInline &&
     left.onCancelArchiveConfirm === right.onCancelArchiveConfirm &&
@@ -151,6 +173,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   intl,
   actionsDisabled = false,
   actionsDisabledReason,
+  orchestrationExpander,
 }: TaskListItemProps) {
   const [hoverActionsVisible, setHoverActionsVisible] = useState(false);
   const [focusActionsVisible, setFocusActionsVisible] = useState(false);
@@ -553,6 +576,41 @@ export const MemoTaskItem = memo(function TaskListItem({
       {/* 之前任务列表依赖 divide-y 画分隔线，深色侧栏里每个 item 上下都会出现明显黑线，
               视觉上像被两条边框夹住。这里改成“列表留白 + item 自己带圆角态”，
               让 hover/active 的层级由卡片背景承担，不再依赖分隔线。 */}
+
+      {orchestrationExpander ? (
+        <button
+          type="button"
+          aria-expanded={!orchestrationExpander.collapsed}
+          aria-label={intl.formatMessage(
+            { id: "workspaceSidebar.orchestrationChildrenCount" },
+            { count: String(orchestrationExpander.childCount) },
+          )}
+          className={cn(
+            "relative z-10 flex size-4 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest hover:text-foreground-subtle",
+            // 与前置状态槽同款的首行对齐规则（timeline/两行体时贴首行，默认行垂直居中）。
+            variant === "timeline" ? "mt-0.5" : hasWorkflowRunLines ? "mt-1" : undefined,
+          )}
+          onClick={(event) => {
+            // 展开器属于行内嵌套交互，不能触发行的选中/上下文菜单。
+            event.stopPropagation();
+            orchestrationExpander.onToggle();
+          }}
+          onContextMenu={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              orchestrationExpander.onToggle();
+            }
+          }}
+        >
+          {orchestrationExpander.collapsed ? (
+            <ChevronRight aria-hidden="true" className="size-3" />
+          ) : (
+            <ChevronDown aria-hidden="true" className="size-3" />
+          )}
+        </button>
+      ) : null}
 
       <div
         className={cn(

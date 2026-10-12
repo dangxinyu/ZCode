@@ -1602,13 +1602,19 @@ function ConversationComposerImpl({
     };
   }, [listenAddToChatEvents, updateText, workspaceIdentity, workspacePath]);
 
-  // 动态 placeholder（旧 chatViewPlaceholder 语义）：无历史 → newTask；
+  // 动态 placeholder（旧 chatViewPlaceholder 语义）：无历史 → newTask（编排草稿换编排变体）；
   // 有历史空闲 → followUpAsk；有历史处理中 → followUpQueue。
+  const isOrchestrationDraft = useZCodeSessionStore(
+    (state) =>
+      state.getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource ===
+      "orchestration",
+  );
   const placeholder = intl.formatMessage({
     id: resolveChatPlaceholderKey({
       hasHistoryMessages: (snapshot?.rows.totalCount ?? 0) > 0,
       isTaskProcessing: canStop,
       compactNewTask: false,
+      isOrchestrationDraft,
     }),
   });
   const sendTooltipTitle = intl.formatMessage({

@@ -67,6 +67,8 @@ interface TaskIndexRow {
   forked_from_task_id: string | null;
   cron_automation_id: string | null;
   off_peak_task_id: string | null;
+  orchestration_role: string | null;
+  orchestration_parent_task_id: string | null;
   created_at: number;
   updated_at: number;
   unread_at: number | null;
@@ -222,6 +224,14 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
         cronAutomationId: parsed.data.cronAutomationId ?? row.cron_automation_id ?? undefined,
         // off-peak 身份同款策略：meta_json 为准、列兜底——存量迁移只写列即可生效。
         offPeakTaskId: parsed.data.offPeakTaskId ?? row.off_peak_task_id ?? undefined,
+        // 编排身份同款策略：meta_json 为准、列兜底（host 派生/关联时双写）。
+        orchestrationRole:
+          parsed.data.orchestrationRole ??
+          (row.orchestration_role === "orchestrator" || row.orchestration_role === "child"
+            ? row.orchestration_role
+            : undefined),
+        orchestrationParentTaskId:
+          parsed.data.orchestrationParentTaskId ?? row.orchestration_parent_task_id ?? undefined,
         titleOverridden: row.title_overridden === 1,
       };
     }
@@ -250,6 +260,8 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
     forkedFromTaskId: row.forked_from_task_id ?? undefined,
     cronAutomationId: row.cron_automation_id ?? undefined,
     offPeakTaskId: row.off_peak_task_id ?? undefined,
+    orchestrationRole: (row.orchestration_role as ZCodeTaskMeta["orchestrationRole"]) ?? undefined,
+    orchestrationParentTaskId: row.orchestration_parent_task_id ?? undefined,
     unreadAt: row.unread_at ?? undefined,
     status: (row.task_status as ZCodeTaskMeta["status"]) ?? undefined,
   };
@@ -699,6 +711,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,
@@ -907,6 +921,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,
@@ -1169,6 +1185,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,
@@ -1193,6 +1211,8 @@ export class TaskIndexRepo {
           @forked_from_task_id,
           @cron_automation_id,
           @off_peak_task_id,
+          @orchestration_role,
+          @orchestration_parent_task_id,
           @created_at,
           @updated_at,
           @unread_at,
@@ -1216,6 +1236,8 @@ export class TaskIndexRepo {
           forked_from_task_id = excluded.forked_from_task_id,
           cron_automation_id = excluded.cron_automation_id,
           off_peak_task_id = excluded.off_peak_task_id,
+          orchestration_role = excluded.orchestration_role,
+          orchestration_parent_task_id = excluded.orchestration_parent_task_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           unread_at = CASE
@@ -1250,6 +1272,9 @@ export class TaskIndexRepo {
         cron_automation_id: record.meta.cronAutomationId ?? null,
         // off-peak 身份同款投影。
         off_peak_task_id: record.meta.offPeakTaskId ?? null,
+        // 编排身份同款投影（关系真相在 orchestration_links，列仅作读侧加速与兜底）。
+        orchestration_role: record.meta.orchestrationRole ?? null,
+        orchestration_parent_task_id: record.meta.orchestrationParentTaskId ?? null,
         created_at: record.meta.createdAt,
         updated_at: record.meta.updatedAt,
         unread_at: record.meta.unreadAt ?? null,
@@ -1348,6 +1373,11 @@ export class TaskIndexRepo {
           cronAutomationId: params.meta.cronAutomationId ?? existingMeta?.cronAutomationId,
           // off-peak 身份同款兜底：快照不带标记时保全既有归属。
           offPeakTaskId: params.meta.offPeakTaskId ?? existingMeta?.offPeakTaskId,
+          // 编排身份同款兜底：运行态 snapshot 不带编排标记，不保全会被后续 sync 冲掉，
+          // 分区过滤、# 引用排除和子任务禁用判定都会失效（spec: orchestration-tasks.md）。
+          orchestrationRole: params.meta.orchestrationRole ?? existingMeta?.orchestrationRole,
+          orchestrationParentTaskId:
+            params.meta.orchestrationParentTaskId ?? existingMeta?.orchestrationParentTaskId,
           updatedAt,
           unreadAt: params.meta.unreadAt ?? existingMeta?.unreadAt,
         };
@@ -1381,6 +1411,88 @@ export class TaskIndexRepo {
         throw error;
       }
     });
+  }
+
+  // ---- 编排关系（spec: packages/services/specs/orchestration-tasks.md）----
+
+  /**
+   * 建立编排关系并给 child 盖标记。orchestration_links 是关系唯一真相；
+   * child 身份只写投影列——meta_json 缺该字段时 rowToMeta 走列兜底，
+   * 后续 writeRecord 会把它回填进 meta_json（与 cron 列迁移同款策略）。
+   * 幂等：links 主键 INSERT OR IGNORE，盖标记 UPDATE 天然幂等。
+   */
+  async linkOrchestrationChild(params: {
+    orchestration: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+    child: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+    kind: "derived" | "linked";
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(params.orchestration, () => {
+      const database = this.getDatabase();
+      const key = workspaceKey(params.orchestration);
+      // 拒绝跨 workspace 链接：tasks 主键含 workspace_key，跨域边在列表/通知/恢复链路里都无法解析。
+      if (key !== workspaceKey(params.child)) {
+        throw new Error("orchestration link 跨 workspace 被拒绝");
+      }
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO orchestration_links
+            (workspace_key, orchestration_task_id, child_task_id, kind, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(key, params.orchestration.taskId, params.child.taskId, params.kind, Date.now());
+      database
+        .prepare(
+          `UPDATE tasks SET orchestration_role = 'child', orchestration_parent_task_id = ?
+           WHERE workspace_key = ? AND task_id = ?`,
+        )
+        .run(params.orchestration.taskId, key, params.child.taskId);
+    });
+  }
+
+  /** 列出编排主任务下的子任务关系（含派生/关联 kind）。 */
+  async listOrchestrationChildren(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<Array<{ childTaskId: string; kind: "derived" | "linked" }>> {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare(
+        `SELECT child_task_id, kind FROM orchestration_links
+         WHERE workspace_key = ? AND orchestration_task_id = ?
+         ORDER BY created_at ASC, child_task_id ASC`,
+      )
+      .all(workspaceKey(params), params.taskId) as Array<{
+      child_task_id: string;
+      kind: string;
+    }>;
+    return rows.map((row) => ({
+      childTaskId: row.child_task_id,
+      kind: row.kind === "linked" ? "linked" : "derived",
+    }));
+  }
+
+  /** 查询一个任务的编排父关系；非编排子任务返回 null。 */
+  async getOrchestrationParentOf(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<{ orchestrationTaskId: string; kind: "derived" | "linked" } | null> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT orchestration_task_id, kind FROM orchestration_links
+         WHERE workspace_key = ? AND child_task_id = ?`,
+      )
+      .get(workspaceKey(params), params.taskId) as
+      | { orchestration_task_id: string; kind: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      orchestrationTaskId: row.orchestration_task_id,
+      kind: row.kind === "linked" ? "linked" : "derived",
+    };
   }
 
   /**
@@ -1698,6 +1810,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,
@@ -1780,6 +1894,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,
@@ -1862,6 +1978,8 @@ export class TaskIndexRepo {
           forked_from_task_id,
           cron_automation_id,
           off_peak_task_id,
+          orchestration_role,
+          orchestration_parent_task_id,
           created_at,
           updated_at,
           unread_at,

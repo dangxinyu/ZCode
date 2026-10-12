@@ -8,6 +8,7 @@ import {
   isZCodeModelOnlySyntheticUserMessage,
   resolveWorkspaceKey,
   resolveZCodeVisibleSessionTitle,
+  zcodeSessionKindToOrchestrationRole,
   ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
   ZCODE_AGENT_PROVIDER,
   type ZCodeTaskGoal,
@@ -1841,6 +1842,13 @@ function buildMetaFromSnapshot(
     // 当恢复入口已经带上 task-local thoughtLevel 时，sqlite 必须写入入口值，避免下次打开继续被污染。
     thoughtLevel: thoughtLevelOverride || snapshot.settings.thoughtLevel.current,
     provider: ZCODE_AGENT_PROVIDER,
+    // 编排身份随 sessionKind 投影（spec: orchestration-tasks.md，与 adapter 的
+    // snapshotToMeta 共用同一 helper）：本函数是 tasks-index 行的首写/回源路径，
+    // 漏映射会让行丢 role，被项目视图的排除逻辑漏出（点击任务触发回源后复现）。
+    ...(snapshot.session.sessionKind === "orchestration_parent" ||
+    snapshot.session.sessionKind === "orchestration_child"
+      ? { orchestrationRole: zcodeSessionKindToOrchestrationRole(snapshot.session.sessionKind) }
+      : {}),
     status: deriveZCodeTaskStatusFromSessionSnapshot(snapshot),
     lastError: snapshot.projection.lastError
       ? {

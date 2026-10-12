@@ -41,6 +41,30 @@ const terminalStatuses = "'completed','failed','cancelled'";
 const activePredicate = `session_id IS NOT NULL AND status NOT IN (${terminalStatuses})`;
 const boundIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_off_peak_bound_active ON off_peak_tasks(workspace_key,session_id) WHERE ${activePredicate}`;
 
+// 0004：编排任务身份列 + 关系表（spec: packages/services/specs/orchestration-tasks.md）。
+// 冻结语义：tasks 加两列（role 投影 + parent 反查），links 表是编排关系的唯一真相。
+const ORCHESTRATION_COLUMNS = [
+  ["tasks", "orchestration_role", "TEXT"],
+  ["tasks", "orchestration_parent_task_id", "TEXT"],
+] as const;
+const ORCHESTRATION_INDEXES = `
+  CREATE INDEX IF NOT EXISTS idx_tasks_orchestration_role ON tasks(orchestration_role, updated_at DESC)
+    WHERE orchestration_role IS NOT NULL AND deleted=0;
+  CREATE INDEX IF NOT EXISTS idx_tasks_orchestration_parent ON tasks(orchestration_parent_task_id)
+    WHERE orchestration_parent_task_id IS NOT NULL AND deleted=0;
+`;
+const ORCHESTRATION_LINKS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS orchestration_links (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    child_task_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('derived','linked')),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id, child_task_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_orchestration_links_child ON orchestration_links(workspace_key, child_task_id);
+`;
+
 // 与 Agent 同样是库级串行事务，但不跨域依赖其具体 adapter。TS 转换使用冻结语义版本，
 // 禁用 function.toString 哈希：Electron/SEA 打包会改变函数文本而非迁移语义。
 const definitions = [
@@ -63,6 +87,15 @@ const definitions = [
   {
     id: "0003_official_glm_selection",
     checksumInput: [OFFICIAL_GLM_SELECTION_MIGRATION_SQL],
+  },
+  {
+    id: "0004_orchestration_tasks",
+    checksumInput: [
+      "orchestration-role-v1",
+      "orchestration-parent-v1",
+      ORCHESTRATION_INDEXES,
+      ORCHESTRATION_LINKS_SCHEMA,
+    ],
   },
 ] as const;
 
@@ -113,6 +146,7 @@ export function runTasksDatabaseMigrations(
       options.onProgress?.("migrating", { ...migrationFacts });
       if (migration.id === "0001_adopt_task_schema") adoptSchema(db);
       else if (migration.id === "0002_provider_selection") importLegacyAutomationSelections(db);
+      else if (migration.id === "0004_orchestration_tasks") applyOrchestrationSchema(db);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
@@ -154,6 +188,17 @@ function adoptSchema(db: DatabaseSync): void {
     GROUP BY workspace_key, session_id HAVING count(*)>1 LIMIT 1`)
     .get();
   if (!duplicate) db.exec(boundIndex);
+}
+
+/** 0004：编排身份列与关系表；与 adoptSchema 同款 PRAGMA 探测，避免重复加列。 */
+function applyOrchestrationSchema(db: DatabaseSync): void {
+  for (const [table, column, definition] of ORCHESTRATION_COLUMNS) {
+    const existing = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (existing.some((entry) => entry.name === column)) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+  db.exec(ORCHESTRATION_INDEXES);
+  db.exec(ORCHESTRATION_LINKS_SCHEMA);
 }
 
 /** 交接只复用已完成初始化；每个新连接仍按冻结账本确认，替换/清空文件不能假 ready。 */

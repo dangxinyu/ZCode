@@ -108,6 +108,7 @@ import {
   type ZCodeUserInputRequestParams,
   type ZCodeUserInputResponse,
   type ZCodeAgentMcpServer,
+  zcodeSessionKindToOrchestrationRole,
 } from "@zcode/shared";
 import type {
   ZCodeTaskListQuery,
@@ -1294,6 +1295,18 @@ export function createZCodeTaskServiceAdapter(
         model: formatTaskMetaModelSelectionFromSnapshot(snapshot),
         thoughtLevel: snapshot.settings.thoughtLevel.current,
         provider: GLM_PROVIDER,
+        // 编排身份随 sessionKind 投影（spec: orchestration-tasks.md）：行创建与回源同步
+        // 都走这里，orchestrator 标记不再依赖 spawn 时自愈——空 role 的行会被项目视图的
+        // isOrchestrationTask 排除逻辑漏出（点击任务触发回源写行后复现，联调实测）。
+        // child 的 parentTaskId 仍由 createTask 盖 + preserve 兜底（snapshot 不带父子关系）。
+        ...(snapshot.session.sessionKind === "orchestration_parent" ||
+        snapshot.session.sessionKind === "orchestration_child"
+          ? {
+              orchestrationRole: zcodeSessionKindToOrchestrationRole(
+                snapshot.session.sessionKind,
+              ),
+            }
+          : {}),
         status: deriveZCodeTaskStatusFromSessionSnapshot(snapshot),
         lastError: snapshot.projection.lastError
           ? {
@@ -1834,11 +1847,12 @@ export function createZCodeTaskServiceAdapter(
           mode: toZCodeMode(params.mode),
           model: requestedSelection,
           thoughtLevel: requestedSelection?.options?.reasoningLevel,
-          ...(params.automationId || params.deferPersistenceUntilFirstPrompt
+          ...(params.automationId || params.deferPersistenceUntilFirstPrompt || params.orchestrationParentTaskId
             ? {
                 // automation / 闲时任务新建空 session 后会立即 sendText。session_input 有
                 // session 外键，必须让 V4 admission 在首发前统一持久化 session 主记录；
                 // 否则 create 返回成功后第一条 prompt 会稳定触发 FOREIGN KEY constraint failed。
+                // 编排 spawn 同理：创建后立即发首条指令。
                 persistence: "deferred" as const,
               }
             : {}),
@@ -1846,6 +1860,10 @@ export function createZCodeTaskServiceAdapter(
             ? {
                 titleGenerationEnabled: false,
               }
+            : {}),
+          // 编排子任务身份 → 会话级 taskType=orchestration_child（结构性禁用编排工具）。
+          ...(params.orchestrationParentTaskId
+            ? { orchestrationRole: "child" as const, orchestrationParentTaskId: params.orchestrationParentTaskId }
             : {}),
           // replayable task facade 创建 session 时同样会启动 runtime；
           // 之前这里丢掉 mcpServers，导致手机远控路径和 desktop-continuous 的 MCP 行为不一致。
@@ -1858,6 +1876,13 @@ export function createZCodeTaskServiceAdapter(
         ...(params.automationId ? { cronAutomationId: params.automationId } : {}),
         // 闲时派发在创建时即盖章持久归属；月亮图标与后续系统分组归属都只看该标记。
         ...(params.offPeakTaskId ? { offPeakTaskId: params.offPeakTaskId } : {}),
+        // 编排子任务在创建时即盖 child 标记；列表徽标与父任务反查都只看该标记。
+        ...(params.orchestrationParentTaskId
+          ? {
+              orchestrationRole: "child" as const,
+              orchestrationParentTaskId: params.orchestrationParentTaskId,
+            }
+          : {}),
       });
       await taskIndexRepo.initializeGroupedTaskAtTop({
         workspacePath: meta.workspacePath,

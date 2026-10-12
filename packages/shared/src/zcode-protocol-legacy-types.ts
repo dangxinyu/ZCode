@@ -88,6 +88,11 @@ export const zcodeSessionKindSchema = z.enum([
   "workflow_child",
   "subagent_child",
   "nested_workflow_child",
+  // 编排任务（spec: packages/services/specs/orchestration-tasks.md）：与 CLI 侧
+  // contracts 的 SESSION_TASK_TYPES 同步维护，漏一个值 CLI 新 sessionKind 会被
+  // server 侧快照校验整体拒收（回源同步失败）。
+  "orchestration_parent",
+  "orchestration_child",
 ]);
 export const zcodeSessionGoalSchema = z
   .object({

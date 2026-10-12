@@ -31,6 +31,11 @@ export const sessionSummarySchema = z.object({
   workspaceId: z.string(),
   // fork 树。
   parentSessionId: z.string().optional(),
+  // 编排身份（spec: packages/services/specs/orchestration-tasks.md）：
+  // orchestrator=编排主任务（「编排」分区过滤 + # 引用候选排除），child=编排子任务。
+  // optional 兼容旧 sessions-index frame / 旧 CLI。
+  orchestrationRole: z.enum(["orchestrator", "child"]).optional(),
+  orchestrationParentTaskId: z.string().optional(),
   title: z.string(),
   // custom = 用户显式重命名；default/generated 都不是产品语义上的手动标题。
   // optional 是为了兼容旧 sessions-index frame / 旧持久化摘要。

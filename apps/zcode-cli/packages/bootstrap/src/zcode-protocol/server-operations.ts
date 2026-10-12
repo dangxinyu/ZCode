@@ -106,6 +106,7 @@ import { createWorkspaceZCodeApp, ensureSessionModelAvailable } from "./workspac
 import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.js";
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
+import { createProtocolOrchestrationPort } from "./orchestration-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js";
@@ -3304,7 +3305,17 @@ async function createRecord(
     "parentSessionId" in params && params.parentSessionId
       ? (params.parentSessionId as SessionId)
       : undefined;
-  const taskType = params.taskType ?? "interactive";
+  // 编排任务身份 → 会话级 taskType（spec: orchestration-tasks.md）。
+  // 必须落在会话级而非 turn 级：orchestration_parent 的工具注入与 orchestration_child
+  // 的结构性禁用都要求贯穿整个会话生命周期（用户手动输入不回退工具面）。
+  // child 仅限 host 派生链路（schema refine 强制携带 parent task id）。
+  const orchestrationTaskType =
+    "orchestrationRole" in params && params.orchestrationRole === "orchestrator"
+      ? ("orchestration_parent" as const)
+      : "orchestrationRole" in params && params.orchestrationRole === "child"
+        ? ("orchestration_child" as const)
+        : undefined;
+  const taskType = params.taskType ?? orchestrationTaskType ?? "interactive";
   const runtimeMcp = protocolMcpServersToRuntimeMcpConfig(params.mcpServers);
   context.logger?.info("ZCode Protocol createRecord MCP config", {
     event: "zcode_protocol.create_record.mcp_config",
@@ -3368,6 +3379,12 @@ async function createRecord(
     // 这里把阻塞交互转换成 server-to-client JSON-RPC request，由 app 通过 response 释放 runtime。
     permissionBroker: createProtocolInteractionBroker(context),
     automationPort: createProtocolAutomationPort(context, () => ownSessionRecord),
+    // 编排工具面：仅 orchestration_parent 注入（create 的 orchestrationRole 映射或
+    // resume 的持久化 taskType）；child 与普通会话不注入，与 core 的
+    // includeOrchestration 门构成双重 fail-closed（spec: orchestration-tasks.md）。
+    ...(taskType === "orchestration_parent"
+      ? { orchestrationPort: createProtocolOrchestrationPort(context) }
+      : {}),
     // 只接入 Host 已开放的工具面；缺省不注入。复用现行异步工厂，
     // 不恢复旧 deferred ModelAdapter/Registry overlay，也不改变 Session Selection。
     ...(("offPeakToolEnabled" in params && params.offPeakToolEnabled === true) ||

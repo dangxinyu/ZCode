@@ -44,8 +44,17 @@ function startDraftSessionPrewarm(params: {
   onSettled?: () => void;
   /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
+  /** 编排任务入口的预热身份（draftCreateSource=orchestration 时返回 "orchestrator"）。 */
+  resolveOrchestrationRole?: () => "orchestrator" | undefined;
 }): DraftPrewarmController {
-  const { workspaceKey, dispatchCommand, onReady, onSettled, resolveInitialConfig } = params;
+  const {
+    workspaceKey,
+    dispatchCommand,
+    onReady,
+    onSettled,
+    resolveInitialConfig,
+    resolveOrchestrationRole,
+  } = params;
   let disposed = false;
   let promotionState: "draft" | "pending" | "promoted" | "discarded" = "draft";
   let createdSessionId: string | null = null;
@@ -72,6 +81,13 @@ function startDraftSessionPrewarm(params: {
     if (initialConfig && Object.keys(initialConfig).length > 0) {
       // 预热会话首帧即用全局模型（CLI 归并 createSession.config），不闪 workspace 缺省。
       createPayload.config = initialConfig;
+    }
+    // 编排任务身份必须随预热创建进入会话（taskType=orchestration_parent 在创建期定型，
+    // sendText 提升无法补写）。首发复用预热会话是主路径，缺了它编排工具面永不注册
+    // （spec: packages/services/specs/orchestration-tasks.md）。
+    const orchestrationRole = resolveOrchestrationRole?.();
+    if (orchestrationRole) {
+      createPayload.orchestrationRole = orchestrationRole;
     }
     return createPayload;
   };
@@ -201,23 +217,28 @@ class DraftSessionPrewarmCoordinator {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private dispatchCommand: DispatchCommand;
   private resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined;
+  private resolveOrchestrationRole: (() => "orchestrator" | undefined) | undefined;
 
   constructor(
     private readonly workspaceKey: string,
     dispatchCommand: DispatchCommand,
     resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined,
+    resolveOrchestrationRole: (() => "orchestrator" | undefined) | undefined,
     private readonly onEmpty: () => void,
   ) {
     this.dispatchCommand = dispatchCommand;
     this.resolveInitialConfig = resolveInitialConfig;
+    this.resolveOrchestrationRole = resolveOrchestrationRole;
   }
 
   update(
     dispatchCommand: DispatchCommand,
     resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined,
+    resolveOrchestrationRole: (() => "orchestrator" | undefined) | undefined,
   ): void {
     this.dispatchCommand = dispatchCommand;
     this.resolveInitialConfig = resolveInitialConfig;
+    this.resolveOrchestrationRole = resolveOrchestrationRole;
   }
 
   acquire(params: {
@@ -323,6 +344,7 @@ class DraftSessionPrewarmCoordinator {
       dispatchCommand: (type, payload, targetSessionId) =>
         this.dispatchCommand(type, payload, targetSessionId),
       resolveInitialConfig: () => this.resolveInitialConfig?.(),
+      resolveOrchestrationRole: () => this.resolveOrchestrationRole?.(),
       onReady: (sessionId) => {
         if (this.current !== current || current.retiring) {
           return;
@@ -431,6 +453,7 @@ function getDraftSessionPrewarmCoordinator(params: {
   transportIdentity: unknown;
   dispatchCommand: DispatchCommand;
   resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined;
+  resolveOrchestrationRole: (() => "orchestrator" | undefined) | undefined;
 }): DraftSessionPrewarmCoordinator {
   let transportCoordinators = draftPrewarmCoordinatorsByTransport.get(params.transportIdentity);
   if (!transportCoordinators) {
@@ -444,6 +467,7 @@ function getDraftSessionPrewarmCoordinator(params: {
       params.workspaceKey,
       params.dispatchCommand,
       params.resolveInitialConfig,
+      params.resolveOrchestrationRole,
       () => {
         if (transportCoordinators?.get(ownerKey) !== coordinator) {
           return;
@@ -472,6 +496,8 @@ export function useDraftSessionPrewarm(params: {
   dispatchCommand: DispatchCommand;
   /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
+  /** 编排任务入口的预热身份（draftCreateSource=orchestration 时返回 "orchestrator"）。 */
+  resolveOrchestrationRole?: () => "orchestrator" | undefined;
 }): DraftSessionPrewarm {
   const {
     enabled,
@@ -481,6 +507,7 @@ export function useDraftSessionPrewarm(params: {
     invalidationVersion = 0,
     dispatchCommand,
     resolveInitialConfig,
+    resolveOrchestrationRole,
   } = params;
   // workspace/pane/transport 共同定义逻辑 owner：同 owner 重挂复用 single-flight，transport
   // 换代仍生成新 coordinator，确保旧 session 的清理不会误走新 transport。
@@ -496,12 +523,13 @@ export function useDraftSessionPrewarm(params: {
         transportIdentity,
         dispatchCommand,
         resolveInitialConfig,
+        resolveOrchestrationRole,
       }),
     [owner],
   );
   useLayoutEffect(() => {
-    coordinator.update(dispatchCommand, resolveInitialConfig);
-  }, [coordinator, dispatchCommand, resolveInitialConfig]);
+    coordinator.update(dispatchCommand, resolveInitialConfig, resolveOrchestrationRole);
+  }, [coordinator, dispatchCommand, resolveInitialConfig, resolveOrchestrationRole]);
   const generation = useMemo(() => ({ owner }), [enabled, invalidationVersion, owner]);
   const [ready, setReady] = useState<{
     generation: typeof generation;

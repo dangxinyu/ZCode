@@ -32,6 +32,7 @@ import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type {
   AutomationPort,
+  OrchestrationPort,
   OffPeakPort,
   BackgroundTaskCancelResult,
   CollaborationMode,
@@ -181,6 +182,8 @@ export interface ZCodeAppOptions {
   onWorkflowEvent?: (event: WorkflowEvent) => void | Promise<void>;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 编排任务端口；协议宿主仅对 orchestration_parent 会话注入（spec: orchestration-tasks.md）。 */
+  orchestrationPort?: OrchestrationPort;
   /** 首次真实用户执行或 cold-resume fallback 时解析一次，之后由 app 生命周期缓存。 */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;
   /** Trusted embedder policy; workspace/project files cannot populate this field. */

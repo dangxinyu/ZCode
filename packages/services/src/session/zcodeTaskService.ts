@@ -230,6 +230,12 @@ export interface IZCodeTaskService {
     /** 闲时任务派发时标记所属 off-peak 任务，落 tasks-index 的 off_peak_task_id。 */
     offPeakTaskId?: string;
     /**
+     * 编排子任务派发（orchestration spawn 链路专用，spec: orchestration-tasks.md）：
+     * 使会话 taskType=orchestration_child 并落 child 标记；值 = 编排主任务 taskId。
+     * UI 不使用本参数——child 只能由编排任务派生。
+     */
+    orchestrationParentTaskId?: string;
+    /**
      * 无界面派发会先创建空 session，再立即发送首条 V4 输入。此时使用 deferred，
      * 让输入 admission 在写 session_input 外键账本前先统一持久化 session 主记录。
      */

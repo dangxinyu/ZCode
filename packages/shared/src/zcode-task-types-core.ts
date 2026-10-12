@@ -171,6 +171,9 @@ export type ZCodeTaskRuntimeStatus =
   | "failed";
 /** 持久化的任务状态，记录最后一次 prompt 的结果 */
 export type ZCodeTaskPersistStatus = "running" | "completed" | "error";
+
+/** 编排任务角色：主任务负责派生/关联子任务并统筹汇总；子任务行为仍是普通任务。 */
+export type ZCodeOrchestrationRole = "orchestrator" | "child";
 export interface ZCodeTaskLastError {
   attribution?: ErrorAttribution;
   code?: string;
@@ -325,6 +328,17 @@ export interface ZCodeTaskMeta {
   offPeakTaskId?: string;
   /** fork 产物保留来源 taskId，供 UI 做本地化标题兜底和后续追溯。 */
   forkedFromTaskId?: string;
+  /**
+   * 编排任务身份标记（spec: packages/services/specs/orchestration-tasks.md）。
+   *
+   * "orchestrator"：编排主任务，可派生/关联普通子任务并统筹汇总；
+   * 仅出现在侧边栏「编排」分区，且不出现在其他对话的 # 引用候选。
+   * "child"：编排子任务（派生或关联产生），行为仍是普通任务，仅禁用编排工具。
+   * 关系真相在 tasks-index 的 orchestration_links 表；本字段是读侧加速投影。
+   */
+  orchestrationRole?: ZCodeOrchestrationRole;
+  /** 编排子任务指向其编排主任务的 taskId（orchestrationRole="child" 时由 host 派生/关联时写入）。 */
+  orchestrationParentTaskId?: string;
   /** 未读任务记录最近一次标记/产生未读的时间，用于跨重启保留蓝点状态。 */
   unreadAt?: number;
   /** 持久化的任务状态，记录最后一次 prompt 的结果 */

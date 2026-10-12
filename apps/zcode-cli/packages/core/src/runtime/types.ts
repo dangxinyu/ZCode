@@ -71,6 +71,7 @@ import type {
   BrowserControlPort,
   ExecutionShellSelection,
   AutomationPort,
+  OrchestrationPort,
   OffPeakPort,
   FileSystemPort,
   HttpClientPort,
@@ -367,6 +368,8 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 编排任务端口；宿主仅对 orchestration_parent 会话注入，驱动 SpawnSubTask/LinkTask 工具面。 */
+  orchestrationPort?: OrchestrationPort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;
   logger?: Logger;
