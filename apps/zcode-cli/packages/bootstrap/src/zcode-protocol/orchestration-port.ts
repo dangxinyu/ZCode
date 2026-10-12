@@ -35,13 +35,15 @@ export function createProtocolOrchestrationPort(
         zcodeProtocolMethods.orchestrationSpawnSubTask,
         zcodeOrchestrationSpawnParamsSchema.parse({
           sessionId: taskContext.sessionId,
+          name: input.name,
           prompt: input.prompt,
         }),
         zcodeOrchestrationSpawnResultSchema,
       );
+      // 工具结果只回名称：childTaskId 是内部标识，模型侧不接触就不会念给用户。
       return {
-        childTaskId: result.childTaskId,
-        message: `Spawned child task ${result.childTaskId}. Its terminal outcome will be reported back to this orchestration task.`,
+        childTaskName: result.childTaskName,
+        message: `Spawned child task "${result.childTaskName}". Its terminal outcome will be reported back to this orchestration task automatically.`,
       };
     },
     async linkTask(input, taskContext): Promise<LinkTaskOutput> {
@@ -54,10 +56,11 @@ export function createProtocolOrchestrationPort(
         zcodeOrchestrationLinkResultSchema,
       );
       return {
-        childTaskId: result.childTaskId,
+        childTaskName: result.childTaskName,
+        alreadyLinked: result.alreadyLinked,
         message: result.alreadyLinked
-          ? `Task ${result.childTaskId} was already linked to this orchestration.`
-          : `Linked existing task ${result.childTaskId} into this orchestration. Linking never sends instructions to it; terminal outcomes will be reported here.`,
+          ? `Task "${result.childTaskName}" was already linked to this orchestration.`
+          : `Linked existing task "${result.childTaskName}" into this orchestration. Linking never sends instructions to it; terminal outcomes will be reported here.`,
       };
     },
     async listChildren(_input, taskContext): Promise<ListOrchestrationChildrenOutput> {
@@ -93,6 +96,7 @@ export function createProtocolOrchestrationPort(
             title: task.title,
             status: task.status,
             orchestrationRole: task.orchestrationRole,
+            latestReply: task.latestReply,
             updatedAt: task.updatedAt,
           }),
         ),

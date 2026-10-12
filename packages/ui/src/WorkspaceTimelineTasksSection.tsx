@@ -1,10 +1,12 @@
 /* eslint-disable max-lines -- timeline 同时承载本地 scoped 查询、远端主动缓存和任务操作分发，先集中保持链路清晰。 */
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { isOrchestrationTask } from "@zcode/shared";
 import { OrchestrationChildrenList } from "@/OrchestrationChildrenList.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
+import { useOrchestrationWorkspaceGroupsCollapsed } from "@/lib/orchestrationWorkspaceGroupsCollapse.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
@@ -14,6 +16,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getTaskTimelineGroupMessage, groupTaskTimelineItems } from "@/lib/taskTimelineGroups.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
+import { getPathLeaf } from "@/lib/path.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { logger } from "@/logger.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
@@ -27,7 +30,24 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
 import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
 
-function buildTimelineItemKey(workspacePath: string, taskId: string, workspaceIdentity?: string) {
+/** timeline 分组的统一形状：日期分组只带 label；编排的工作区分组带 workspace 字段。 */
+interface TimelineTaskGroup {
+  key: string;
+  label: Parameters<typeof getTaskTimelineGroupMessage>[0] | null;
+  /** 编排工作区分组：工作区显示名（tab 名或目录末段）。 */
+  workspaceName?: string;
+  /** 与 workspaceName 配对的完整路径（组头悬停 title）。 */
+  workspacePath?: string;
+  /** 与 workspaceName 配对的 workspace key（分组折叠态的持久化键）。 */
+  workspaceKey?: string;
+  items: ZCodeTaskMeta[];
+}
+
+function buildTimelineItemKey(
+  workspacePath: string,
+  taskId: string,
+  workspaceIdentity?: string,
+) {
   return `${buildTaskWorkspaceKey(workspacePath, workspaceIdentity)}:${taskId}`;
 }
 
@@ -227,6 +247,24 @@ export function WorkspaceTimelineTasksSection({
   // 子任务折叠态：共享 hook（编排分区与置顶区同步），localStorage 持久化、默认展开。
   const { isCollapsed: isOrchestrationChildrenCollapsed, toggleCollapsed: toggleOrchestrationChildren } =
     useOrchestrationChildrenCollapsed();
+  // 编排工作区分组折叠态：默认展开，localStorage 持久化（key 为 workspace key）。
+  const {
+    isGroupCollapsed: isOrchestrationWorkspaceGroupCollapsed,
+    toggleGroupCollapsed: toggleOrchestrationWorkspaceGroup,
+  } = useOrchestrationWorkspaceGroupsCollapsed();
+  // 编排分区的子任务折叠态与工作区分组（spec: orchestration-tasks.md）：
+  // 编排任务跨 workspace 混排时按工作区分组展示（同项目视图语义），组头 =
+  // workspace tab 显示名（悬停完整路径），行内不再重复工作区标签。
+  const workspaceTabByKey = useMemo(
+    () =>
+      new Map(
+        workspaceTabs.map((tab) => [
+          buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+          tab,
+        ]),
+      ),
+    [workspaceTabs],
+  );
   const items = sortedItems.slice(0, visibleTaskLimit);
   const itemByKey = useMemo(() => {
     const nextItemByKey = new Map<string, ZCodeTaskMeta>();
@@ -247,6 +285,43 @@ export function WorkspaceTimelineTasksSection({
       workspaceServiceLookup.has(buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity)),
     );
     if (!groupByDate) {
+      // 编排分区按工作区分组：组序沿用 workspace tabs 顺序（用户排过的顺序），
+      // 组内保持既有排序（最近优先）；组头悬停显示完整目录路径。
+      if (orchestrationOnly) {
+        const itemsByWorkspaceKey = new Map<string, typeof visibleItems>();
+        for (const item of visibleItems) {
+          const workspaceKey = buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity);
+          const list = itemsByWorkspaceKey.get(workspaceKey);
+          if (list) {
+            list.push(item);
+          } else {
+            itemsByWorkspaceKey.set(workspaceKey, [item]);
+          }
+        }
+        const groupOrder = [
+          ...workspaceTabs.map((tab) =>
+            buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+          ),
+          ...itemsByWorkspaceKey.keys(),
+        ].filter((key, index, all) => all.indexOf(key) === index);
+        return groupOrder
+          .map((workspaceKey): TimelineTaskGroup | null => {
+            const groupItems = itemsByWorkspaceKey.get(workspaceKey);
+            const sample = groupItems?.[0];
+            if (!groupItems || !sample) return null;
+            const tab = workspaceTabByKey.get(workspaceKey);
+            return {
+              key: `workspace:${workspaceKey}`,
+              label: null,
+              workspaceName:
+                tab?.label || getPathLeaf(sample.workspacePath) || sample.workspacePath,
+              workspacePath: sample.workspacePath,
+              workspaceKey,
+              items: groupItems,
+            };
+          })
+          .filter((group): group is TimelineTaskGroup => group !== null);
+      }
       return [{ key: "all", label: null, items: visibleItems }];
     }
     return groupTaskTimelineItems(items, {
@@ -254,7 +329,7 @@ export function WorkspaceTimelineTasksSection({
       now: Date.now(),
       locale,
     })
-      .map((group) => ({
+      .map((group): TimelineTaskGroup => ({
         ...group,
         items: group.items.filter((item) =>
           workspaceServiceLookup.has(
@@ -263,7 +338,16 @@ export function WorkspaceTimelineTasksSection({
         ),
       }))
       .filter((group) => group.items.length > 0);
-  }, [groupByDate, items, locale, taskSortBy, workspaceServiceLookup]);
+  }, [
+    groupByDate,
+    items,
+    locale,
+    orchestrationOnly,
+    taskSortBy,
+    workspaceServiceLookup,
+    workspaceTabByKey,
+    workspaceTabs,
+  ]);
   const remoteTotal = remoteWorkspaceKeys.reduce(
     (sum, workspaceKey) =>
       sum +
@@ -724,13 +808,47 @@ export function WorkspaceTimelineTasksSection({
           <ul className="space-y-1">
             {timelineGroups.map((group) => {
               const labelMessage = group.label ? getTaskTimelineGroupMessage(group.label) : null;
+              // 编排工作区分组可折叠（组头整行点击 + 键盘），收起时隐藏该组行；
+              // 折叠态按 workspace key 持久化，默认展开。
+              const isWorkspaceGroup = Boolean(group.workspaceName && group.workspaceKey);
+              const workspaceGroupCollapsed =
+                isWorkspaceGroup && group.workspaceKey
+                  ? isOrchestrationWorkspaceGroupCollapsed(group.workspaceKey)
+                  : false;
               return (
                 <li key={group.key} className="space-y-0.5">
-                  {labelMessage ? (
+                  {isWorkspaceGroup ? (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={!workspaceGroupCollapsed}
+                      title={group.workspacePath}
+                      className="flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-2 pt-2 pb-1 text-ui-base font-medium text-foreground-subtle hover:bg-hover"
+                      onClick={() => {
+                        if (group.workspaceKey) toggleOrchestrationWorkspaceGroup(group.workspaceKey);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        if (group.workspaceKey) toggleOrchestrationWorkspaceGroup(group.workspaceKey);
+                      }}
+                    >
+                      {workspaceGroupCollapsed ? (
+                        <ChevronRightIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                      ) : (
+                        <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                      )}
+                      <span className="truncate">{group.workspaceName}</span>
+                      <span className="ml-auto shrink-0 text-foreground-subtlest">
+                        {group.items.length}
+                      </span>
+                    </div>
+                  ) : labelMessage ? (
                     <div className="px-3 pt-2 pb-1 text-ui-base font-medium text-foreground-subtle">
                       {intl.formatMessage({ id: labelMessage.id }, labelMessage.values)}
                     </div>
                   ) : null}
+                  {!workspaceGroupCollapsed ? (
                   <ul className="space-y-0.5">
                     {group.items.map((item) => {
                       const itemKey = buildTimelineItemKey(
@@ -778,6 +896,7 @@ export function WorkspaceTimelineTasksSection({
                                   }
                                 : undefined
                             }
+                            hideWorkspaceLabel={Boolean(orchestrationChildrenByParentId)}
                             onSelectTask={handlers.onSelectTask}
                             onArchiveTaskInline={handlers.onArchiveTaskInline}
                             onCancelArchiveConfirm={handleCancelArchiveConfirm}
@@ -806,6 +925,7 @@ export function WorkspaceTimelineTasksSection({
                       );
                     })}
                   </ul>
+                  ) : null}
                 </li>
               );
             })}

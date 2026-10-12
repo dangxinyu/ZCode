@@ -17,6 +17,9 @@ export const LIST_WORKSPACE_TASKS_TOOL_NAME = "ListWorkspaceTasks";
 
 export const SpawnSubTaskInputSchema = z
   .object({
+    name: nonEmptyString.describe(
+      'Short distinctive name for the child task, derived from its mission (2-20 chars, e.g. "登录页回归验证"). It becomes the task title shown in the task list and in terminal notifications.',
+    ),
     prompt: nonEmptyString.describe(
       "Complete first instruction for the new child task. Self-contained: the child session starts fresh with no conversation history from this orchestration task. Describe the deliverable explicitly; the task title is derived from it automatically.",
     ),
@@ -27,7 +30,7 @@ export const SpawnSubTaskInputJsonSchema = toToolJsonSchema(SpawnSubTaskInputSch
 
 export const SpawnSubTaskOutputSchema = z
   .object({
-    childTaskId: nonEmptyString,
+    childTaskName: nonEmptyString,
     message: nonEmptyString,
   })
   .strict();
@@ -46,7 +49,8 @@ export const LinkTaskInputJsonSchema = toToolJsonSchema(LinkTaskInputSchema);
 
 export const LinkTaskOutputSchema = z
   .object({
-    childTaskId: nonEmptyString,
+    childTaskName: nonEmptyString,
+    alreadyLinked: z.boolean(),
     message: nonEmptyString,
   })
   .strict();
@@ -86,6 +90,8 @@ const workspaceTaskSummarySchema = z
     title: z.string(),
     status: z.enum(["running", "completed", "error"]).nullable(),
     orchestrationRole: z.enum(["orchestrator", "child"]).nullable(),
+    /** 最近一条 assistant 回复的有界摘要（活跃会话可取，冷会话为 null）：判断任务实际在做什么的关键信号。 */
+    latestReply: z.string().nullable(),
     updatedAt: z.number().int().nonnegative(),
   })
   .strict();

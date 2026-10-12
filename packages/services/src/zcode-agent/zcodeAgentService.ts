@@ -2581,6 +2581,7 @@ export function createZCodeAgentService(
                 ...(workspace.workspaceIdentity
                   ? { workspaceIdentity: workspace.workspaceIdentity }
                   : {}),
+                name: parsed.data.name,
                 prompt: parsed.data.prompt,
               });
               await client.respond(request.id, result);

@@ -9,7 +9,9 @@
 - 编排任务会话内注入编排工具：`SpawnSubTask`（派生=新建普通子任务并发首条指令）、`LinkTask`（关联=把同 workspace 已有普通任务纳入统筹）、`ListOrchestrationChildren`（列出子任务与状态）。
 - 派生子任务（child）：由 host 域创建普通任务并盖 child 标记；child 会话**会话级**禁用三个编排工具（不可再派生/关联），其内部 subagent 能力不受影响。
 - 关联语义（已确认决策）：关联任务只纳入统筹（收终态、可被 list/读取），编排**不主动**向关联任务注入指令；派生任务由 spawn 时携带的首条 prompt 驱动。
-- 子任务任一终态（含用户手动多轮的终态）都通知编排会话，通知注明来源任务与轮次。
+- 子任务任一终态（含用户手动多轮的终态）都通知编排会话，通知注明来源任务名称并附**最终回复的有界摘要**（尾部窗口最后一条 assistant 消息，约 400 字封顶；失败附错误摘要）：编排 agent 默认凭摘要汇报、不再全量读取子会话。摘要不可用（子任务 runtime 已被回收，v1 sessionMessages 只认活跃会话）时降级为引导语。面向编排会话的注入文本与工具输出不携带 taskId / inputId 等内部标识（诊断日志除外）。
+- 关联分析（link 候选匹配）：`ListWorkspaceTasks` 每条带最近一条 assistant 回复的有界摘要（约 120 字，仅最近活跃前 20 个非 orchestrator 任务）——候选匹配以摘要（任务实际在做什么）为准，标题相似不足以判定；不确定时编排 agent 先对候选 `ReadSessionContext` 核查目标再关联（LinkTask modelInstructions 引导）。摘要读取经 v1 sessionMessages，CLI 侧对不在 v1 registry 的会话（v4/web 创建）用 sessionStore 冷读兜底，读不到才为 null。
+- 子任务命名：派生时 SpawnSubTask 入参含 `name`（模型按任务内容起的简短专名），host 在首条指令送达后经 `renameTask`（titleSource=custom）落为任务标题；该标题防自动改名覆盖（tasks-index `title_overridden`），侧边栏、通知、工具输出统一用它。
 - 其他对话的 # 引用候选不列出 orchestrator 任务；child 任务仍可被引用（它就是普通任务）。
 - 编排任务本身是普通 session：手机 `web-remote-replayable` 恢复、多窗口 attachment、owner/lease 语义全部沿用。
 
@@ -33,11 +35,15 @@
 ```text
 派生：编排会话 SpawnSubTask 工具 → 反向 RPC host:orchestration/spawnSubTask
   → taskIndexRepo 事务：写 links(derived) + 盖 child 标记
-  → createTask(deferred) + sendPrompt(首条指令) → 返回 childTaskId → 工具结果回流编排会话
+  → createTask(deferred) + sendPrompt(首条指令) → renameTask(name, titleSource=custom)
+  → 返回 { childTaskId, childTaskName } → 工具结果只回传 childTaskName（模型侧不接触 id）
 
 终态：child session 终态（任意轮）→ taskIndexSyncer 事件 → host 过滤 role=child
-  → 查 links 得 parent → sendPrompt 注入编排会话（inputPresentation=orchestration 通知）
-  → CLI CommandInbox 串行 admission → 编排 agent 自行决定汇总时机
+  → 查 links 得 parent → 读 tasks-index 最新 title + readSessionMessages 取最终回复摘要
+  → sendPrompt 注入编排会话（【编排通知】子任务「名称」已完成 + 摘要，不含 taskId/inputId，
+    引导编排 agent 凭摘要汇报、非必要不 ReadSessionContext）
+  → CLI CommandInbox 串行 admission → 确需细节时经 ListOrchestrationChildren
+    换取 taskId → ReadSessionContext
 
 关联：编排会话 LinkTask → host:orchestration/linkTask
   → 校验（同 workspace / 目标非 orchestrator / 目标非他人 child）→ INSERT OR IGNORE links(linked) → 盖 child 标记
@@ -59,7 +65,7 @@
 1. 「新建编排任务」→ 首条消息 → 任务仅出现在「编排」分区；普通任务入口行为不变。
 2. 编排会话中 agent 调 `SpawnSubTask` → 新普通任务带 child 标记出现在任务列表，收到首条 prompt。
 3. child 会话中编排三工具不存在；`Agent`（子代理）工具仍可用。
-4. child 完成（含手动轮）→ 编排会话收到注明来源的通知并触发一轮统筹。
+4. child 完成（含手动轮）→ 编排会话收到注明来源任务名称、附最终回复摘要的通知（无内部 id），且编排 agent 不为汇报而全量读取子会话。
 5. `LinkTask` 关联已有普通任务 → `ListOrchestrationChildren` 可见；关联任务不被注入指令。
 6. 任意其他对话 # 引用候选不含编排任务。
 7. 存量普通任务（无标记）在升级后所有路径行为不变。

@@ -86,6 +86,7 @@ import {
   buildSessionSnapshot,
   buildWorkspaceRef,
   formatProtocolModelSelection,
+  mapMessageWithParts,
   mapSessionEventForProtocol,
   mapSessionInfo,
   resolveSessionContextUsage,
@@ -1865,14 +1866,41 @@ export async function readSessionContextUsage(
 
 export async function readMessages(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(zcodeSessionMessagesParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  const allMessages = await readActiveSessionMessages(context, record);
+  // 活跃 runtime 优先（rewind 投影以活跃会话为准）；registry 缺失时冷读兜底：
+  // v4/web 创建的会话不在 v1 sessions registry（readSession 的 "Session is not active"
+  // 同根因），但消息已持久化在 session store——host 侧的摘要类读取（orchestration
+  // latestReply / 终态通知摘要）对这些会话必须同样可用，否则 UI 建的任务永远拿不到摘要。
+  const record = context.sessions.get(params.sessionId);
+  let allMessages: MessageWithParts[];
+  if (record) {
+    allMessages = await readActiveSessionMessages(context, record);
+  } else {
+    const sessionStore = context.deps.sessionStore;
+    if (!sessionStore) {
+      // 无 store 的装配保持旧行为：requireSession 抛诊断错误（区分冷会话与脏 id）。
+      requireSession(context, params.sessionId);
+      allMessages = [];
+    } else {
+      context.logger?.warn("ZCode Protocol sessionMessages cold fallback (session not active)", {
+        event: "zcode_protocol.session.messages_cold_fallback",
+        module: "bootstrap.zcode_protocol",
+        sessionId: params.sessionId,
+      });
+      allMessages = await sessionStore.messages({
+        sessionID: params.sessionId as SessionId,
+      });
+    }
+  }
   const afterMessageIndex = params.afterMessageId
     ? allMessages.findIndex((message) => String(message.info.id) === params.afterMessageId)
     : -1;
   const messages = afterMessageIndex >= 0 ? allMessages.slice(afterMessageIndex + 1) : allMessages;
+  const windowed = params.limit ? messages.slice(-params.limit) : messages;
+  // sessionMessages 的返回值是对外协议负载，必须走 mapMessageWithParts 投影：
+  // 内部 MessageWithParts 带 id/sessionID/messageID 原始字段，host 侧 v1 schema
+  // 校验会因字段形状不符失败（orchestration 终态摘要读取实测命中）。
   return {
-    messages: params.limit ? messages.slice(-params.limit) : messages,
+    messages: windowed.map(mapMessageWithParts),
   };
 }
 

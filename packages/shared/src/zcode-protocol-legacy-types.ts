@@ -230,8 +230,7 @@ export const zcodeUserMessageInfoSchema = z
     visibility: zcodeMessageVisibilitySchema.optional(),
     semantics: zcodeMessageSemanticsSchema.optional(),
     metadata: jsonObjectSchema.optional(),
-  })
-  .strict();
+  });
 export const zcodeAssistantMessageInfoSchema = z
   .object({
     messageId: nonEmptyString,
@@ -253,8 +252,7 @@ export const zcodeAssistantMessageInfoSchema = z
     error: jsonObjectSchema.optional(),
     semantics: zcodeMessageSemanticsSchema.optional(),
     structured: z.unknown().optional(),
-  })
-  .strict();
+  });
 export const zcodeMessageInfoSchema = z.discriminatedUnion("role", [
   zcodeUserMessageInfoSchema,
   zcodeAssistantMessageInfoSchema,
@@ -360,99 +358,84 @@ export const zcodeTimelinePartSchema = partBaseSchema
         label: nonEmptyString,
       })
       .optional(),
-  })
-  .strict();
+  });
+// ---------------------------------------------------------------------------
+// 消息 part/info schema 的宽松化说明：这组 schema 只用于解析 CLI → host 的
+// 响应/事件负载（sessionRead 快照、sessionMessages、part_upserted 事件），
+// 方向上 CLI 是输出方与事实源，会对 part/info 附带遗留别名键（id/sessionID/
+// messageID 等）。这里保持对已知字段的严格校验，但对未知键剥离而非拒绝
+// （去掉 .strict() 走 zod 默认 strip），避免 CLI 新增字段造成 schema 漂移
+// 打断整条响应读取（orchestration 终态摘要曾因此命中 Unrecognized keys）。
+// ---------------------------------------------------------------------------
 export const zcodeMessagePartSchema = z.discriminatedUnion("type", [
-  partBaseSchema
-    .extend({
-      type: z.literal("text"),
-      text: z.string(),
-      synthetic: z.boolean().optional(),
-      ignored: z.boolean().optional(),
-      metadata: jsonObjectSchema.optional(),
-    })
-    .strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("reasoning"),
-      text: z.string(),
-      metadata: jsonObjectSchema.optional(),
-    })
-    .strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("file"),
-      mime: nonEmptyString,
-      filename: z.string().optional(),
-      url: nonEmptyString,
-      metadata: jsonObjectSchema.optional(),
-    })
-    .strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("tool"),
-      callId: nonEmptyString,
-      tool: nonEmptyString,
-      state: zcodeToolStateSchema,
-      metadata: jsonObjectSchema.optional(),
-    })
-    .strict(),
-  partBaseSchema
-    .extend({ type: z.literal("step-start"), snapshot: z.string().optional() })
-    .strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("step-finish"),
-      reason: z.string(),
-      snapshot: z.string().optional(),
-      cost: z.number().nonnegative(),
-      tokens: zcodeTokenUsageSchema,
-    })
-    .strict(),
-  partBaseSchema.extend({ type: z.literal("snapshot"), snapshot: z.string() }).strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("patch"),
-      hash: nonEmptyString,
-      files: z.array(z.string()),
-    })
-    .strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("compaction"),
-      auto: z.boolean(),
-      reason: z.string().optional(),
-      summaryMessageId: nonEmptyString.optional(),
-      metadata: jsonObjectSchema.optional(),
-    })
-    .strict(),
+  partBaseSchema.extend({
+    type: z.literal("text"),
+    text: z.string(),
+    synthetic: z.boolean().optional(),
+    ignored: z.boolean().optional(),
+    metadata: jsonObjectSchema.optional(),
+  }),
+  partBaseSchema.extend({
+    type: z.literal("reasoning"),
+    text: z.string(),
+    metadata: jsonObjectSchema.optional(),
+  }),
+  partBaseSchema.extend({
+    type: z.literal("file"),
+    mime: nonEmptyString,
+    filename: z.string().optional(),
+    url: nonEmptyString,
+    metadata: jsonObjectSchema.optional(),
+  }),
+  partBaseSchema.extend({
+    type: z.literal("tool"),
+    callId: nonEmptyString,
+    tool: nonEmptyString,
+    state: zcodeToolStateSchema,
+    metadata: jsonObjectSchema.optional(),
+  }),
+  partBaseSchema.extend({ type: z.literal("step-start"), snapshot: z.string().optional() }),
+  partBaseSchema.extend({
+    type: z.literal("step-finish"),
+    reason: z.string(),
+    snapshot: z.string().optional(),
+    cost: z.number().nonnegative(),
+    tokens: zcodeTokenUsageSchema,
+  }),
+  partBaseSchema.extend({ type: z.literal("snapshot"), snapshot: z.string() }),
+  partBaseSchema.extend({
+    type: z.literal("patch"),
+    hash: nonEmptyString,
+    files: z.array(z.string()),
+  }),
+  partBaseSchema.extend({
+    type: z.literal("compaction"),
+    auto: z.boolean(),
+    reason: z.string().optional(),
+    summaryMessageId: nonEmptyString.optional(),
+    metadata: jsonObjectSchema.optional(),
+  }),
   zcodeTimelinePartSchema,
-  partBaseSchema
-    .extend({
-      type: z.literal("subagent"),
-      prompt: z.string(),
-      description: z.string(),
-      agent: nonEmptyString,
-      model: modelSelectionSchema.optional(),
-      command: z.string().optional(),
-    })
-    .strict(),
-  partBaseSchema.extend({ type: z.literal("agent"), name: nonEmptyString }).strict(),
-  partBaseSchema
-    .extend({
-      type: z.literal("retry"),
-      attempt: z.number().int().nonnegative(),
-      error: jsonObjectSchema,
-    })
-    .strict(),
+  partBaseSchema.extend({
+    type: z.literal("subagent"),
+    prompt: z.string(),
+    description: z.string(),
+    agent: nonEmptyString,
+    model: modelSelectionSchema.optional(),
+    command: z.string().optional(),
+  }),
+  partBaseSchema.extend({ type: z.literal("agent"), name: nonEmptyString }),
+  partBaseSchema.extend({
+    type: z.literal("retry"),
+    attempt: z.number().int().nonnegative(),
+    error: jsonObjectSchema,
+  }),
 ]);
 export type ZCodeMessagePart = z.infer<typeof zcodeMessagePartSchema>;
-export const zcodeMessageWithPartsSchema = z
-  .object({
-    info: zcodeMessageInfoSchema,
-    parts: z.array(zcodeMessagePartSchema),
-  })
-  .strict();
+export const zcodeMessageWithPartsSchema = z.object({
+  info: zcodeMessageInfoSchema,
+  parts: z.array(zcodeMessagePartSchema),
+});
 export type ZCodeMessageWithParts = z.infer<typeof zcodeMessageWithPartsSchema>;
 export const zcodeSessionApiRetryStatusSchema = z
   .object({

@@ -194,6 +194,18 @@ export function WorkspacePinnedTasksSection({
   }, [orchestrationActiveItems, orchestrationFilter]);
   const { isCollapsed: isOrchestrationChildrenCollapsed, toggleCollapsed: toggleOrchestrationChildren } =
     useOrchestrationChildrenCollapsed();
+  // 编排行的工作区显示名（tab.label）：置顶区同样跨 workspace 混排，与编排分区同规则；
+  // 无 tab label 时退回 TaskListItem 默认末段名，悬停 title 始终是完整路径。
+  const workspaceTabLabelByKey = useMemo(
+    () =>
+      new Map(
+        workspaceTabs.map((tab) => [
+          buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+          tab.label,
+        ]),
+      ),
+    [workspaceTabs],
+  );
   const items = showAllTasks ? sortedItems : sortedItems.slice(0, collapsedLimit);
   const total = sortedItems.length;
   const syncingRemoteWorkspaces = workspaceTabs.some((tab) => {
@@ -630,6 +642,13 @@ export function WorkspacePinnedTasksSection({
                               toggleOrchestrationChildren(item.taskId);
                             },
                           }
+                        : undefined
+                    }
+                    workspaceLabelOverride={
+                      orchestrationChildrenByParentId
+                        ? workspaceTabLabelByKey.get(
+                            buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity),
+                          )
                         : undefined
                     }
                     onSelectTask={handlers.onSelectTask}

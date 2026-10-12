@@ -1253,13 +1253,6 @@ const enUS: Record<string, string> = {
   "updateDialog.restartToUpdate": "Restart to update",
   "updateDialog.skipVersion": "Skip this version",
   "updateDialog.later": "Later",
-  "update.toast.upToDate": "You're on the latest version (v{version})",
-  "update.toast.available": "New version v{version} is available",
-  "update.toast.downloading": "Downloading new version v{version}",
-  "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
-  "update.toast.ready": "v{version} downloaded, restart to install",
-  "update.toast.devSkipped": "Updates are disabled in dev builds",
-  "update.toast.error": "Update check failed: {error}",
   "forceUpdate.title": "Update Don’t-think to continue",
   "forceUpdate.description":
     "Your current version v{currentVersion} is below the minimum supported version v{minimalVersion}. Update first before continuing with this client.",
@@ -1272,8 +1265,6 @@ const enUS: Record<string, string> = {
   "desktopMenu.help.updateAvailableVersion": "Update available {version}",
   "desktopMenu.help.downloadingUpdateVersion": "Downloading update {version}...",
   "desktopMenu.help.downloadingUpdateProgress": "Downloading update... {progress}",
-  "desktopMenu.help.restartUpdateAction": "Restart to update",
-  "desktopMenu.help.restartToUpdate": "Restart to update ({version})",
   "postUpdateReleaseNotes.title": "Release notes",
   "postUpdateReleaseNotes.acknowledge": "I know",
 
@@ -1891,10 +1882,8 @@ const enUS: Record<string, string> = {
     "Turn this off to work around blank windows, crashes, or rendering issues caused by some GPUs or drivers. Restart the app to take effect.",
   "settings.desktopChromiumHardwareAccelerationSavedHint":
     "Chrome hardware acceleration setting saved. Restart the app to take effect.",
-  "settings.receivePreviewUpdates": "Receive preview updates early",
   "settings.receivePreviewUpdatesDescription":
     "When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.",
-  "settings.autoDownloadAndInstallUpdates": "Automatically download and install updates",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "When enabled, updates start downloading as soon as they are found. Restart still requires confirmation when tasks are running.",
   "settings.notification": "Task notifications",

@@ -1503,6 +1503,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                 ) : taskViewMode === "orchestration" ? (
                   // 编排分区复用时间线组件（orchestrationOnly）：行交互（hover 归档/置顶/重命名、
                   // 右键菜单、显示更多分页）与项目/时间线完全一致；删除走「归档 → 归档区删除」。
+                  // 行用 timeline 两行变体：第二行展示工作区（tab 名 + 悬停完整路径），
+                  // 编排分区跨 workspace 混排，用户需要知道每个编排任务操作的是哪个目录。
                   <WorkspaceTimelineTasksSection
                     workspaceTabs={workspaceTabs}
                     activeWorkspacePath={workspacePath}
@@ -1510,7 +1512,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     activeTaskId={activeTaskId}
                     taskSortBy={taskSortBy}
                     groupByDate={false}
-                    taskRowVariant="default"
+                    taskRowVariant="timeline"
                     excludeOrchestration={false}
                     orchestrationOnly
                     onOrchestrationChildJump={handleOrchestrationChildJump}

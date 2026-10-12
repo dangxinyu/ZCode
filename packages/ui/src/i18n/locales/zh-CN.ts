@@ -1165,13 +1165,6 @@ const zhCN: Record<string, string> = {
   "updateDialog.restartToUpdate": "重启以更新",
   "updateDialog.skipVersion": "跳过此版本",
   "updateDialog.later": "稍后",
-  "update.toast.upToDate": "已是最新版本 v{version}",
-  "update.toast.available": "发现新版本 v{version}",
-  "update.toast.downloading": "正在下载新版本 v{version}",
-  "update.toast.alreadyDownloading": "正在下载新版本（{progress}%）",
-  "update.toast.ready": "v{version} 已下载，重启即可安装",
-  "update.toast.devSkipped": "开发环境不检查更新",
-  "update.toast.error": "检查更新失败：{error}",
   "forceUpdate.title": "需要升级 Don’t-think 后继续使用",
   "forceUpdate.description":
     "当前版本 v{currentVersion} 低于最低可用版本 v{minimalVersion}。请先完成升级，升级前暂时无法继续使用当前客户端。",
@@ -1184,8 +1177,6 @@ const zhCN: Record<string, string> = {
   "desktopMenu.help.updateAvailableVersion": "发现新版本 {version}",
   "desktopMenu.help.downloadingUpdateVersion": "正在下载更新 {version}...",
   "desktopMenu.help.downloadingUpdateProgress": "正在下载更新... {progress}",
-  "desktopMenu.help.restartUpdateAction": "重启更新",
-  "desktopMenu.help.restartToUpdate": "重启以更新（{version}）",
   "postUpdateReleaseNotes.title": "更新说明",
   "postUpdateReleaseNotes.acknowledge": "我知道了",
   "projectSelector.heroTitle": "快速打开，专注工作。",
@@ -1785,10 +1776,8 @@ const zhCN: Record<string, string> = {
     "关闭后可规避部分显卡或驱动导致的白屏、闪退、渲染异常。修改后需重启应用生效。",
   "settings.desktopChromiumHardwareAccelerationSavedHint":
     "Chrome 硬件加速设置已保存，重启应用后生效",
-  "settings.receivePreviewUpdates": "接受提前收到预览版更新",
   "settings.receivePreviewUpdatesDescription":
     "开启后将最快、提前体验新功能和改进版本，关闭后将随着版本发布节奏获得版本推送更新。",
-  "settings.autoDownloadAndInstallUpdates": "自动下载并安装更新",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "开启后检测到更新会自动开始下载；下载完成后，如有任务正在运行，重启更新前仍会要求确认。",
   "settings.notification": "任务通知",

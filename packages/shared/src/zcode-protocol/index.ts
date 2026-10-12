@@ -3510,6 +3510,8 @@ export type ZCodeAutomationDeleteProtocolResult = z.infer<typeof zcodeAutomation
 export const zcodeOrchestrationSpawnParamsSchema = z
   .object({
     sessionId: nonEmptyString,
+    // 子任务专名：模型按任务内容起，host 经 renameTask 落为标题（spec: orchestration-tasks.md 命名规则）。
+    name: nonEmptyString,
     prompt: nonEmptyString,
   })
   .strict();
@@ -3518,7 +3520,7 @@ export type ZCodeOrchestrationSpawnProtocolParams = z.infer<
 >;
 
 export const zcodeOrchestrationSpawnResultSchema = z
-  .object({ childTaskId: nonEmptyString })
+  .object({ childTaskId: nonEmptyString, childTaskName: nonEmptyString })
   .strict();
 export type ZCodeOrchestrationSpawnProtocolResult = z.infer<
   typeof zcodeOrchestrationSpawnResultSchema
@@ -3535,7 +3537,11 @@ export type ZCodeOrchestrationLinkProtocolParams = z.infer<
 >;
 
 export const zcodeOrchestrationLinkResultSchema = z
-  .object({ childTaskId: nonEmptyString, alreadyLinked: z.boolean() })
+  .object({
+    childTaskId: nonEmptyString,
+    childTaskName: nonEmptyString,
+    alreadyLinked: z.boolean(),
+  })
   .strict();
 export type ZCodeOrchestrationLinkProtocolResult = z.infer<
   typeof zcodeOrchestrationLinkResultSchema
@@ -3574,6 +3580,8 @@ export const zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema = z
     title: z.string(),
     status: z.enum(["running", "completed", "error"]).nullable(),
     orchestrationRole: z.enum(["orchestrator", "child"]).nullable(),
+    /** 最近一条 assistant 回复的有界摘要（活跃会话可取，冷会话 null）：link 候选分析的内容级信号。 */
+    latestReply: z.string().nullable(),
     updatedAt: z.number().int().nonnegative(),
   })
   .strict();

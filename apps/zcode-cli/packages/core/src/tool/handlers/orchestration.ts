@@ -139,6 +139,7 @@ export const spawnSubTaskToolEntry: ToolEntry = {
       "Use this to parallelize independent work as top-level tasks the user can watch, pause, or open in the task list.",
       "Write a self-contained prompt: the child starts with no history from this conversation. Include the deliverable and any file paths it needs.",
       "After spawning, do not wait idly for the child; terminal notifications arrive automatically. Continue other work or summarize the plan.",
+      "When reporting to the user, refer to the child task by its name only. Internal identifiers (taskId/sessionId/inputId) must never appear in user-visible text.",
     ],
     readOnly: false,
     destructive: false,
@@ -181,8 +182,9 @@ export const linkTaskToolEntry: ToolEntry = {
     description:
       "Link an existing normal task in the same workspace into this orchestration so its terminal outcomes are tracked and summarized here. Linking never injects instructions into the target task. Orchestrator tasks and tasks already owned by another orchestration are rejected.",
     modelInstructions: [
-      "Call ListWorkspaceTasks first to analyze which existing task fits the current sub-goal (title, status, recency); never guess a taskId.",
-      "Linking is read-only for the target: it does not send it any prompt. If the linked task must do new work, tell the user instead.",
+      "Call ListWorkspaceTasks first to analyze which existing task fits the current sub-goal (title, status, recency, latest reply); never guess a taskId.",
+      "Judge fit by the latestReply excerpt (what the task is actually doing or delivered), not by title similarity alone. If a candidate looks right but you are still unsure of its scope, use ReadSessionContext with that taskId to verify its goal before linking.",
+      "Linking is read-only for the target: it does not send it any prompt. If the linked task must do new work, spawn a new child task instead or tell the user.",
     ],
     readOnly: false,
     destructive: false,
@@ -263,7 +265,7 @@ export const listWorkspaceTasksToolEntry: ToolEntry = {
   metadata: {
     name: LIST_WORKSPACE_TASKS_TOOL_NAME,
     description:
-      "List task summaries (taskId, title, status, orchestration role) in this orchestration task's workspace, for analyzing which existing task could take over a sub-goal before LinkTask.",
+      "List task summaries (taskId, title, status, orchestration role, latest reply excerpt) in this orchestration task's workspace, for analyzing which existing task could take over a sub-goal before LinkTask. latestReply is a short excerpt of the task's most recent assistant reply (null when its runtime is no longer active) — prefer it over the title for judging what a task is actually doing.",
     readOnly: true,
     destructive: false,
     concurrentSafe: true,
