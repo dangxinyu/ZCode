@@ -230,6 +230,12 @@ export interface IZCodeTaskService {
     /** 闲时任务派发时标记所属 off-peak 任务，落 tasks-index 的 off_peak_task_id。 */
     offPeakTaskId?: string;
     /**
+     * 编排子任务派发（orchestration spawn 链路专用，spec: orchestration-tasks.md）：
+     * 使会话 taskType=orchestration_child 并落 child 标记；值 = 编排主任务 taskId。
+     * UI 不使用本参数——child 只能由编排任务派生。
+     */
+    orchestrationParentTaskId?: string;
+    /**
      * 无界面派发会先创建空 session，再立即发送首条 V4 输入。此时使用 deferred，
      * 让输入 admission 在写 session_input 外键账本前先统一持久化 session 主记录。
      */
@@ -656,6 +662,28 @@ export interface IZCodeTaskService {
     workspaceIdentity?: string;
     title: string;
   }): Promise<ZCodeTaskMeta>;
+
+  /**
+   * 用户手动取消编排关联（spec: orchestration-tasks.md）：置关系墓碑 + 清子任务编排标记。
+   * 幂等：关系不在册时返回 unlinked=false。child 为清除标记后的最新 meta（用于列表缓存更新）。
+   */
+  unlinkOrchestrationChild(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    childTaskId: string;
+  }): Promise<{ unlinked: boolean; child: ZCodeTaskMeta | null }>;
+
+  /**
+   * 按编排批量查在册子关系（links 权威源，spec: orchestration-tasks.md）。
+   * UI 子任务下拉/计数用它：多编排跟踪下 tasks 行的 parent 列只记首个父，
+   * 单值列分不出第二父的子任务。
+   */
+  listOrchestrationChildrenMap(params: {
+    orchestrationTaskIds: string[];
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>>;
 
   /** 更新 task 置顶状态 */
   setTaskPinned(params: {

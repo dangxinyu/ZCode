@@ -18,6 +18,9 @@ export * from "./agent.js";
 export * from "./skill.js";
 export * from "./todo.js";
 export * from "./automation.js";
+// 编排任务工具面：名字常量被 core 的 orchestration_child 结构性禁用名单读走，
+// 漏掉这行会让禁用名单拿不到常量而静默失效（照 amend-workflow 的同款注释）。
+export * from "./orchestration.js";
 export * from "./off-peak.js";
 export * from "./target.js";
 export * from "./plan-mode.js";

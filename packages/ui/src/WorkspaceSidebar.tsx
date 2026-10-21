@@ -25,6 +25,7 @@ import {
   MessageCircleCheck,
   MessageCirclePlus,
   Minimize2,
+  Network,
   Plus,
   Search,
   X,
@@ -157,8 +158,8 @@ export { WorkspaceSidebarCollapsedRail } from "@/WorkspaceSidebar/WorkspaceSideb
 
 type TaskOrganizeBy = SidebarTaskOrganizeBy;
 type TaskSortBy = SidebarTaskSortBy;
-type PrimaryTaskMode = "workspace" | "grouped";
-type SidebarTaskViewMode = "grouped" | "workspace" | "timeline" | "archived";
+type PrimaryTaskMode = "workspace" | "grouped" | "orchestration";
+type SidebarTaskViewMode = "grouped" | "workspace" | "timeline" | "archived" | "orchestration";
 
 interface SidebarFileTreeTarget {
   workspacePath: string;
@@ -216,6 +217,9 @@ function resolveSidebarTaskViewMode(params: {
   }
   if (params.taskOrganizeBy === "grouped") {
     return "grouped";
+  }
+  if (params.taskOrganizeBy === "orchestration") {
+    return "orchestration";
   }
   return "workspace";
 }
@@ -396,6 +400,36 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const [taskSortBy, setTaskSortBy] = useState<TaskSortBy>(
     () => readSidebarTaskPreferences().sortBy,
   );
+  // 编排分区/置顶区的子任务跳转（spec: orchestration-tasks.md）：点击子任务时切换到
+  // 项目视图再选中目标——子任务在项目列表里定位高亮，用户能立刻看到它归属的 workspace 分组。
+  // 滚动定位用一次性 DOM 轮询：视图切换与项目列表行渲染是异步的（controller 查询 +
+  // React 渲染），等行出现后 scrollIntoView 顶部对齐（紧贴置顶区下方可见）即完成使命。
+  const handleOrchestrationChildJump = useCallback(
+    (
+      targetWorkspacePath: string,
+      taskId: string,
+      targetWorkspaceIdentity?: string,
+      expectedUnreadAt?: number,
+    ) => {
+      setTaskOrganizeBy((current) => (current === "orchestration" ? "project" : current));
+      handleTaskRowSelect(targetWorkspacePath, taskId, targetWorkspaceIdentity, expectedUnreadAt);
+      const targetSelector = `li[data-testid="task-item-${taskId}"]`;
+      let attempts = 0;
+      const scrollWhenVisible = () => {
+        attempts += 1;
+        const row = document.querySelector(targetSelector);
+        if (row) {
+          row.scrollIntoView({ block: "start", behavior: "smooth" });
+          return;
+        }
+        if (attempts < 16) {
+          window.setTimeout(scrollWhenVisible, 300);
+        }
+      };
+      window.setTimeout(scrollWhenVisible, 350);
+    },
+    [handleTaskRowSelect, setTaskOrganizeBy],
+  );
   const [purposeSectionPreferences, setPurposeSectionPreferences] = useState(
     readSidebarPurposeSectionPreferences,
   );
@@ -464,6 +498,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const primaryTaskTabTriggerRefs = useRef<Record<PrimaryTaskMode, HTMLButtonElement | null>>({
     workspace: null,
     grouped: null,
+    orchestration: null,
   });
   const [primaryTaskIndicatorStyle, setPrimaryTaskIndicatorStyle] = useState<CSSProperties>({
     opacity: 0,
@@ -610,10 +645,13 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const shouldShowPinnedTasks =
     // grouped 主体会主动过滤 pinned task；如果同页不渲染全局置顶区，
     // 从 Header 置顶当前任务后整条 row 会无处展示，看起来像 session 被删除。
+    // orchestration 视图同样需要：编排任务置顶后从编排分区移出，置顶区是它唯一的
+    // 展示位（漏掉该条件时置顶编排任务会从所有视图消失，联调实测）。
     taskViewMode === "workspace" ||
     taskViewMode === "timeline" ||
     taskViewMode === "archived" ||
-    taskViewMode === "grouped";
+    taskViewMode === "grouped" ||
+    taskViewMode === "orchestration";
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const [showWorkspaceTopMask, setShowWorkspaceTopMask] = useState(false);
   const [showWorkspaceBottomMask, setShowWorkspaceBottomMask] = useState(false);
@@ -870,7 +908,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
     previous: lastStableTaskGroupTogglePresentationRef.current,
   });
   const activePrimaryTaskMode: PrimaryTaskMode =
-    taskOrganizeBy === "grouped" ? "grouped" : "workspace";
+    taskOrganizeBy === "grouped"
+      ? "grouped"
+      : taskOrganizeBy === "orchestration"
+        ? "orchestration"
+        : "workspace";
   const workspaceTaskViewValue = taskOrganizeBy === "chronological" ? "chronological" : "project";
   const showTaskViewFilter = activePrimaryTaskMode === "workspace" || showArchivedTasks;
   const showWorkspaceViewOptions = activePrimaryTaskMode === "workspace" && !showArchivedTasks;
@@ -887,6 +929,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       if (value === "grouped") {
         setGroupedTaskGroupIdsHydrated(false);
         setTaskOrganizeBy("grouped");
+        return;
+      }
+      if (value === "orchestration") {
+        // 编排分区与项目二级视图（项目/时间线）互斥：进入编排即离开 workspace 档。
+        setTaskOrganizeBy("orchestration");
         return;
       }
       if (value === "workspace") {
@@ -1063,6 +1110,21 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                   <span>
                     {intl.formatMessage({
                       id: "workspaceSidebar.organizeByProject",
+                    })}
+                  </span>
+                </TabsTrigger>
+                {/* 编排分区（spec: orchestration-tasks.md）：只存放编排主任务，位于分组/项目之后。 */}
+                <TabsTrigger
+                  ref={(node) => {
+                    primaryTaskTabTriggerRefs.current.orchestration = node;
+                  }}
+                  value="orchestration"
+                  className="relative z-10 h-6 flex-none gap-1 rounded-full border-transparent bg-transparent py-0 pl-1.5 pr-2 text-ui-sm font-medium text-foreground-subtle transition-colors data-active:border-transparent data-active:bg-transparent data-active:text-foreground data-active:shadow-none dark:data-active:border-transparent dark:data-active:bg-transparent"
+                >
+                  <Network aria-hidden="true" className="size-3 shrink-0" />
+                  <span>
+                    {intl.formatMessage({
+                      id: "workspaceSidebar.organizeOrchestration",
                     })}
                   </span>
                 </TabsTrigger>
@@ -1283,6 +1345,28 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                 }}
               />
             </WorkspaceNewTaskTooltip>
+            {/* 编排任务入口（spec: orchestration-tasks.md）：与新建任务同链路，
+                draftCreateSource=orchestration 会在首发 createSession 携带 orchestrator 身份。 */}
+            <WorkspaceNewTaskTooltip disabledReason={workspaceReadOnlyReason}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="lg"
+                disabled={workspaceReadOnly}
+                onClick={() => {
+                  if (workspaceReadOnly) {
+                    return;
+                  }
+                  onCreateTask({ createSource: "orchestration" });
+                }}
+                className="w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground"
+              >
+                <Network aria-hidden="true" className="size-4" />
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {intl.formatMessage({ id: "workspaceSidebar.newOrchestrationTask" })}
+                </span>
+              </Button>
+            </WorkspaceNewTaskTooltip>
             <Button
               variant="ghost"
               onClick={onOpenCommandCenter}
@@ -1361,13 +1445,18 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               {workspaceTaskToolbar()}
               {shouldShowPinnedTasks ? (
                 // 归档切换主任务区时不应隐藏 pinned。
-                // pinned 是全局置顶区，归档态保持置顶区可见。
+                // pinned 是全局置顶区，归档态保持置顶区可见；
+                // 编排 tab 下按归档历史同模式分流（置顶区只显示编排任务）。
                 <WorkspacePinnedTasksSection
                   workspaceTabs={workspaceTabs}
                   activeWorkspacePath={workspacePath}
                   activeWorkspaceIdentity={workspaceIdentity}
                   activeTaskId={activeTaskId}
                   taskSortBy={taskSortBy}
+                  orchestrationFilter={
+                    taskOrganizeBy === "orchestration" ? "only" : "exclude"
+                  }
+                  onOrchestrationChildJump={handleOrchestrationChildJump}
                   onSelectTask={handleTaskRowSelect}
                   onOpenFileTree={(target) => {
                     setFileTreeTarget(target);
@@ -1384,6 +1473,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     activeWorkspaceIdentity={workspaceIdentity}
                     activeTaskId={activeTaskId}
                     sortBy={taskSortBy}
+                    // 归档历史按入口 tab 分流（spec: orchestration-tasks.md）：
+                    // 编排 tab 下只显示编排任务的归档；普通视图的归档历史排除编排任务。
+                    orchestrationFilter={
+                      taskOrganizeBy === "orchestration" ? "only" : "exclude"
+                    }
                     onSelectTask={onSelectTask}
                   />
                 ) : taskViewMode === "grouped" ? (
@@ -1405,6 +1499,28 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     onCollapsedGroupIdsChange={handleCollapsedGroupedTaskGroupIdsChange}
                     onStickyGroupHeaderChange={setGroupedStickyHeader}
                     onOpenAutomations={handleOpenAutomationsMain}
+                  />
+                ) : taskViewMode === "orchestration" ? (
+                  // 编排分区复用时间线组件（orchestrationOnly）：行交互（hover 归档/置顶/重命名、
+                  // 右键菜单、显示更多分页）与项目/时间线完全一致；删除走「归档 → 归档区删除」。
+                  // 行保持单行变体（标题+时间+操作同行）：工作区信息在分组组头上
+                  // （按 workspace 分组后行内不再需要工作区标签），两行变体是分组前
+                  // 为行内工作区标签临时引入的，已被分组取代。
+                  <WorkspaceTimelineTasksSection
+                    workspaceTabs={workspaceTabs}
+                    activeWorkspacePath={workspacePath}
+                    activeWorkspaceIdentity={workspaceIdentity}
+                    activeTaskId={activeTaskId}
+                    taskSortBy={taskSortBy}
+                    groupByDate={false}
+                    taskRowVariant="default"
+                    excludeOrchestration={false}
+                    orchestrationOnly
+                    onOrchestrationChildJump={handleOrchestrationChildJump}
+                    emptyMessage={intl.formatMessage({
+                      id: "workspaceSidebar.orchestrationEmpty",
+                    })}
+                    onSelectTask={handleTaskRowSelect}
                   />
                 ) : taskViewMode === "timeline" ? (
                   <WorkspaceTimelineTasksSection

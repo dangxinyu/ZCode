@@ -360,8 +360,6 @@ export function App({
     desktopWindowChromeState,
     macWindowControlsLeftPaddingPx,
     windowsWindowControlsRightPaddingPx,
-    updateReadyVersion,
-    updateState,
     sidebarContainerRef,
   } = useAppChromeState({
     isDesktop,
@@ -1171,8 +1169,6 @@ export function App({
         desktopWindowChromeState={desktopWindowChromeState}
         macWindowControlsLeftPaddingPx={macWindowControlsLeftPaddingPx}
         windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
-        updateReadyVersion={updateReadyVersion}
-        updateState={updateState}
         sidebarContainerRef={sidebarContainerRef}
         toggleSidebarShortcutLabel={toggleSidebarShortcutLabel}
         newTaskShortcutLabel={newTaskShortcutLabel}

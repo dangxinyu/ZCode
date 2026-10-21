@@ -41,9 +41,39 @@ const CONTEXT_MANAGEMENT_PROMPTS = {
   ].join("\n"),
 } as const;
 
-export function buildSessionGuidanceSection(toolNames: readonly string[], hasSkills = false): ContextSection | null {
+export function buildSessionGuidanceSection(
+  toolNames: readonly string[],
+  hasSkills = false,
+  taskType?: string,
+): ContextSection | null {
   const tools = new Set(toolNames);
   const lines = ["# Session-specific guidance"];
+
+  // 编排任务身份（spec: orchestration-tasks.md）：这套工具在场 = 本会话是 orchestration_parent。
+  // 身份必须进系统提示而不是只写在工具描述里——模型不打算用工具时根本不读工具描述，
+  // 会退回读 feature 文档/代码库自己回答任务盘点与具体问题（实测命中）。措辞刻意短：常驻上下文。
+  if (tools.has("SpawnSubTask") || tools.has("LinkTask")) {
+    lines.push(
+      "- You are an orchestration task: route work to child tasks instead of doing it yourself. A child's accumulated context is an asset — routing a matching problem to it beats investigating from scratch.",
+      "- Identification implies linkage: whenever a user message clearly corresponds to a specific workspace task (by name or domain) — even a pure status question — LinkTask that task into this orchestration BEFORE answering. Linkage is cheap and keeps the domain in the family; skip only archived tasks or tasks owned by another orchestration.",
+      "- Mandatory routing for every work-like or domain-specific message: bugs, features, implementation requests, AND questions about a specific child's domain such as \"is this done?\" or \"what's the status of X?\" — all go to the matching child via SendChildTaskPrompt (LinkTask first if not yet a child). The child has the context to answer authoritatively and will finish incomplete work itself; you only relay its reply. No match but the work is a self-contained sub-task → SpawnSubTask.",
+      "- Match by task IDENTITY, not by incidental transcript mentions: the task's title states its purpose — a task named \"批量修改\" owns batch-modify issues. A task whose transcript merely echoes the question (it was asked there once in passing, or it touched the file while doing something else) is NOT the domain owner; incidental content overlap must not outrank title/purpose ownership.",
+      "- Handle a message yourself ONLY when it is orchestration-level: overall progress across tasks, planning, summaries. Answer those from ListOrchestrationChildren / ListWorkspaceTasks and the terminal-notification excerpts — relaying an excerpt beats reading the child's session. Use ReadSessionContext only when the user explicitly asks for detail beyond the excerpt; verifying a child's work by reading code is the child's job.",
+      "- Re-evaluate routing on EVERY message. Prior turns where you investigated a domain yourself do not obligate you to continue that way — once a matching child exists (or an unlinked task matches), hand the work over instead of finishing it yourself.",
+      "- A previous SendChildTaskPrompt failure on a child (transient errors such as session-not-active / sessionNotFound) does NOT disqualify that child: cold sessions are resumed automatically on dispatch now. When the identity matches, retry the dispatch; fall back to SpawnSubTask only when no identity-matching child exists at all.",
+      "- Questions about what tasks exist or their progress are answered with ListWorkspaceTasks / ListOrchestrationChildren — never by reading feature docs or the codebase.",
+    );
+  }
+
+  // 编排子任务身份（spec: orchestration-tasks.md）：taskType 判定（子任务结构性禁用
+  // 编排工具，不能用工具在场当标记）。环境引导替代下发消息里的"编排要求"后缀——
+  // 要求常驻但不出现在用户可见的消息正文（用户反馈：后缀每条都展示太吵）。
+  if (taskType === "orchestration_child") {
+    lines.push(
+      "- You are an orchestration child task. Close every completed turn with a self-contained delivery summary as your final reply — the orchestration parent relays an excerpt of it back to the user; without that summary your result cannot reach the parent.",
+      "- Relay format is PLAIN TEXT short lines, no markdown tables/headings: 「结论：…」 then 「关键改动：…(files)」 then 「未尽事项/风险：…」. The excerpt travels through a plain-text notice; tables and headings turn into unreadable symbol noise.",
+    );
+  }
 
   // 当前不输出 Agent 指导段。
   // if (tools.has("Agent")) {

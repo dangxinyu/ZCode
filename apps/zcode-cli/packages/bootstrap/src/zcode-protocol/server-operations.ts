@@ -86,6 +86,7 @@ import {
   buildSessionSnapshot,
   buildWorkspaceRef,
   formatProtocolModelSelection,
+  mapMessageWithParts,
   mapSessionEventForProtocol,
   mapSessionInfo,
   resolveSessionContextUsage,
@@ -106,6 +107,7 @@ import { createWorkspaceZCodeApp, ensureSessionModelAvailable } from "./workspac
 import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.js";
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
+import { createProtocolOrchestrationPort } from "./orchestration-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js";
@@ -1864,14 +1866,41 @@ export async function readSessionContextUsage(
 
 export async function readMessages(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(zcodeSessionMessagesParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  const allMessages = await readActiveSessionMessages(context, record);
+  // 活跃 runtime 优先（rewind 投影以活跃会话为准）；registry 缺失时冷读兜底：
+  // v4/web 创建的会话不在 v1 sessions registry（readSession 的 "Session is not active"
+  // 同根因），但消息已持久化在 session store——host 侧的摘要类读取（orchestration
+  // latestReply / 终态通知摘要）对这些会话必须同样可用，否则 UI 建的任务永远拿不到摘要。
+  const record = context.sessions.get(params.sessionId);
+  let allMessages: MessageWithParts[];
+  if (record) {
+    allMessages = await readActiveSessionMessages(context, record);
+  } else {
+    const sessionStore = context.deps.sessionStore;
+    if (!sessionStore) {
+      // 无 store 的装配保持旧行为：requireSession 抛诊断错误（区分冷会话与脏 id）。
+      requireSession(context, params.sessionId);
+      allMessages = [];
+    } else {
+      context.logger?.warn("ZCode Protocol sessionMessages cold fallback (session not active)", {
+        event: "zcode_protocol.session.messages_cold_fallback",
+        module: "bootstrap.zcode_protocol",
+        sessionId: params.sessionId,
+      });
+      allMessages = await sessionStore.messages({
+        sessionID: params.sessionId as SessionId,
+      });
+    }
+  }
   const afterMessageIndex = params.afterMessageId
     ? allMessages.findIndex((message) => String(message.info.id) === params.afterMessageId)
     : -1;
   const messages = afterMessageIndex >= 0 ? allMessages.slice(afterMessageIndex + 1) : allMessages;
+  const windowed = params.limit ? messages.slice(-params.limit) : messages;
+  // sessionMessages 的返回值是对外协议负载，必须走 mapMessageWithParts 投影：
+  // 内部 MessageWithParts 带 id/sessionID/messageID 原始字段，host 侧 v1 schema
+  // 校验会因字段形状不符失败（orchestration 终态摘要读取实测命中）。
   return {
-    messages: params.limit ? messages.slice(-params.limit) : messages,
+    messages: windowed.map(mapMessageWithParts),
   };
 }
 
@@ -3304,7 +3333,17 @@ async function createRecord(
     "parentSessionId" in params && params.parentSessionId
       ? (params.parentSessionId as SessionId)
       : undefined;
-  const taskType = params.taskType ?? "interactive";
+  // 编排任务身份 → 会话级 taskType（spec: orchestration-tasks.md）。
+  // 必须落在会话级而非 turn 级：orchestration_parent 的工具注入与 orchestration_child
+  // 的结构性禁用都要求贯穿整个会话生命周期（用户手动输入不回退工具面）。
+  // child 仅限 host 派生链路（schema refine 强制携带 parent task id）。
+  const orchestrationTaskType =
+    "orchestrationRole" in params && params.orchestrationRole === "orchestrator"
+      ? ("orchestration_parent" as const)
+      : "orchestrationRole" in params && params.orchestrationRole === "child"
+        ? ("orchestration_child" as const)
+        : undefined;
+  const taskType = params.taskType ?? orchestrationTaskType ?? "interactive";
   const runtimeMcp = protocolMcpServersToRuntimeMcpConfig(params.mcpServers);
   context.logger?.info("ZCode Protocol createRecord MCP config", {
     event: "zcode_protocol.create_record.mcp_config",
@@ -3368,6 +3407,12 @@ async function createRecord(
     // 这里把阻塞交互转换成 server-to-client JSON-RPC request，由 app 通过 response 释放 runtime。
     permissionBroker: createProtocolInteractionBroker(context),
     automationPort: createProtocolAutomationPort(context, () => ownSessionRecord),
+    // 编排工具面：仅 orchestration_parent 注入（create 的 orchestrationRole 映射或
+    // resume 的持久化 taskType）；child 与普通会话不注入，与 core 的
+    // includeOrchestration 门构成双重 fail-closed（spec: orchestration-tasks.md）。
+    ...(taskType === "orchestration_parent"
+      ? { orchestrationPort: createProtocolOrchestrationPort(context) }
+      : {}),
     // 只接入 Host 已开放的工具面；缺省不注入。复用现行异步工厂，
     // 不恢复旧 deferred ModelAdapter/Registry overlay，也不改变 Session Selection。
     ...(("offPeakToolEnabled" in params && params.offPeakToolEnabled === true) ||

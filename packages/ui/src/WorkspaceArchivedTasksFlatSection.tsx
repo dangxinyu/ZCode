@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ArchiveX, Cloud, CloudDownload, Folder, Smartphone, Trash2 } from "lucide-react";
+import { isOrchestrationTask } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -28,6 +29,7 @@ export function WorkspaceArchivedTasksFlatSection({
   activeTaskId,
   sortBy,
   actionsContainer,
+  orchestrationFilter = "exclude",
   onSelectTask,
 }: {
   workspaceTabs: WorkspaceTabState[];
@@ -36,6 +38,12 @@ export function WorkspaceArchivedTasksFlatSection({
   activeTaskId: string | null;
   sortBy: "created" | "updated";
   actionsContainer?: HTMLElement | null;
+  /**
+   * 归档历史的编排任务分流（spec: orchestration-tasks.md）：
+   * "exclude"（默认）= 普通归档历史不显示编排任务；"only" = 编排 tab 的归档历史
+   * 只显示编排任务。数据来自 windowController 查询（ZCodeTaskListItem 含 role）。
+   */
+  orchestrationFilter?: "only" | "exclude";
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -90,26 +98,42 @@ export function WorkspaceArchivedTasksFlatSection({
     expanded: showAllTasks,
     collapsedLimit,
   });
-  const canToggleExpanded = total > collapsedLimit;
+  // 编排任务分流在组件层做：windowController 的查询 kind 不区分 role（pinned/archived
+  // 是它的分区语义），这里按入口过滤并修正计数，total/hasMore 语义保持不变。
+  const visibleItems = useMemo(() => {
+    if (orchestrationFilter === "only") {
+      return items.filter((task) => isOrchestrationTask(task));
+    }
+    return items.filter((task) => !isOrchestrationTask(task));
+  }, [items, orchestrationFilter]);
+  const visibleTotal = Math.max(
+    0,
+    total - (items.length - visibleItems.length),
+  );
+  const canToggleExpanded = visibleTotal > collapsedLimit;
 
   return (
     <div>
-      <DeleteAllArchivedTasksButton
-        actionsContainer={actionsContainer}
-        count={total}
-        disabled={loading || total === 0}
-        workspaces={workspaceTabs.map((tab) => ({
-          workspacePath: tab.workspacePath,
-          workspaceIdentity: tab.workspaceIdentity,
-          label: tab.label || getPathLeaf(tab.workspacePath),
-          service: workspaceServiceLookup.get(
-            buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
-          )?.services.zcodeTaskService,
-        }))}
-        onDeleted={removeTaskFromTaskCaches}
-        onRefresh={refresh}
-      />
-      {items.length === 0 ? (
+      {/* 全部删除按 workspace 批量清归档，不区分编排角色；编排 tab 的归档历史里
+          按到普通归档会误删，编排模式下不渲染（逐条删除仍可用）。 */}
+      {orchestrationFilter === "only" ? null : (
+        <DeleteAllArchivedTasksButton
+          actionsContainer={actionsContainer}
+          count={visibleTotal}
+          disabled={loading || visibleTotal === 0}
+          workspaces={workspaceTabs.map((tab) => ({
+            workspacePath: tab.workspacePath,
+            workspaceIdentity: tab.workspaceIdentity,
+            label: tab.label || getPathLeaf(tab.workspacePath),
+            service: workspaceServiceLookup.get(
+              buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+            )?.services.zcodeTaskService,
+          }))}
+          onDeleted={removeTaskFromTaskCaches}
+          onRefresh={refresh}
+        />
+      )}
+      {visibleItems.length === 0 ? (
         loading ? (
           <TaskListLoadingHint />
         ) : (
@@ -119,7 +143,7 @@ export function WorkspaceArchivedTasksFlatSection({
         )
       ) : null}
       <ul className="space-y-1 pb-4">
-        {items.map((task) => {
+        {visibleItems.map((task) => {
           const workspaceServices = workspaceServiceLookup.get(
             buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
           );
@@ -309,6 +333,11 @@ export function WorkspaceArchivedTasksFlatSection({
                               workspaceIdentity: task.workspaceIdentity,
                               taskId: task.taskId,
                             });
+                            // windowController 的 archived kind 缓存靠 server 端 task.removed
+                            // delta 失效；本地缓存清理不触发 controller 重查，删除后行会残留
+                            // 到手动刷新（联调实测）。manualRefreshSerial 走 versionKey 强制
+                            // cache miss，作为不依赖 delta 链的确定性兜底。
+                            void refresh();
                           } catch (error) {
                             logger.error(
                               "[WorkspaceArchivedTasksFlatSection] 删除归档 task 失败:",

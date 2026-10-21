@@ -53,6 +53,19 @@ export function createWindowControllerReplayService(
       if (event.type !== "workspace_task_list_changed") {
         return;
       }
+      // 永久删除必须发 task.removed：membershipInvalidationDeltas 只生成 pinned/active
+      // 归属组合，archived kind 的查询缓存永远不会被它失效——归档视图里删除后行残留、
+      // 手动刷新/重连才消失（联调实测）。taskMeta 缺失的旧分支同样表达移除语义。
+      if (event.reason === "task_deleted" && event.taskId) {
+        emitTaskDeltas([
+          removedDelta({
+            workspacePath: event.workspacePath,
+            workspaceIdentity: event.workspaceIdentity,
+            taskId: event.taskId,
+          }),
+        ]);
+        return;
+      }
       if (event.taskMeta) {
         emitTaskDeltas(membershipInvalidationDeltas(event.taskMeta));
         return;

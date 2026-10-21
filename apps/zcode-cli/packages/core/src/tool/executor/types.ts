@@ -12,6 +12,7 @@ import type {
   BrowserControlPort,
   ExecutionShellSelection,
   AutomationPort,
+  OrchestrationPort,
   OffPeakPort,
   FileSystemPort,
   HttpClientPort,
@@ -106,6 +107,8 @@ export interface ToolExecutorOptions {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 编排任务端口；宿主仅对 orchestration_parent 会话注入。 */
+  orchestrationPort?: OrchestrationPort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;
@@ -210,6 +213,8 @@ export interface ToolExecutorDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 编排任务端口；宿主仅对 orchestration_parent 会话注入。 */
+  orchestrationPort?: OrchestrationPort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;

@@ -47,7 +47,6 @@ export {
   appSettingsPatchSchema,
   appSettingsSchema,
   localeSchema,
-  postUpdateReleaseNotesPayloadSchema,
 } from "./validationAppSettings.js";
 
 export function formatZodError(error: z.ZodError): string {
@@ -1173,6 +1172,10 @@ export const zcodeTaskMetaSchema = z.object({
   // off-peak 身份：与 cron 同款持久化策略——meta_json 单一来源 + tasks 表
   // off_peak_task_id 索引投影列（兜底/反查）。
   offPeakTaskId: nonEmptyStringSchema.optional(),
+  // 编排身份：orchestrator=编排主任务（专属分区、# 引用排除），child=编排子任务。
+  // 关系真相在 orchestration_links 表，meta 字段是读侧加速投影。
+  orchestrationRole: z.enum(["orchestrator", "child"]).optional(),
+  orchestrationParentTaskId: nonEmptyStringSchema.optional(),
   unreadAt: z.number().int().nonnegative().optional(),
   status: zcodeTaskPersistStatusSchema.optional(),
   lastError: z

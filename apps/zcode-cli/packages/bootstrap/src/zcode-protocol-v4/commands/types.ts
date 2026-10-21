@@ -236,6 +236,8 @@ export interface V4CommandCoreHost {
      * 缺省回落到进程级 workspace 结论，仍是 fail-closed。
      */
     dynamicWorkflowEnabled?: boolean;
+    /** 编排任务身份；"orchestrator" 映射为 taskType=orchestration_parent。 */
+    orchestrationRole?: CommandPayloadMap["createSession"]["orchestrationRole"];
   }): Promise<{ sessionId: string }>;
   /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
   createSelectionSideSession?(

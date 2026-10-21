@@ -234,11 +234,12 @@ export interface V4GatewayHost {
    * 未实现（旧宿主）→ sessions-index 路径整体不激活（no-op），不影响 conversation。
    */
   getSessionWorkspaceId?(sessionId: string): string | null;
-  /** sessions-index：会话的列表用元信息（createdAt/父会话/最后活动时刻）。 */
+  /** sessions-index：会话的列表用元信息（createdAt/父会话/最后活动时刻/编排身份）。 */
   getSessionIndexMeta?(sessionId: string): {
     createdAt: number;
     lastActivityAt: number;
     parentSessionId?: string;
+    orchestrationRole?: "orchestrator" | "child";
   } | null;
   /**
    * config 种子：会话 runtime 的当前真值（模型选型/思考深度/协作模式）。
@@ -1111,12 +1112,17 @@ export class ConversationV4Gateway {
     createdAt: number;
     lastActivityAt: number;
     parentSessionId?: string;
+    orchestrationRole?: "orchestrator" | "child";
   } {
     const meta = this.host.getSessionIndexMeta?.(sessionId);
     return {
       createdAt: meta?.createdAt ?? 0,
       lastActivityAt: meta?.lastActivityAt ?? this.now(),
       ...(meta?.parentSessionId ? { parentSessionId: meta.parentSessionId } : {}),
+      // 编排身份必须随 live upsert 帧透传（spec: orchestration-tasks.md）：本函数是
+      // host meta → summary extra 的唯一组装点，漏挑字段会让活跃会话的 role 被无 role
+      // 的 live 帧清掉——点击任务触发激活后从「编排」分区消失（联调实测）。
+      ...(meta?.orchestrationRole ? { orchestrationRole: meta.orchestrationRole } : {}),
     };
   }
 

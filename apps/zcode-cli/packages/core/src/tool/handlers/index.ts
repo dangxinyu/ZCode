@@ -45,6 +45,13 @@ import {
 } from "./cron.js";
 import { offPeakCreateToolEntry, offPeakListToolEntry } from "./off-peak.js";
 import {
+  linkTaskToolEntry,
+  listOrchestrationChildrenToolEntry,
+  listWorkspaceTasksToolEntry,
+  sendChildTaskPromptToolEntry,
+  spawnSubTaskToolEntry,
+} from "./orchestration.js";
+import {
   createEnterPlanModeToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
@@ -91,6 +98,12 @@ export const builtInTools: ToolEntry[] = [
   cronDeleteToolEntry,
   offPeakCreateToolEntry,
   offPeakListToolEntry,
+  // 编排任务工具面：includeOrchestration 门 + orchestration_child 结构性禁用名单双保险。
+  spawnSubTaskToolEntry,
+  linkTaskToolEntry,
+  sendChildTaskPromptToolEntry,
+  listOrchestrationChildrenToolEntry,
+  listWorkspaceTasksToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
   askUserQuestionToolEntry,
@@ -174,6 +187,8 @@ interface RegisterBuiltInToolsOptions {
   includeAutomation?: boolean;
   /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
   includeOffPeak?: boolean;
+  /** 编排任务会话工具面；门 = taskType==="orchestration_parent" 且 orchestrationPort 在场。 */
+  includeOrchestration?: boolean;
   /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
@@ -250,6 +265,16 @@ export function registerBuiltInTools(
     if (
       (entry.metadata.name === "OffPeakCreate" || entry.metadata.name === "OffPeakList") &&
       options.includeOffPeak !== true
+    ) {
+      continue;
+    }
+    if (
+      (entry.metadata.name === "SpawnSubTask" ||
+        entry.metadata.name === "LinkTask" ||
+        entry.metadata.name === "SendChildTaskPrompt" ||
+        entry.metadata.name === "ListOrchestrationChildren" ||
+        entry.metadata.name === "ListWorkspaceTasks") &&
+      options.includeOrchestration !== true
     ) {
       continue;
     }

@@ -41,6 +41,46 @@ const terminalStatuses = "'completed','failed','cancelled'";
 const activePredicate = `session_id IS NOT NULL AND status NOT IN (${terminalStatuses})`;
 const boundIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_off_peak_bound_active ON off_peak_tasks(workspace_key,session_id) WHERE ${activePredicate}`;
 
+// 0004：编排任务身份列 + 关系表（spec: packages/services/specs/orchestration-tasks.md）。
+// 冻结语义：tasks 加两列（role 投影 + parent 反查），links 表是编排关系的唯一真相。
+const ORCHESTRATION_COLUMNS = [
+  ["tasks", "orchestration_role", "TEXT"],
+  ["tasks", "orchestration_parent_task_id", "TEXT"],
+] as const;
+const ORCHESTRATION_INDEXES = `
+  CREATE INDEX IF NOT EXISTS idx_tasks_orchestration_role ON tasks(orchestration_role, updated_at DESC)
+    WHERE orchestration_role IS NOT NULL AND deleted=0;
+  CREATE INDEX IF NOT EXISTS idx_tasks_orchestration_parent ON tasks(orchestration_parent_task_id)
+    WHERE orchestration_parent_task_id IS NOT NULL AND deleted=0;
+`;
+const ORCHESTRATION_LINKS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS orchestration_links (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    child_task_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('derived','linked')),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id, child_task_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_orchestration_links_child ON orchestration_links(workspace_key, child_task_id);
+`;
+
+// 0007：终态通知持久意图表（spec: orchestration-tasks.md）。
+// 武装 relay 时落行、送达/墓碑时删行；host 启动恢复扫描的唯一输入。
+// workspace_path/identity 是投递所需的 scope 快照——links 表只存 key，
+// 恢复时 orchestrator 的 tasks 行可能尚未重建，pending 行必须自含路由信息。
+const ORCHESTRATION_PENDING_NOTIFIES_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS orchestration_pending_notifies (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    child_task_id TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    workspace_identity TEXT,
+    armed_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id, child_task_id)
+  );
+`;
+
 // 与 Agent 同样是库级串行事务，但不跨域依赖其具体 adapter。TS 转换使用冻结语义版本，
 // 禁用 function.toString 哈希：Electron/SEA 打包会改变函数文本而非迁移语义。
 const definitions = [
@@ -63,6 +103,30 @@ const definitions = [
   {
     id: "0003_official_glm_selection",
     checksumInput: [OFFICIAL_GLM_SELECTION_MIGRATION_SQL],
+  },
+  {
+    id: "0004_orchestration_tasks",
+    checksumInput: [
+      "orchestration-role-v1",
+      "orchestration-parent-v1",
+      ORCHESTRATION_INDEXES,
+      ORCHESTRATION_LINKS_SCHEMA,
+    ],
+  },
+  {
+    // 0005：取消关联墓碑列（spec: orchestration-tasks.md）。
+    // unlinked_at 非空 = 该关系已被用户手动解除：不再出现在子任务列表/终态通知，
+    // 且编排模型未经用户点名（force）不得重关联。行不物理删除，保留追溯与拦截依据。
+    id: "0005_orchestration_unlink",
+    checksumInput: ["orchestration-unlink-tombstone-v1"],
+  },
+  {
+    // 0007：终态通知持久意图（spec: orchestration-tasks.md）。
+    // 通知投递必须消化 busy 拒绝与 host 重启：armed 落行、投递推进水位线、启动恢复扫描。
+    // 编号说明：共享 DB 已被安装版 app 写入 0006_task_group_admissions（本 checkout
+    // 没有该定义），为避免与并行版本撞号取 0007。
+    id: "0007_orchestration_pending_notify",
+    checksumInput: [ORCHESTRATION_PENDING_NOTIFIES_SCHEMA],
   },
 ] as const;
 
@@ -113,6 +177,10 @@ export function runTasksDatabaseMigrations(
       options.onProgress?.("migrating", { ...migrationFacts });
       if (migration.id === "0001_adopt_task_schema") adoptSchema(db);
       else if (migration.id === "0002_provider_selection") importLegacyAutomationSelections(db);
+      else if (migration.id === "0004_orchestration_tasks") applyOrchestrationSchema(db);
+      else if (migration.id === "0005_orchestration_unlink") applyOrchestrationUnlinkSchema(db);
+      else if (migration.id === "0007_orchestration_pending_notify")
+        db.exec(ORCHESTRATION_PENDING_NOTIFIES_SCHEMA);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
@@ -154,6 +222,38 @@ function adoptSchema(db: DatabaseSync): void {
     GROUP BY workspace_key, session_id HAVING count(*)>1 LIMIT 1`)
     .get();
   if (!duplicate) db.exec(boundIndex);
+}
+
+/** 0004：编排身份列与关系表；与 adoptSchema 同款 PRAGMA 探测，避免重复加列。 */
+function applyOrchestrationSchema(db: DatabaseSync): void {
+  for (const [table, column, definition] of ORCHESTRATION_COLUMNS) {
+    const existing = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (existing.some((entry) => entry.name === column)) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+  db.exec(ORCHESTRATION_INDEXES);
+  db.exec(ORCHESTRATION_LINKS_SCHEMA);
+}
+
+/** 0005：取消关联墓碑列（NULL = 在册关系；非空 = 已被用户解除）。PRAGMA 探测防重复加列。
+ * 同时清理孤儿编排投影：解除后 sessions-index 冻结 summary 可能经 sync 把 role/parent
+ * 回写进列（真相在 links），一次性把"带标记但无在册关系"的行清空。 */
+function applyOrchestrationUnlinkSchema(db: DatabaseSync): void {
+  const existing = db.prepare("PRAGMA table_info(orchestration_links)").all();
+  if (!existing.some((entry) => entry.name === "unlinked_at")) {
+    db.exec("ALTER TABLE orchestration_links ADD COLUMN unlinked_at INTEGER");
+  }
+  db.exec(`
+    UPDATE tasks
+    SET orchestration_role = NULL, orchestration_parent_task_id = NULL
+    WHERE (orchestration_role IS NOT NULL OR orchestration_parent_task_id IS NOT NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM orchestration_links l
+        WHERE l.workspace_key = tasks.workspace_key
+          AND l.child_task_id = tasks.task_id
+          AND l.unlinked_at IS NULL
+      );
+  `);
 }
 
 /** 交接只复用已完成初始化；每个新连接仍按冻结账本确认，替换/清空文件不能假 ready。 */

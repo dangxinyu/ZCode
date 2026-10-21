@@ -6,6 +6,7 @@ import type {
   ExecutionShellSelection,
   AutomationPort,
   OffPeakPort,
+  OrchestrationPort,
   EmbeddedSearchBackend,
   ExecutionPort,
   BrowserControlPort,
@@ -164,6 +165,8 @@ export interface ToolExecutionContext {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 编排任务端口；仅在 orchestration_parent 会话由宿主注入（taskType 门）。 */
+  orchestrationPort?: OrchestrationPort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;

@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import type { IServiceAccessor } from "@zcode/services";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
+import { isOrchestrationTask } from "@zcode/shared";
 import { buildSessionMentionMarkdown } from "@/mentions/mentionMarkdown.js";
 import { filterMentionItemsWithOptions } from "@/mentions/mentionSearch.js";
 import type { MentionCategoryResult, MentionItem } from "@/mentions/mentionTypes.js";
@@ -96,6 +97,11 @@ function collectSessionMentionItems(
   const taskBySessionId = new Map<string, ZCodeTaskMeta>();
   for (const task of tasks) {
     if (task.migrationSource) {
+      continue;
+    }
+    // 编排主任务不进 # 引用候选（spec: orchestration-tasks.md）：它是统筹壳，
+    // 引用它的上下文会与子任务产出重复；子任务（child）仍是普通任务，可正常引用。
+    if (isOrchestrationTask(task)) {
       continue;
     }
     const sessionId = task.taskId;

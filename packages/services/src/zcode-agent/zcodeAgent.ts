@@ -202,6 +202,13 @@ export interface ZCodeAgentCreateSessionParams extends ZCodeAgentWorkspaceTarget
   toolAllowlist?: string[];
   toolDenylist?: string[];
   importedHistory?: ZCodeSessionImportHistory;
+  /**
+   * 编排任务身份（spec: packages/services/specs/orchestration-tasks.md）。
+   * "orchestrator" 由 UI 创建编排任务；"child" 仅限 orchestration spawn 链路
+   * （createTask 的 orchestrationParentTaskId 分支），且必须携带 orchestrationParentTaskId。
+   */
+  orchestrationRole?: "orchestrator" | "child";
+  orchestrationParentTaskId?: string;
 }
 
 export interface ZCodeAgentListSessionsParams extends ZCodeAgentWorkspaceTarget {

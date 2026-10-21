@@ -11,6 +11,10 @@ export const TASK_LIST_SESSION_TYPES = [
   "interactive",
   "fork",
   "workflow_parent",
+  // 编排主任务与子任务都是主任务（spec: orchestration-tasks.md）：主任务只进
+  // 「编排」分区（UI 按 summary.orchestrationRole 过滤），子任务进普通列表。
+  "orchestration_parent",
+  "orchestration_child",
 ] as const satisfies readonly SessionTaskType[];
 
 const TASK_LIST_SESSION_TYPE_SET = new Set<SessionTaskType>(

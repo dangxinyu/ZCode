@@ -39,6 +39,10 @@ export const SESSION_TASK_TYPES = [
   "workflow_child",
   "subagent_child",
   "nested_workflow_child",
+  // 编排任务（spec: packages/services/specs/orchestration-tasks.md）：
+  // parent 持有 SpawnSubTask/LinkTask 工具面；child 是被派生/关联的普通任务，会话级禁用编排工具。
+  "orchestration_parent",
+  "orchestration_child",
 ] as const;
 export type SessionTaskType = (typeof SESSION_TASK_TYPES)[number];
 

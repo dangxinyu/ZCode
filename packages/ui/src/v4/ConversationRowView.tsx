@@ -117,6 +117,10 @@ import { ConversationFileRewindDialog } from "@/v4/ConversationFileRewindDialog.
 import { ConversationUserInputBody } from "@/v4/ConversationUserInputBody.js";
 import { ConversationUserInputContent } from "@/v4/ConversationUserInputContent.js";
 import {
+  ConversationOrchestrationNoticeCard,
+  isOrchestrationNoticeText,
+} from "@/v4/ConversationOrchestrationNoticeCard.js";
+import {
   ConversationUserInputEpilogue,
   splitUserInputEpilogue,
 } from "@/v4/ConversationUserInputEpilogue.js";
@@ -925,6 +929,8 @@ const UserInputRowView = memo(function UserInputRowView({
   const hasVisibleText = visibleText.trim().length > 0;
   // nudge 轮整条都是引擎文本：正文为空但气泡仍要画，里面只有那一枚披露。
   const hasBubble = hasVisibleText || epilogue !== undefined;
+  // 编排终态通知（host 注入、【编排通知】开头）：走系统通知卡片，不进用户气泡。
+  const isOrchestrationNotice = isOrchestrationNoticeText(visibleText);
   const hasContextReferences =
     codeCommentContexts.length > 0 ||
     webElementContexts.length > 0 ||
@@ -1245,7 +1251,10 @@ const UserInputRowView = memo(function UserInputRowView({
           ) : null}
         </div>
       ) : null}
-      {hasBubble ? (
+      {hasBubble && isOrchestrationNotice ? (
+        // 编排通知卡片：不进用户气泡（它不是用户发言），只对【编排通知】前缀生效。
+        <ConversationOrchestrationNoticeCard text={visibleText ?? ""} />
+      ) : hasBubble ? (
         // 附件和上下文引用只属于消息行，不属于气泡；否则仅附件消息会留下空气泡。
         // 同一 row 会渲染在主会话和 Subagent 侧栏，固定宽度会忽略实际宿主宽度。
         // 气泡保留 flex item 的自动宽度；宿主至少 624px 时再以 36rem 封顶并保留 48px 余量。

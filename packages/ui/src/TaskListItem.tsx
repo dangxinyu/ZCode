@@ -2,6 +2,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   Clock,
   CloudUpload,
   ListTree,
@@ -74,6 +76,28 @@ interface TaskListItemProps {
   intl: TaskListItemIntl;
   actionsDisabled?: boolean;
   actionsDisabledReason?: string;
+  /**
+   * 编排任务的行首子任务展开器（spec: orchestration-tasks.md）。仅编排分区/置顶区的
+   * 编排行传入；普通列表不传，行首布局零变化。memo 比较按值（collapsed/childCount），
+   * onToggle 视为同 key 下稳定（来自共享折叠 hook 的 useCallback）。
+   * runningCount：正在执行的子任务数（>0 时展开器旁显示小转圈，收起态也能看到有活在跑）。
+   */
+  orchestrationExpander?: {
+    collapsed: boolean;
+    childCount: number;
+    runningCount?: number;
+    onToggle: () => void;
+  };
+  /**
+   * 工作区标签覆盖：编排分区跨 workspace 混排，仅末段名（默认值）分不清目录，
+   * 传入 workspace tab 的显示名。无论默认还是覆盖，悬停 title 始终显示完整路径。
+   */
+  workspaceLabelOverride?: string;
+  /**
+   * 隐藏行内工作区标签：编排分区已按工作区分组（组头携带工作区名），
+   * 行内再显示一遍就是重复；置顶区编排行不分组，仍用行内标签。
+   */
+  hideWorkspaceLabel?: boolean;
 }
 
 function areJsonFieldsEqual(left: unknown, right: unknown) {
@@ -106,6 +130,19 @@ function areTaskListItemTaskFieldsEqual(left: ZCodeTaskMeta, right: ZCodeTaskMet
   );
 }
 
+function areOrchestrationExpandersEqual(
+  left: TaskListItemProps["orchestrationExpander"],
+  right: TaskListItemProps["orchestrationExpander"],
+) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.collapsed === right.collapsed &&
+    left.childCount === right.childCount &&
+    left.runningCount === right.runningCount
+  );
+}
+
 function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemProps) {
   return (
     left.workspacePath === right.workspacePath &&
@@ -120,6 +157,9 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.intl === right.intl &&
     left.actionsDisabled === right.actionsDisabled &&
     left.actionsDisabledReason === right.actionsDisabledReason &&
+    areOrchestrationExpandersEqual(left.orchestrationExpander, right.orchestrationExpander) &&
+    left.workspaceLabelOverride === right.workspaceLabelOverride &&
+    left.hideWorkspaceLabel === right.hideWorkspaceLabel &&
     left.onSelectTask === right.onSelectTask &&
     left.onArchiveTaskInline === right.onArchiveTaskInline &&
     left.onCancelArchiveConfirm === right.onCancelArchiveConfirm &&
@@ -137,6 +177,8 @@ export const MemoTaskItem = memo(function TaskListItem({
   remoteSessionId,
   task,
   isPinned,
+  workspaceLabelOverride,
+  hideWorkspaceLabel,
   isActive,
   isMobileActive = false,
   onSelectTask,
@@ -151,6 +193,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   intl,
   actionsDisabled = false,
   actionsDisabledReason,
+  orchestrationExpander,
 }: TaskListItemProps) {
   const [hoverActionsVisible, setHoverActionsVisible] = useState(false);
   const [focusActionsVisible, setFocusActionsVisible] = useState(false);
@@ -382,7 +425,8 @@ export const MemoTaskItem = memo(function TaskListItem({
     id: isArchiveConfirming ? "common.confirm" : "taskList.archive",
   });
   const taskTitleWithChanges = formatTaskTitleWithChanges(taskTitle, taskChangeSummary, intl);
-  const workspaceLabel = getPathLeaf(task.workspacePath);
+  // 悬停 title 显示完整目录：行内只放显示名（末段/tab 名），跨 workspace 场景靠它区分目录。
+  const workspaceLabel = workspaceLabelOverride || getPathLeaf(task.workspacePath);
   const taskItemKey = `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`;
   // 工作流运行行：标题下的第二条通道，
   // 与前置 16px 槽（error > unread > spinner）互不占位。只在会话带 run 摘要时挂组件。
@@ -554,6 +598,58 @@ export const MemoTaskItem = memo(function TaskListItem({
               视觉上像被两条边框夹住。这里改成“列表留白 + item 自己带圆角态”，
               让 hover/active 的层级由卡片背景承担，不再依赖分隔线。 */}
 
+      {orchestrationExpander ? (
+        <button
+          type="button"
+          aria-expanded={!orchestrationExpander.collapsed}
+          aria-label={
+            orchestrationExpander.runningCount && orchestrationExpander.runningCount > 0
+              ? intl.formatMessage(
+                  { id: "workspaceSidebar.orchestrationChildrenCountRunning" },
+                  {
+                    count: String(orchestrationExpander.childCount),
+                    running: String(orchestrationExpander.runningCount),
+                  },
+                )
+              : intl.formatMessage(
+                  { id: "workspaceSidebar.orchestrationChildrenCount" },
+                  { count: String(orchestrationExpander.childCount) },
+                )
+          }
+          className={cn(
+            "relative z-10 flex size-4 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest hover:text-foreground-subtle",
+            // 与前置状态槽同款的首行对齐规则（timeline/两行体时贴首行，默认行垂直居中）。
+            variant === "timeline" ? "mt-0.5" : hasWorkflowRunLines ? "mt-1" : undefined,
+          )}
+          onClick={(event) => {
+            // 展开器属于行内嵌套交互，不能触发行的选中/上下文菜单。
+            event.stopPropagation();
+            orchestrationExpander.onToggle();
+          }}
+          onContextMenu={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              orchestrationExpander.onToggle();
+            }
+          }}
+        >
+          {orchestrationExpander.collapsed ? (
+            <ChevronRight aria-hidden="true" className="size-3" />
+          ) : (
+            <ChevronDown aria-hidden="true" className="size-3" />
+          )}
+          {orchestrationExpander.runningCount && orchestrationExpander.runningCount > 0 ? (
+            // 收起态也能看到"有子任务在跑"：展开器旁的小转圈（用户要求：不用挨个找）。
+            <LoaderIcon
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 size-2.5 animate-spin text-status-running"
+            />
+          ) : null}
+        </button>
+      ) : null}
+
       <div
         className={cn(
           "relative flex size-4 shrink-0 items-center justify-center",
@@ -641,7 +737,11 @@ export const MemoTaskItem = memo(function TaskListItem({
           </div>
           <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate">{workspaceLabel}</span>
+              {hideWorkspaceLabel ? null : (
+                <span className="truncate" title={task.workspacePath}>
+                  {workspaceLabel}
+                </span>
+              )}
             </div>
             <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5">
               {!hasPendingInteraction ? (
@@ -767,6 +867,18 @@ export const MemoTaskItem = memo(function TaskListItem({
                     aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
                     className="size-3.5 shrink-0"
                   />
+                ) : null}
+                {workspaceLabelOverride ? (
+                  // 置顶区编排行是单行布局，没有 timeline 变体的第二行工作区标签；
+                  // 有覆盖值（= 编排行）时在时间前内联工作区名，悬停显示完整目录。
+                  <>
+                    <span className="max-w-28 truncate" title={task.workspacePath}>
+                      {workspaceLabelOverride}
+                    </span>
+                    <span aria-hidden="true" className="text-foreground-subtlest">
+                      ·
+                    </span>
+                  </>
                 ) : null}
                 {taskTimeLabel}
               </span>

@@ -1,10 +1,15 @@
 import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  LINK_TASK_TOOL_NAME,
+  LIST_ORCHESTRATION_CHILDREN_TOOL_NAME,
+  LIST_WORKSPACE_TASKS_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   SAVE_WORKFLOW_TOOL_NAME,
+  SEND_CHILD_TASK_PROMPT_TOOL_NAME,
+  SPAWN_SUB_TASK_TOOL_NAME,
 } from "@zcode/contracts";
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "../../subagent/explore-tools.js";
 import type { AgentRuntimeConfig } from "../types.js";
@@ -47,6 +52,22 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
 ] as const;
 
 /**
+ * orchestration child 运行时结构性禁用的编排工具。
+ *
+ * 一层 team 不变量（spec: packages/services/specs/orchestration-tasks.md）：编排子任务
+ * 不可再派生/关联普通任务，防止递归派生与权限链失控。必须是**会话级事实**（taskType
+ * 推导）而非 turn 级 denylist——turn 级在用户手动输入后会拿回完整工具面（cron 刻意如此，
+ * 编排相反）。子 agent 能力不受影响：Agent 工具不在名单里，由 subagents.enabled 独立控制。
+ */
+const ORCHESTRATION_CHILD_DISALLOWED_TOOLS = [
+  SPAWN_SUB_TASK_TOOL_NAME,
+  LINK_TASK_TOOL_NAME,
+  SEND_CHILD_TASK_PROMPT_TOOL_NAME,
+  LIST_ORCHESTRATION_CHILDREN_TOOL_NAME,
+  LIST_WORKSPACE_TASKS_TOOL_NAME,
+] as const;
+
+/**
  * 运行时最终的工具禁用名单：turn 级 `toolDisallowlist` 叠加按 taskType 推导出的结构性禁用。
  * 放在这里而不是各个 child runtime 的构造点，是因为构造点有两个
  * （`workflow-facade.ts` 与 `script-workflow-child-runtime.ts`），两份名单必然漂移。
@@ -54,11 +75,17 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
 export function resolveRuntimeDisallowedTools(
   config: AgentRuntimeConfig,
 ): readonly string[] | undefined {
-  if (config.taskType !== "workflow_child") return config.toolDisallowlist;
-
-  const disallowed = new Set(config.toolDisallowlist ?? []);
-  for (const toolName of WORKFLOW_CHILD_DISALLOWED_TOOLS) disallowed.add(toolName);
-  return [...disallowed];
+  if (config.taskType === "workflow_child") {
+    const disallowed = new Set(config.toolDisallowlist ?? []);
+    for (const toolName of WORKFLOW_CHILD_DISALLOWED_TOOLS) disallowed.add(toolName);
+    return [...disallowed];
+  }
+  if (config.taskType === "orchestration_child") {
+    const disallowed = new Set(config.toolDisallowlist ?? []);
+    for (const toolName of ORCHESTRATION_CHILD_DISALLOWED_TOOLS) disallowed.add(toolName);
+    return [...disallowed];
+  }
+  return config.toolDisallowlist;
 }
 
 /**

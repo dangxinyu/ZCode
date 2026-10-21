@@ -65,6 +65,8 @@ export function mapSessionSummaryToTaskMeta(
       mode: previous?.mode ?? "build",
       ...(previous?.model ? { model: previous.model } : {}),
       ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
+      // 编排身份（spec: orchestration-tasks.md）：分区过滤、# 引用排除与编排标记都读它。
+      ...(summary.orchestrationRole ? { orchestrationRole: summary.orchestrationRole } : {}),
       ...(previous?.provider ? { provider: previous.provider as ZCodeProvider } : {}),
       ...(status ? { status } : {}),
       ...(summary.pendingInteraction

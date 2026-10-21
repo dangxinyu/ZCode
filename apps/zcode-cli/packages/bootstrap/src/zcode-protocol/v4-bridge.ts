@@ -1107,6 +1107,7 @@ export function createConversationV4Gateway(
       mcpServers,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
+      orchestrationRole,
     }) => {
       // workspaceId 双形态（Workspace Identity 约束）：
       // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
@@ -1130,6 +1131,9 @@ export function createConversationV4Gateway(
         // v4 createSession 必须与 legacy session/create 等价透传，否则无界面创建的会话
         // 会绕过 Host 的灰度判定，只剩进程级缺省。
         ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+        // 编排任务身份同为 runtime 创建期配置：透传后在 materializeSessionRecord
+        // 映射为 taskType=orchestration_parent，驱动编排工具面注入。
+        ...(orchestrationRole === "orchestrator" ? { orchestrationRole } : {}),
       });
       return { sessionId: created.sessionId };
     },
@@ -1409,6 +1413,13 @@ export function createConversationV4Gateway(
         sessionId: String(session.id),
         workspaceId,
         ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
+        // 编排身份冷投影（spec: orchestration-tasks.md）：store 行的 taskType 与 live
+        // 投影（getSessionIndexMeta）同源映射，重启后「编排」分区过滤不丢 role。
+        ...(session.taskType === "orchestration_parent"
+          ? { orchestrationRole: "orchestrator" as const }
+          : session.taskType === "orchestration_child"
+            ? { orchestrationRole: "child" as const }
+            : {}),
         title: session.title ?? "",
         titleSource: normalizeStoredTitleSource(session.titleSource),
         phase: "completedSuccess" as const,
@@ -1551,6 +1562,13 @@ export function createConversationV4Gateway(
         createdAt: record.createdAt,
         lastActivityAt: record.updatedAt,
         ...(record.parentSessionId ? { parentSessionId: String(record.parentSessionId) } : {}),
+        // 编排身份从会话级 taskType 投影（spec: orchestration-tasks.md）：
+        // UI 的「编排」分区过滤与 # 引用候选排除都读 summary.orchestrationRole。
+        ...(record.taskType === "orchestration_parent"
+          ? { orchestrationRole: "orchestrator" as const }
+          : record.taskType === "orchestration_child"
+            ? { orchestrationRole: "child" as const }
+            : {}),
       };
     },
     listWorkspaceSessionIds: (workspaceId) =>

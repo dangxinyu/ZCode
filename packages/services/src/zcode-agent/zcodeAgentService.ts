@@ -63,6 +63,11 @@ import {
   zcodeAutomationUpdateParamsSchema,
   zcodeOffPeakCreateParamsSchema,
   zcodeOffPeakListParamsSchema,
+  zcodeOrchestrationSpawnParamsSchema,
+  zcodeOrchestrationLinkParamsSchema,
+  zcodeOrchestrationSendChildTaskPromptParamsSchema,
+  zcodeOrchestrationListChildrenParamsSchema,
+  zcodeOrchestrationListWorkspaceTasksParamsSchema,
   OFF_PEAK_PROVIDER_IDS,
   zcodeComputerUseOperationEventSchema,
   zcodeProviderRuntimeHeadersCancelledSchema,
@@ -298,6 +303,7 @@ import { ZCodeAgentMcpStatusModeUnsupportedError } from "#src/zcode-agent/zcodeA
 import { ZCodeAgentProcessManager } from "./zcodeAgentProcessManager.js";
 import type { ZCodeAgentProcessManagerOptions } from "./zcodeAgentProcessManager.js";
 import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
+import type { IOrchestrationTaskService } from "#src/zcode-agent/orchestrationTaskService.js";
 import {
   ZCodeProtocolRequestTimeoutError,
   type ZCodeProtocolClient,
@@ -654,6 +660,12 @@ function buildSessionCreateParams(
     ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
       ? { dynamicWorkflowEnabled: true }
       : {}),
+    // 编排任务身份（spec: orchestration-tasks.md）：taskType 在创建期定型，必须随
+    // create 请求进入 CLI；child 由 spawn 链路携带（adapter 保证与 parent 配对）。
+    ...(params.orchestrationRole !== undefined ? { orchestrationRole: params.orchestrationRole } : {}),
+    ...(params.orchestrationParentTaskId !== undefined
+      ? { orchestrationParentTaskId: params.orchestrationParentTaskId }
+      : {}),
   };
 }
 
@@ -886,8 +898,14 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    */
   resolveDynamicWorkflowClientConfig?: () => Promise<DynamicWorkflowClientConfig | undefined>;
   resolveOffPeakTaskService?: () =>
-    | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
+    Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
+  /**
+   * 编排任务服务（spec: packages/services/specs/orchestration-tasks.md）。
+   * 供 orchestration/* 反向请求 handler 调用；desktop host 装配时注入，
+   * 纯 CLI / 远程 attached 装配不传（编排工具只对 orchestration_parent 会话注册）。
+   */
+  resolveOrchestrationTaskService?: () => IOrchestrationTaskService | undefined;
   /**
    * browser-use 执行桥：把 agent 的 interaction/browserExecute 反向请求转发到 main
    * （WebContentsView+CDP）。desktop host 装配时注入；缺省（纯 CLI/远控无 main）则
@@ -2528,6 +2546,203 @@ export function createZCodeAgentService(
               await client.respond(request.id, {
                 automation: toProtocolAutomation(automation),
               });
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationSpawnSubTask) {
+          const parsed = zcodeOrchestrationSpawnParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration spawn params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.spawnSubTask({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                name: parsed.data.name,
+                prompt: parsed.data.prompt,
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationLinkTask) {
+          const parsed = zcodeOrchestrationLinkParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration link params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.linkTask({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                childTaskId: parsed.data.childTaskId,
+                ...(parsed.data.force !== undefined ? { force: parsed.data.force } : {}),
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationSendChildTaskPrompt) {
+          const parsed = zcodeOrchestrationSendChildTaskPromptParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration sendChildTaskPrompt params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.sendChildTaskPrompt({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                childTaskId: parsed.data.childTaskId,
+                prompt: parsed.data.prompt,
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationListChildren) {
+          const parsed = zcodeOrchestrationListChildrenParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration listChildren params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.listChildren({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationListWorkspaceTasks) {
+          const parsed = zcodeOrchestrationListWorkspaceTasksParamsSchema.safeParse(
+            request.params,
+          );
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration listWorkspaceTasks params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.listWorkspaceTasks({
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+              });
+              await client.respond(request.id, result);
             } catch (error) {
               await client.respondError(request.id, {
                 code: -32603,
