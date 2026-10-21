@@ -119,6 +119,7 @@ import type {
   ZCodeTaskReadyOutcome,
   ZCodeTaskTerminalOutcome,
 } from "../session/zcodeTaskService.js";
+import type { IOrchestrationTaskService } from "./orchestrationTaskService.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -183,6 +184,12 @@ interface CreateZCodeTaskServiceAdapterOptions {
   taskIndexSyncer: ZCodeTaskIndexSyncer;
   settingService?: Pick<ISettingService, "get">;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
+  /**
+   * 编排任务服务的晚期引用（node.ts 前向 holder）：adapter 先于编排服务创建，
+   * 取消关联（unlinkOrchestrationChild）经此透传；与 orchestration/* 反向请求
+   * handler 的 resolveOrchestrationTaskService 同款装配模式。
+   */
+  resolveOrchestrationTaskService?: () => IOrchestrationTaskService | undefined;
 }
 
 interface TaskTarget {
@@ -2974,6 +2981,51 @@ export function createZCodeTaskServiceAdapter(
         });
         throw error;
       }
+    },
+
+    async unlinkOrchestrationChild(params): Promise<{
+      unlinked: boolean;
+      child: ZCodeTaskMeta | null;
+    }> {
+      // 透传编排服务（墓碑 + 清标记唯一写入路径在 orchestrationTaskService）。
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!orchestrationService) {
+        throw new Error("Orchestration task service is unavailable on this host");
+      }
+      const result = await orchestrationService.unlinkTask({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        childTaskId: params.childTaskId,
+      });
+      if (result.child) {
+        // 解除后子任务回归普通任务：让其他窗口/端经由既有广播刷新列表。
+        emitWorkspaceTaskListChanged(params, result.child, "task_title_changed");
+      }
+      return result;
+    },
+
+    async listOrchestrationChildrenMap(params): Promise<
+      Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>
+    > {
+      // links 权威源（多编排跟踪）：UI 子任务下拉/计数不能依赖 tasks 行的单值父列。
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!orchestrationService) {
+        throw new Error("Orchestration task service is unavailable on this host");
+      }
+      const result: Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>> = {};
+      for (const orchestrationTaskId of params.orchestrationTaskIds) {
+        const { children } = await orchestrationService.listChildren({
+          orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        });
+        result[orchestrationTaskId] = children.map((child) => ({
+          childTaskId: child.taskId,
+          kind: child.kind,
+        }));
+      }
+      return result;
     },
 
     async setTaskPinned(params): Promise<ZCodeTaskMeta> {

@@ -3,6 +3,8 @@ import {
   type ListOrchestrationChildrenOutput,
   type ListWorkspaceTasksOutput,
   type OrchestrationPort,
+  type SendChildTaskPromptInput,
+  type SendChildTaskPromptOutput,
   type SpawnSubTaskOutput,
 } from "@zcode/contracts";
 import {
@@ -12,6 +14,8 @@ import {
   zcodeOrchestrationListChildrenResultSchema,
   zcodeOrchestrationListWorkspaceTasksParamsSchema,
   zcodeOrchestrationListWorkspaceTasksResultSchema,
+  zcodeOrchestrationSendChildTaskPromptParamsSchema,
+  zcodeOrchestrationSendChildTaskPromptResultSchema,
   zcodeOrchestrationSpawnParamsSchema,
   zcodeOrchestrationSpawnResultSchema,
   zcodeProtocolMethods,
@@ -52,6 +56,7 @@ export function createProtocolOrchestrationPort(
         zcodeOrchestrationLinkParamsSchema.parse({
           sessionId: taskContext.sessionId,
           childTaskId: input.taskId,
+          ...(input.force !== undefined ? { force: input.force } : {}),
         }),
         zcodeOrchestrationLinkResultSchema,
       );
@@ -61,6 +66,25 @@ export function createProtocolOrchestrationPort(
         message: result.alreadyLinked
           ? `Task "${result.childTaskName}" was already linked to this orchestration.`
           : `Linked existing task "${result.childTaskName}" into this orchestration. Linking never sends instructions to it; terminal outcomes will be reported here.`,
+      };
+    },
+    async sendChildTaskPrompt(
+      input: SendChildTaskPromptInput,
+      taskContext: { sessionId: string },
+    ): Promise<SendChildTaskPromptOutput> {
+      const result = await context.requestClient(
+        zcodeProtocolMethods.orchestrationSendChildTaskPrompt,
+        zcodeOrchestrationSendChildTaskPromptParamsSchema.parse({
+          sessionId: taskContext.sessionId,
+          childTaskId: input.taskId,
+          prompt: input.prompt,
+        }),
+        zcodeOrchestrationSendChildTaskPromptResultSchema,
+      );
+      // 工具结果只回名称：内部标识不出模型侧（与 spawn/link 同纪律）。
+      return {
+        childTaskName: result.childTaskName,
+        message: `Prompt sent to child task "${result.childTaskName}". Its terminal outcome (with a reply excerpt) will be reported back automatically.`,
       };
     },
     async listChildren(_input, taskContext): Promise<ListOrchestrationChildrenOutput> {
@@ -89,6 +113,8 @@ export function createProtocolOrchestrationPort(
         }),
         zcodeOrchestrationListWorkspaceTasksResultSchema,
       );
+      // 结果内联提示（比工具描述更靠近决策点）：存在未关联任务时推一次"识别即关联"。
+      const hasUnlinked = result.tasks.some((task) => !task.orchestrationRole);
       return {
         tasks: result.tasks.map(
           (task: ZCodeOrchestrationWorkspaceTaskSummaryProtocol) => ({
@@ -100,6 +126,11 @@ export function createProtocolOrchestrationPort(
             updatedAt: task.updatedAt,
           }),
         ),
+        ...(hasUnlinked
+          ? {
+              hint: "Tasks with orchestrationRole=null are not linked to this orchestration. When a task corresponds to the user's message (question or work), link it with LinkTask by default — linkage is cheap and keeps its context in the family.",
+            }
+          : {}),
       };
     },
   };

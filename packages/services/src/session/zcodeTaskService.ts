@@ -663,6 +663,28 @@ export interface IZCodeTaskService {
     title: string;
   }): Promise<ZCodeTaskMeta>;
 
+  /**
+   * 用户手动取消编排关联（spec: orchestration-tasks.md）：置关系墓碑 + 清子任务编排标记。
+   * 幂等：关系不在册时返回 unlinked=false。child 为清除标记后的最新 meta（用于列表缓存更新）。
+   */
+  unlinkOrchestrationChild(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    childTaskId: string;
+  }): Promise<{ unlinked: boolean; child: ZCodeTaskMeta | null }>;
+
+  /**
+   * 按编排批量查在册子关系（links 权威源，spec: orchestration-tasks.md）。
+   * UI 子任务下拉/计数用它：多编排跟踪下 tasks 行的 parent 列只记首个父，
+   * 单值列分不出第二父的子任务。
+   */
+  listOrchestrationChildrenMap(params: {
+    orchestrationTaskIds: string[];
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>>;
+
   /** 更新 task 置顶状态 */
   setTaskPinned(params: {
     taskId: string;

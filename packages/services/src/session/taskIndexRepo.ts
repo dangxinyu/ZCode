@@ -1348,6 +1348,31 @@ export class TaskIndexRepo {
           existingMeta,
           params.meta,
         );
+        // 编排身份的 links 仲裁（better-sqlite3 同步查询，事务内安全）：
+        // sessions-index summary 是冻结投影，用户取消关联后 summary 仍带 child/parent，
+        // 直接回写会把已解除的标记复活（实测：unlink 清列后列又变回 child）。
+        // 关系真相在 orchestration_links——入参带编排身份时必须存在在册（未解除）
+        // 关系才允许落列，否则视为陈旧投影清空。
+        const incomingOrchestrationParentTaskId = params.meta.orchestrationParentTaskId;
+        const incomingOrchestrationPairComplete = Boolean(
+          params.meta.orchestrationRole && incomingOrchestrationParentTaskId,
+        );
+        const incomingOrchestrationLinkInRegistry =
+          incomingOrchestrationPairComplete && incomingOrchestrationParentTaskId
+            ? Boolean(
+                this.getDatabase()
+                  .prepare(
+                    `SELECT 1 FROM orchestration_links
+                     WHERE workspace_key = ? AND orchestration_task_id = ? AND child_task_id = ?
+                       AND unlinked_at IS NULL`,
+                  )
+                  .get(
+                    workspaceKey(params.meta),
+                    incomingOrchestrationParentTaskId,
+                    params.meta.taskId,
+                  ),
+              )
+            : false;
         const meta: ZCodeTaskMeta = {
           ...params.meta,
           // agent 只负责 session 核心标题，用户手动重命名属于 app 侧 task 状态。
@@ -1373,11 +1398,16 @@ export class TaskIndexRepo {
           cronAutomationId: params.meta.cronAutomationId ?? existingMeta?.cronAutomationId,
           // off-peak 身份同款兜底：快照不带标记时保全既有归属。
           offPeakTaskId: params.meta.offPeakTaskId ?? existingMeta?.offPeakTaskId,
-          // 编排身份同款兜底：运行态 snapshot 不带编排标记，不保全会被后续 sync 冲掉，
-          // 分区过滤、# 引用排除和子任务禁用判定都会失效（spec: orchestration-tasks.md）。
-          orchestrationRole: params.meta.orchestrationRole ?? existingMeta?.orchestrationRole,
+          // 编排身份同款兜底 + links 仲裁（见上方 incomingOrchestrationLinkInRegistry）：
+          // 运行态 snapshot 不带编排标记时保全既有归属；入参带标记但关系已解除时清空。
+          orchestrationRole:
+            incomingOrchestrationPairComplete && !incomingOrchestrationLinkInRegistry
+              ? undefined
+              : (params.meta.orchestrationRole ?? existingMeta?.orchestrationRole),
           orchestrationParentTaskId:
-            params.meta.orchestrationParentTaskId ?? existingMeta?.orchestrationParentTaskId,
+            incomingOrchestrationPairComplete && !incomingOrchestrationLinkInRegistry
+              ? undefined
+              : (params.meta.orchestrationParentTaskId ?? existingMeta?.orchestrationParentTaskId),
           updatedAt,
           unreadAt: params.meta.unreadAt ?? existingMeta?.unreadAt,
         };
@@ -1434,23 +1464,101 @@ export class TaskIndexRepo {
       if (key !== workspaceKey(params.child)) {
         throw new Error("orchestration link 跨 workspace 被拒绝");
       }
+      // upsert 语义：重关联用户取消过的子任务时复活墓碑行（清 unlinked_at），
+      // 而不是被 INSERT OR IGNORE 静默吞掉；是否允许复活由服务层的 force 校验决定。
       database
         .prepare(
-          `INSERT OR IGNORE INTO orchestration_links
+          `INSERT INTO orchestration_links
             (workspace_key, orchestration_task_id, child_task_id, kind, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(workspace_key, orchestration_task_id, child_task_id)
+           DO UPDATE SET kind = excluded.kind, unlinked_at = NULL`,
         )
         .run(key, params.orchestration.taskId, params.child.taskId, params.kind, Date.now());
       database
         .prepare(
-          `UPDATE tasks SET orchestration_role = 'child', orchestration_parent_task_id = ?
+          `UPDATE tasks SET orchestration_role = 'child',
+             orchestration_parent_task_id = COALESCE(orchestration_parent_task_id, ?)
            WHERE workspace_key = ? AND task_id = ?`,
         )
         .run(params.orchestration.taskId, key, params.child.taskId);
     });
   }
 
-  /** 列出编排主任务下的子任务关系（含派生/关联 kind）。 */
+  /**
+   * 解除编排关系（用户手动取消关联）：墓碑语义——不物理删行，置 unlinked_at。
+   * 墓碑行用于拦截编排模型自动重关联（除非用户明确点名要求，force 才复活）。
+   * 同时清除子任务行上的编排身份投影（role/parent 列 + meta_json）。
+   * 返回清除标记后的子任务 meta；关系行不存在或已是墓碑时返回 null。
+   */
+  async unlinkOrchestrationChild(params: {
+    orchestration: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+    child: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+  }): Promise<ZCodeTaskMeta | null> {
+    await this.ensureReady();
+    return this.enqueueWrite(params.orchestration, () => {
+      const database = this.getDatabase();
+      const key = workspaceKey(params.orchestration);
+      if (key !== workspaceKey(params.child)) {
+        throw new Error("orchestration unlink 跨 workspace 被拒绝");
+      }
+      const result = database
+        .prepare(
+          `UPDATE orchestration_links SET unlinked_at = ?
+           WHERE workspace_key = ? AND orchestration_task_id = ? AND child_task_id = ?
+             AND unlinked_at IS NULL`,
+        )
+        .run(Date.now(), key, params.orchestration.taskId, params.child.taskId);
+      if (result.changes === 0) {
+        return null;
+      }
+      const childRow = this.getTaskRow(params.child);
+      if (!childRow || childRow.deleted === 1) {
+        return null;
+      }
+      const childMeta = rowToMeta(childRow);
+      // 清除身份投影：role/parent 从 meta 与列同时抹掉，子任务回归普通任务。
+      const {
+        orchestrationRole: _clearedRole,
+        orchestrationParentTaskId: _clearedParent,
+        ...restMeta
+      } = childMeta;
+      void _clearedRole;
+      void _clearedParent;
+      return this.writeRecord({
+        meta: { ...restMeta, updatedAt: Date.now() },
+        pinned: childRow.pinned === 1,
+        archived: childRow.archived === 1,
+        deleted: false,
+        titleOverridden: childRow.title_overridden === 1,
+      });
+    });
+  }
+
+  /** 读单条编排关系（含墓碑状态）；不存在返回 null。供 linkTask 的取消关联拦截查询。 */
+  async getOrchestrationLink(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    childTaskId: string;
+  }): Promise<{ kind: "derived" | "linked"; unlinkedAt: number | null } | null> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT kind, unlinked_at FROM orchestration_links
+         WHERE workspace_key = ? AND orchestration_task_id = ? AND child_task_id = ?`,
+      )
+      .get(workspaceKey(params), params.orchestrationTaskId, params.childTaskId) as
+      | { kind: string; unlinked_at: number | null }
+      | undefined;
+    if (!row) return null;
+    return {
+      kind: row.kind === "linked" ? "linked" : "derived",
+      unlinkedAt: row.unlinked_at ?? null,
+    };
+  }
+
+  /** 列出编排主任务下的子任务关系（含派生/关联 kind；墓碑行已取消关联，不返回）。 */
   async listOrchestrationChildren(params: {
     workspacePath: string;
     workspaceIdentity?: string;
@@ -1460,7 +1568,7 @@ export class TaskIndexRepo {
     const rows = this.getDatabase()
       .prepare(
         `SELECT child_task_id, kind FROM orchestration_links
-         WHERE workspace_key = ? AND orchestration_task_id = ?
+         WHERE workspace_key = ? AND orchestration_task_id = ? AND unlinked_at IS NULL
          ORDER BY created_at ASC, child_task_id ASC`,
       )
       .all(workspaceKey(params), params.taskId) as Array<{
@@ -1473,7 +1581,7 @@ export class TaskIndexRepo {
     }));
   }
 
-  /** 查询一个任务的编排父关系；非编排子任务返回 null。 */
+  /** 查询一个任务当前的编排父关系（墓碑行不算在册）；非编排子任务返回 null。 */
   async getOrchestrationParentOf(params: {
     workspacePath: string;
     workspaceIdentity?: string;
@@ -1483,7 +1591,7 @@ export class TaskIndexRepo {
     const row = this.getDatabase()
       .prepare(
         `SELECT orchestration_task_id, kind FROM orchestration_links
-         WHERE workspace_key = ? AND child_task_id = ?`,
+         WHERE workspace_key = ? AND child_task_id = ? AND unlinked_at IS NULL`,
       )
       .get(workspaceKey(params), params.taskId) as
       | { orchestration_task_id: string; kind: string }
@@ -1493,6 +1601,90 @@ export class TaskIndexRepo {
       orchestrationTaskId: row.orchestration_task_id,
       kind: row.kind === "linked" ? "linked" : "derived",
     };
+  }
+
+  /**
+   * 终态通知的持久意图（spec: orchestration-tasks.md）：武装 relay 时 upsert，
+   * 送达或墓碑时 delete。恢复扫描需要 workspace 路径/身份路由 sendPrompt，
+   * 快照存在行上，不依赖 orchestrator 的 tasks 行是否已重建。
+   */
+  async upsertOrchestrationPendingNotify(params: {
+    orchestration: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+    childTaskId: string;
+    armedAt: number;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(params.orchestration, () => {
+      this.getDatabase()
+        .prepare(
+          `INSERT INTO orchestration_pending_notifies
+            (workspace_key, orchestration_task_id, child_task_id, workspace_path,
+             workspace_identity, armed_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(workspace_key, orchestration_task_id, child_task_id)
+           DO UPDATE SET workspace_path = excluded.workspace_path,
+             workspace_identity = excluded.workspace_identity,
+             armed_at = excluded.armed_at`,
+        )
+        .run(
+          workspaceKey(params.orchestration),
+          params.orchestration.taskId,
+          params.childTaskId,
+          params.orchestration.workspacePath,
+          params.orchestration.workspaceIdentity ?? null,
+          params.armedAt,
+        );
+    });
+  }
+
+  /** 送达成功或关系墓碑后清除 pending 行；幂等（行不存在时静默）。 */
+  async clearOrchestrationPendingNotify(params: {
+    orchestration: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+    childTaskId: string;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(params.orchestration, () => {
+      this.getDatabase()
+        .prepare(
+          `DELETE FROM orchestration_pending_notifies
+           WHERE workspace_key = ? AND orchestration_task_id = ? AND child_task_id = ?`,
+        )
+        .run(workspaceKey(params.orchestration), params.orchestration.taskId, params.childTaskId);
+    });
+  }
+
+  /** host 启动恢复扫描的输入：全部在册 pending 行（含路由 scope 快照与武装时刻）。 */
+  async listOrchestrationPendingNotifies(): Promise<
+    Array<{
+      orchestration: { workspacePath: string; workspaceIdentity?: string; taskId: string };
+      childTaskId: string;
+      armedAt: number;
+    }>
+  > {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare(
+        `SELECT workspace_key, orchestration_task_id, child_task_id, workspace_path,
+           workspace_identity, armed_at
+         FROM orchestration_pending_notifies
+         ORDER BY armed_at ASC`,
+      )
+      .all() as Array<{
+      orchestration_task_id: string;
+      child_task_id: string;
+      workspace_path: string;
+      workspace_identity: string | null;
+      armed_at: number;
+    }>;
+    return rows.map((row) => ({
+      orchestration: {
+        workspacePath: row.workspace_path,
+        ...(row.workspace_identity ? { workspaceIdentity: row.workspace_identity } : {}),
+        taskId: row.orchestration_task_id,
+      },
+      childTaskId: row.child_task_id,
+      armedAt: row.armed_at,
+    }));
   }
 
   /**
@@ -1784,6 +1976,8 @@ export class TaskIndexRepo {
     pinned?: boolean;
     archived?: boolean;
     includeDeleted?: boolean;
+    /** 排除归档任务（NULL 安全）；编排列表的 link 候选分析用它实现"归档不参与统筹"。 */
+    excludeArchived?: boolean;
   }): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
     // listTaskMetas 支持不传 workspacePath 查询全部任务，但 workspaceKey 只接受必填路径。
@@ -1828,6 +2022,8 @@ export class TaskIndexRepo {
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
           AND (@archived IS NULL OR archived = @archived)
+          -- NULL 安全的排除归档：老行 archived 列可能为 NULL，不能走 archived = 0 等值过滤。
+          AND (@exclude_archived = 0 OR archived IS NULL OR archived = 0)
         ORDER BY updated_at DESC, created_at DESC, task_id DESC`,
       )
       .all({
@@ -1836,6 +2032,7 @@ export class TaskIndexRepo {
         provider: params.provider ?? null,
         pinned: typeof params.pinned === "boolean" ? (params.pinned ? 1 : 0) : null,
         archived: typeof params.archived === "boolean" ? (params.archived ? 1 : 0) : null,
+        exclude_archived: params.excludeArchived ? 1 : 0,
       }) as unknown as TaskIndexRow[];
     return rows.map(rowToMeta);
   }
@@ -2681,5 +2878,23 @@ export class TaskIndexRepo {
       return null;
     }
     return rowToMeta(row);
+  }
+
+  /**
+   * 任务的持久分桶标记（pinned/archived）。这些状态只存在于 SQLite 列，
+   * 不在 ZCodeTaskMeta 上（meta_json 与列覆盖都不投影它们），编排服务在
+   * 关联前需要它做"归档任务拒绝关联"的硬性校验。任务不存在或已删除返回 null。
+   */
+  async getTaskBucketFlags(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Promise<{ pinned: boolean; archived: boolean } | null> {
+    await this.ensureReady();
+    const row = this.getTaskRow(params);
+    if (!row || row.deleted === 1) {
+      return null;
+    }
+    return { pinned: row.pinned === 1, archived: row.archived === 1 };
   }
 }

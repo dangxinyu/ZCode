@@ -10,6 +10,11 @@ import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
 import type { IZCodeAgentService } from "./zcodeAgent.js";
+import { createOrchestrationNotifyRelay } from "./orchestrationNotifyRelay.js";
+import {
+  listOrchestrationChildrenSummaries,
+  listOrchestrationWorkspaceTasks,
+} from "./orchestrationWorkspaceQuery.js";
 
 const logger = createServiceLogger("zcode-orchestration");
 
@@ -47,7 +52,33 @@ export interface IOrchestrationTaskService {
     workspacePath: string;
     workspaceIdentity?: string;
     childTaskId: string;
+    /**
+     * 用户点名强制重关联：墓碑（用户取消关联）默认拦截自动重关联；
+     * 仅当用户明确要求关联这个任务时才允许模型带 force 重试。
+     */
+    force?: boolean;
   }): Promise<{ childTaskId: string; childTaskName: string; alreadyLinked: boolean }>;
+  /**
+   * 用户手动取消关联（UI 动作，非模型工具）：置关系墓碑 + 清子任务编排标记。
+   * 幂等：关系不在册（不存在或已是墓碑）返回 unlinked=false。
+   */
+  unlinkTask(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    childTaskId: string;
+  }): Promise<{ unlinked: boolean; child: ZCodeTaskMeta | null }>;
+  /**
+   * 向在册子任务（derived/linked）下发一条追加指令（SendChildTaskPrompt 工具）。
+   * 只允许编排任务对在册子任务使用；下发后武装终态通知 relay（每子任务去重）。
+   */
+  sendChildTaskPrompt(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    childTaskId: string;
+    prompt: string;
+  }): Promise<{ childTaskName: string }>;
   listChildren(params: {
     orchestrationTaskId: string;
     workspacePath: string;
@@ -57,66 +88,17 @@ export interface IOrchestrationTaskService {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<{ tasks: OrchestrationWorkspaceTaskSummary[] }>;
+  /**
+   * host 启动恢复扫描（spec: orchestration-tasks.md）：遍历持久化的终态通知
+   * 意图行——墓碑清行、终态晚于水位线补投、其余按原水位线重新武装 relay。
+   * 不抛错（逐行兜底），可安全 fire-and-forget 调用。
+   */
+  recoverPendingChildNotifications(): Promise<void>;
 }
 
 interface WorkspaceScope {
   workspacePath: string;
   workspaceIdentity?: string;
-}
-
-function toTaskStatus(status: ZCodeTaskMeta["status"]): "running" | "completed" | "error" | null {
-  if (status === "completed" || status === "error") return status;
-  return status === "running" ? "running" : null;
-}
-
-/** 最终回复摘要的长度上限：够容纳一段交付说明，防止通知把子会话全文带进编排上下文。 */
-const FINAL_REPLY_EXCERPT_MAX_CHARS = 400;
-/** listWorkspaceTasks 候选摘要的更紧上限：列表信号，不是搬运内容。 */
-const WORKSPACE_TASK_EXCERPT_MAX_CHARS = 120;
-/**
- * 摘要取值的任务数窗口：workspace 可能有几十个任务，逐个读会话开销无界；
- * listTaskMetas 已按 updated_at DESC 排序，只给最近活跃的候选补摘要。
- */
-const WORKSPACE_TASK_EXCERPT_WINDOW = 20;
-
-/**
- * 会话最近一条 assistant 回复的有界摘要（spec: orchestration-tasks.md）。
- * 取尾部窗口内最后一条 assistant 消息的文本 part：收尾回复本身就是交付概括。
- * 冷会话（runtime 已卸载，requireSession 只认活跃会话）读不到时返回 null。
- */
-async function readLatestAssistantReplyExcerpt(
-  agentService: Pick<IZCodeAgentService, "readSessionMessages">,
-  params: WorkspaceScope & { taskId: string },
-  maxChars: number,
-): Promise<string | null> {
-  try {
-    const messages = await agentService.readSessionMessages({
-      sessionId: params.taskId,
-      workspacePath: params.workspacePath,
-      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-      limit: 5,
-    });
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i];
-      if (!message || message.info.role !== "assistant") continue;
-      const text = message.parts
-        .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : []))
-        .join("\n")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!text) continue;
-      return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
-    }
-    return null;
-  } catch (error) {
-    logger.info("Latest assistant reply excerpt unavailable", {
-      errorMessage: error instanceof Error ? error.message : String(error),
-      event: "orchestration.child_excerpt.unavailable",
-      taskId: params.taskId,
-      workspacePath: params.workspacePath,
-    });
-    return null;
-  }
 }
 
 /**
@@ -172,11 +154,20 @@ export function createOrchestrationTaskService(options: {
    * taskTargets 内存表里（taskService.sendPrompt 会抛 ZCODE_SESSION_TARGET_NOT_FOUND，
    * 联调实测命中），通知必须走 v1 sendPrompt（session/send → v4 sendText，不依赖内存表）。
    * 子任务由 taskService.createTask 创建（有 target），首条指令仍走 taskService。
-   * readSessionMessages 用于通知附带的最终回复摘要（runtime 被回收时降级）。
+   * readSessionMessages 用于通知附带的最终回复摘要（runtime 被回收时降级）；
+   * resumeSession 用于向冷会话（旧的关联任务）下发指令前的物化恢复。
    */
-  zcodeAgentService: Pick<IZCodeAgentService, "sendPrompt" | "readSessionMessages">;
+  zcodeAgentService: Pick<
+    IZCodeAgentService,
+    "sendPrompt" | "readSessionMessages" | "resumeSession"
+  >;
 }): IOrchestrationTaskService {
   const { taskService, taskIndexRepo, zcodeAgentService } = options;
+  // 终态通知 relay（spec: orchestration-tasks.md）：持久水位线 + busy/冷会话重试 +
+  // 启动恢复扫描，机制细节见 orchestrationNotifyRelay.ts。spawn 首条指令与
+  // SendChildTaskPrompt 下发共用同一条武装链路。
+  const notifyRelay = createOrchestrationNotifyRelay(options);
+
   return {
     async spawnSubTask(params) {
       await ensureOrchestratorMeta(taskIndexRepo, params);
@@ -206,134 +197,22 @@ export function createOrchestrationTaskService(options: {
         },
         kind: "derived",
       });
-      // 终态回流（spec 事件顺序）双通道，通知幂等一次性：
-      // 1) onDynamicTaskTerminalOutcome 订阅——长任务的常规通道；
-      // 2) 短窗轮询兜底——syncer 的终态事件只在观察到 running→terminal 迁移时发射
-      //    （processSummary 的 becameTerminal 要求 previous 非 undefined；draft 不进基线），
-      //    秒级完成的子任务其 running 帧会被 sessions-index conflation 吞掉，终态帧
-      //    到达时 previous 仍为 undefined 而不发射（联调实测命中）。轮询读 tasks-index
-      //    的权威 status，30 秒窗内每 3 秒检查一次，双通道先到先发。
-      // 进程重启两通道皆失时，编排 agent 靠 ListOrchestrationChildren 兜底（spec 声明）。
-      let notified = false;
-      const notifyChildTerminal = async (
-        outcome: "succeeded" | "failed",
-        inputId?: string,
-        failureError?: string,
-      ) => {
-        if (notified) return;
-        notified = true;
-        // inputId 只进诊断日志；注入编排会话的文本面向用户，不携带内部标识。
-        logger.info("Orchestration child terminal outcome received", {
-          childTaskId: child.taskId,
-          event: "orchestration.child_terminal.received",
-          inputId: inputId ?? null,
-          outcome,
+      // 终态回流：双通道 relay（订阅 + 短窗轮询兜底），
+      // spawn 首条指令与后续 SendChildTaskPrompt 下发共用同一条通知链路。
+      notifyRelay.armChildTerminalRelay(
+        {
           orchestrationTaskId: params.orchestrationTaskId,
-        });
-        // 通知时读 tasks-index 最新标题：spawn 后 renameTask 已把专名落库（titleOverridden
-        // 防 snapshot 冲掉）；读不到再退 createTask 返回值，最终兜底通用称呼，绝不展示 id。
-        const [meta, finalReplyExcerpt] = await Promise.all([
-          taskIndexRepo
-            .getTaskMeta({
-              workspacePath: params.workspacePath,
-              ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-              taskId: child.taskId,
-            })
-            .catch(() => null),
-          readLatestAssistantReplyExcerpt(
-            zcodeAgentService,
-            {
-              workspacePath: params.workspacePath,
-              ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-              taskId: child.taskId,
-            },
-            FINAL_REPLY_EXCERPT_MAX_CHARS,
-          ),
-        ]);
-        const childName = meta?.title?.trim() || child.title?.trim() || "子任务";
-        // 摘要已附最终回复时引导“不必再读”，阻断编排 agent 每次通知都 ReadSessionContext
-        // 全量拉子会话的资源浪费；摘要缺失才保留读取路径。
-        const content =
-          `【编排通知】子任务「${childName}」已${outcome === "failed" ? "失败" : "完成"}。\n` +
-          (outcome === "failed" && failureError?.trim()
-            ? `错误摘要：${failureError.trim().slice(0, 300)}\n`
-            : "") +
-          (finalReplyExcerpt
-            ? `最终回复摘要：${finalReplyExcerpt}\n` +
-              "向用户汇报时用一两句概括即可，不要转述子任务全文；除非需要完整过程细节，无需再读其会话。"
-            : "需要其产出细节时：先用 ListOrchestrationChildren 查该子任务的 taskId，" +
-              "再以该 taskId 作为 sessionId 调用 ReadSessionContext 读取；汇报时概括即可，不要转述全文。");
-        try {
-          await zcodeAgentService.sendPrompt({
-            sessionId: params.orchestrationTaskId,
-            workspacePath: params.workspacePath,
-            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-            content,
-            clientMode: "desktop-continuous",
-          });
-          logger.info("Orchestration child terminal notification delivered", {
-            childTaskId: child.taskId,
-            event: "orchestration.child_terminal_notify.delivered",
-            excerptChars: finalReplyExcerpt?.length ?? 0,
-            orchestrationTaskId: params.orchestrationTaskId,
-          });
-        } catch (error: unknown) {
-          logger.warn("Failed to notify orchestration parent of child terminal outcome", {
-            childTaskId: child.taskId,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            event: "orchestration.child_terminal_notify.failed",
-            orchestrationTaskId: params.orchestrationTaskId,
-            workspacePath: params.workspacePath,
-          });
-        }
-      };
-      const subscription = taskService.onDynamicTaskTerminalOutcome(child.taskId)((result) => {
-        subscription.dispose();
-        void notifyChildTerminal(
-          result.outcome === "failed" ? "failed" : "succeeded",
-          result.inputId,
-          result.outcome === "failed" ? result.error : undefined,
-        );
-      });
-      logger.info("Orchestration child terminal subscription armed", {
-        childTaskId: child.taskId,
-        event: "orchestration.child_terminal_subscription.armed",
-        orchestrationTaskId: params.orchestrationTaskId,
-        workspacePath: params.workspacePath,
-      });
-      const pollAttempts = 10;
-      const pollIntervalMs = 3_000;
-      const pollTerminal = (attempt: number) => {
-        if (notified || attempt > pollAttempts) return;
-        setTimeout(() => {
-          if (notified) return;
-          void taskIndexRepo
-            .getTaskMeta({
-              workspacePath: params.workspacePath,
-              ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-              taskId: child.taskId,
-            })
-            .then((meta) => {
-              if (notified || !meta) {
-                pollTerminal(attempt + 1);
-                return;
-              }
-              if (meta.status === "completed" || meta.status === "error") {
-                void notifyChildTerminal(meta.status === "error" ? "failed" : "succeeded");
-              } else {
-                pollTerminal(attempt + 1);
-              }
-            })
-            .catch(() => {
-              pollTerminal(attempt + 1);
-            });
-        }, pollIntervalMs);
-      };
-      pollTerminal(1);
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+        child.taskId,
+        child.title,
+      );
       try {
         await taskService.sendPrompt({
           taskId: child.taskId,
           traceId: createUuid(),
+          // 派生子会话有会话级"收尾交付摘要"环境引导，消息正文保持编排 agent 的原文。
           content: params.prompt,
           clientMode: "desktop-continuous",
         });
@@ -387,17 +266,39 @@ export function createOrchestrationTaskService(options: {
       if (childMeta.orchestrationRole === "orchestrator") {
         throw new Error("Cannot link an orchestration task into another orchestration.");
       }
-      const existingParent = await taskIndexRepo.getOrchestrationParentOf({
+      // 硬性规定（用户确认）：归档任务不参与编排统筹——归档意味着用户已把它移出
+      // 活动视野，收它的终态没有意义。拒绝而不是静默跳过，让编排 agent 明确换候选。
+      // archived 不在 ZCodeTaskMeta 上，从 tasks-index 列读（getTaskBucketFlags）。
+      const bucketFlags = await taskIndexRepo.getTaskBucketFlags({
         workspacePath: params.workspacePath,
         workspaceIdentity: params.workspaceIdentity,
         taskId: params.childTaskId,
       });
-      if (existingParent && existingParent.orchestrationTaskId !== params.orchestrationTaskId) {
+      if (bucketFlags?.archived) {
         throw new Error(
-          `Task ${params.childTaskId} is already a child of another orchestration.`,
+          `Task "${childMeta.title}" is archived. Archived tasks cannot be linked into an orchestration.`,
         );
       }
-      const alreadyLinked = existingParent?.orchestrationTaskId === params.orchestrationTaskId;
+      // 多编排跟踪（用户确认）：同域多个编排任务是合法用法，links 表 PK 本就支持
+      // (workspace, orchestration, child) 多父。不再拒绝"已被其他编排持有"——关联是
+      // 轻量书签；tasks 行的 parent 列只记首个父（UI 子任务下拉按它分组），后续编排
+      // 的 SendChildTaskPrompt/终态通知按各自的 link 行独立工作。
+      // 墓碑拦截：用户取消关联过的子任务，未经点名不得自动重关联。
+      // 必须读原始 link 行（含 unlinked_at）判别（parentOf 查询会过滤墓碑）。
+      const existingLink = await taskIndexRepo.getOrchestrationLink({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        orchestrationTaskId: params.orchestrationTaskId,
+        childTaskId: params.childTaskId,
+      });
+      if (existingLink?.unlinkedAt != null && params.force !== true) {
+        throw new Error(
+          `Task "${childMeta.title}" was unlinked from this orchestration by the user. ` +
+            "Do not relink it on your own; only retry with force=true when the user explicitly asks to link this exact task.",
+        );
+      }
+      // 以本编排自己的 link 行判重（多编排跟踪下 parent 列可能指向别的编排）。
+      const alreadyLinked = existingLink != null && existingLink.unlinkedAt == null;
       if (!alreadyLinked) {
         await taskIndexRepo.linkOrchestrationChild({
           orchestration: {
@@ -416,77 +317,172 @@ export function createOrchestrationTaskService(options: {
       return { childTaskId: params.childTaskId, childTaskName: childMeta.title, alreadyLinked };
     },
 
+    async unlinkTask(params) {
+      // 手动 UI 动作：调用方是本机 renderer（经 IZCodeTaskService RPC 透传），
+      // 不做 ensureOrchestratorMeta 终审——那是 CLI 反向请求通道的防御层。
+      const clearedChild = await taskIndexRepo.unlinkOrchestrationChild({
+        orchestration: {
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          taskId: params.orchestrationTaskId,
+        },
+        child: {
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          taskId: params.childTaskId,
+        },
+      });
+      // 墓碑后终态不再通知（spec）：内存 relay 废弃 + 持久意图清行，恢复扫描也不再捡起。
+      notifyRelay.disposeChildRelay(
+        {
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+        params.childTaskId,
+      );
+      // await 清行：解链返回后 pending 行确定性消失（恢复扫描/并发读不再看到它）；
+      // 失败仅记日志，不阻断取消关联本身。
+      await taskIndexRepo
+        .clearOrchestrationPendingNotify({
+          orchestration: {
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+            taskId: params.orchestrationTaskId,
+          },
+          childTaskId: params.childTaskId,
+        })
+        .catch((error: unknown) => {
+          // 清行失败只影响下次恢复扫描的一次冗余墓碑判断，不阻断取消关联。
+          logger.warn("Failed to clear orchestration pending notify on unlink", {
+            childTaskId: params.childTaskId,
+            event: "orchestration.pending_notify.unlink_clear_failed",
+            errorMessage: error instanceof Error ? error.message : String(error),
+            orchestrationTaskId: params.orchestrationTaskId,
+          });
+        });
+      logger.info("Orchestration child unlinked by user", {
+        childTaskId: params.childTaskId,
+        event: "orchestration.unlink",
+        orchestrationTaskId: params.orchestrationTaskId,
+        unlinked: clearedChild !== null,
+        workspacePath: params.workspacePath,
+      });
+      return { unlinked: clearedChild !== null, child: clearedChild };
+    },
+
+    async sendChildTaskPrompt(params) {
+      await ensureOrchestratorMeta(taskIndexRepo, params);
+      // 只能对在册子任务下发：墓碑（已取消关联）与非子任务一律拒绝——
+      // 这条通道是"用户分发语义"的执行面，脱离统筹的任务不再接受编排驱动。
+      const link = await taskIndexRepo.getOrchestrationLink({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        orchestrationTaskId: params.orchestrationTaskId,
+        childTaskId: params.childTaskId,
+      });
+      if (!link || link.unlinkedAt != null) {
+        throw new Error(
+          `Task ${params.childTaskId} is not an active child of this orchestration (it may have been unlinked). Use ListOrchestrationChildren to check current children.`,
+        );
+      }
+      const childMeta = await taskIndexRepo
+        .getTaskMeta({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          taskId: params.childTaskId,
+        })
+        .catch(() => null);
+      const childTaskName = childMeta?.title?.trim() || "子任务";
+      // 武装终态 relay（每子任务去重，废弃同子任务旧 relay），再发指令：
+      // 与 spawn 同序，秒级完成的子任务也不会漏通知。
+      notifyRelay.armChildTerminalRelay(
+        {
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+        params.childTaskId,
+        childTaskName,
+      );
+      // 下发走 v1 sendPrompt（与终态通知同通道）：目标多为关联进来的旧任务，
+      // runtime 可能早已回收，v4 sendText 对冷会话直接 proto.sessionNotFound
+      // （实测命中：向「6、生单」下发被拒）。v1 通道对冷会话的兜底是先
+      // sessionResume 把会话从 store 物化回注册表，再重试一次。
+      const dispatchPrompt = () =>
+        zcodeAgentService.sendPrompt({
+          sessionId: params.childTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          // 正文原样透传（用户确认）：修饰后缀会干扰子任务自己的判断——追问尤其
+          // 需要原话。子任务的收尾纪律由其会话级引导（orchestration_child 身份）
+          // 常驻保证，不靠每条消息带后缀；linked 会话亦不再例外。
+          content: params.prompt,
+          clientMode: "desktop-continuous",
+        });
+      try {
+        try {
+          await dispatchPrompt();
+        } catch (firstError) {
+          const firstMessage =
+            firstError instanceof Error ? firstError.message : String(firstError);
+          if (!/not active|sessionnotfound|unavailable/i.test(firstMessage)) {
+            throw firstError;
+          }
+          logger.info("Child session cold; resuming before dispatch retry", {
+            childTaskId: params.childTaskId,
+            event: "orchestration.send_child_prompt.cold_resume",
+            firstMessage,
+            orchestrationTaskId: params.orchestrationTaskId,
+          });
+          // 冷恢复必须补模型选型：老会话没有持久化选型记录时，裸 resume 后首轮
+          // 会被模型闸门拒绝（"Select a model before continuing"，实测命中）。
+          // 用该任务 tasks-index 里最后一次使用的 provider/model 兜底。
+          await zcodeAgentService.resumeSession({
+            sessionId: params.childTaskId,
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+            ...(childMeta?.provider && childMeta?.model
+              ? {
+                  model: { providerId: childMeta.provider, modelId: childMeta.model },
+                  ...(childMeta.thoughtLevel ? { thoughtLevel: childMeta.thoughtLevel } : {}),
+                }
+              : {}),
+          });
+          await dispatchPrompt();
+        }
+      } catch (error) {
+        logger.warn("Orchestration child prompt dispatch failed", {
+          childTaskId: params.childTaskId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          event: "orchestration.send_child_prompt.failed",
+          orchestrationTaskId: params.orchestrationTaskId,
+        });
+        throw new Error(
+          `Failed to send the prompt to child task "${childTaskName}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      logger.info("Orchestration child prompt dispatched", {
+        childTaskId: params.childTaskId,
+        event: "orchestration.send_child_prompt.dispatched",
+        orchestrationTaskId: params.orchestrationTaskId,
+      });
+      return { childTaskName };
+    },
+
     async listChildren(params) {
       await ensureOrchestratorMeta(taskIndexRepo, params);
-      const links = await taskIndexRepo.listOrchestrationChildren({
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        taskId: params.orchestrationTaskId,
-      });
-      const children: OrchestrationChildSummary[] = [];
-      for (const link of links) {
-        const meta = await taskIndexRepo
-          .getTaskMeta({
-            workspacePath: params.workspacePath,
-            workspaceIdentity: params.workspaceIdentity,
-            taskId: link.childTaskId,
-          })
-          .catch(() => null);
-        if (!meta) continue;
-        children.push({
-          taskId: meta.taskId,
-          title: meta.title,
-          kind: link.kind,
-          status: toTaskStatus(meta.status),
-          updatedAt: meta.updatedAt,
-        });
-      }
-      return { children };
+      return listOrchestrationChildrenSummaries(taskIndexRepo, params);
     },
 
     async listWorkspaceTasks(params) {
-      const metas = await taskIndexRepo.listTaskMetas({
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-      });
-      // 候选摘要窗口：只给最近活跃的前 N 个非 orchestrator 任务补“最近回复”，
-      // 让 link 候选分析从“看标题猜”升级为“看标题+看它最近在做什么”；
-      // orchestrator 不能被 link，读它没有意义。冷会话/读失败单点降级为 null。
-      const excerptTargets = new Set(
-        metas
-          .filter((meta) => meta.orchestrationRole !== "orchestrator")
-          .slice(0, WORKSPACE_TASK_EXCERPT_WINDOW)
-          .map((meta) => meta.taskId),
-      );
-      const excerpts = new Map<string, string | null>();
-      if (excerptTargets.size > 0) {
-        const scope: WorkspaceScope = {
-          workspacePath: params.workspacePath,
-          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        };
-        await Promise.all(
-          [...excerptTargets].map(async (taskId) => {
-            excerpts.set(
-              taskId,
-              await readLatestAssistantReplyExcerpt(
-                zcodeAgentService,
-                { ...scope, taskId },
-                WORKSPACE_TASK_EXCERPT_MAX_CHARS,
-              ),
-            );
-          }),
-        );
-      }
-      return {
-        tasks: metas.map((meta) => ({
-          taskId: meta.taskId,
-          title: meta.title,
-          status: toTaskStatus(meta.status),
-          orchestrationRole: meta.orchestrationRole ?? null,
-          latestReply: excerpts.get(meta.taskId) ?? null,
-          updatedAt: meta.updatedAt,
-        })),
-      };
+      return listOrchestrationWorkspaceTasks(taskIndexRepo, zcodeAgentService, params);
+    },
+
+    async recoverPendingChildNotifications() {
+      await notifyRelay.recoverPendingChildNotifications();
     },
   };
 }

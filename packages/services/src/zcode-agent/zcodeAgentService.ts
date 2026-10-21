@@ -65,6 +65,7 @@ import {
   zcodeOffPeakListParamsSchema,
   zcodeOrchestrationSpawnParamsSchema,
   zcodeOrchestrationLinkParamsSchema,
+  zcodeOrchestrationSendChildTaskPromptParamsSchema,
   zcodeOrchestrationListChildrenParamsSchema,
   zcodeOrchestrationListWorkspaceTasksParamsSchema,
   OFF_PEAK_PROVIDER_IDS,
@@ -2622,6 +2623,47 @@ export function createZCodeAgentService(
                   ? { workspaceIdentity: workspace.workspaceIdentity }
                   : {}),
                 childTaskId: parsed.data.childTaskId,
+                ...(parsed.data.force !== undefined ? { force: parsed.data.force } : {}),
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationSendChildTaskPrompt) {
+          const parsed = zcodeOrchestrationSendChildTaskPromptParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration sendChildTaskPrompt params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const orchestrationService = options?.resolveOrchestrationTaskService?.();
+              if (!orchestrationService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration task service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await orchestrationService.sendChildTaskPrompt({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                childTaskId: parsed.data.childTaskId,
+                prompt: parsed.data.prompt,
               });
               await client.respond(request.id, result);
             } catch (error) {

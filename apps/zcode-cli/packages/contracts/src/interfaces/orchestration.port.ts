@@ -11,6 +11,8 @@ import type {
   ListOrchestrationChildrenOutput,
   ListWorkspaceTasksInput,
   ListWorkspaceTasksOutput,
+  SendChildTaskPromptInput,
+  SendChildTaskPromptOutput,
   SpawnSubTaskInput,
   SpawnSubTaskOutput,
 } from "../tools/orchestration.js";
@@ -28,6 +30,11 @@ export interface OrchestrationPort {
   ): Promise<SpawnSubTaskOutput>;
   /** 把同 workspace 已有普通任务纳入统筹（kind=linked）；不向目标任务注入指令。 */
   linkTask(input: LinkTaskInput, context: OrchestrationTaskContext): Promise<LinkTaskOutput>;
+  /** 向在册子任务（derived/linked）追加下发一条指令；终态照常回传编排会话。 */
+  sendChildTaskPrompt(
+    input: SendChildTaskPromptInput,
+    context: OrchestrationTaskContext,
+  ): Promise<SendChildTaskPromptOutput>;
   /** 列出当前编排任务的子任务及状态（含派生/关联 kind）。 */
   listChildren(
     input: ListOrchestrationChildrenInput,

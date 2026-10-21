@@ -125,6 +125,8 @@ export interface ContextBuilderConfig {
   outputStyle?: OutputStylePromptConfig;
   compact?: AutoCompactPolicyConfig;
   guidanceToolNames?: readonly string[];
+  /** 会话 taskType：编排子任务（orchestration_child）的环境引导判定。 */
+  taskType?: string;
 }
 
 /**

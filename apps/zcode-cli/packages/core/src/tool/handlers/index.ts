@@ -48,6 +48,7 @@ import {
   linkTaskToolEntry,
   listOrchestrationChildrenToolEntry,
   listWorkspaceTasksToolEntry,
+  sendChildTaskPromptToolEntry,
   spawnSubTaskToolEntry,
 } from "./orchestration.js";
 import {
@@ -100,6 +101,7 @@ export const builtInTools: ToolEntry[] = [
   // 编排任务工具面：includeOrchestration 门 + orchestration_child 结构性禁用名单双保险。
   spawnSubTaskToolEntry,
   linkTaskToolEntry,
+  sendChildTaskPromptToolEntry,
   listOrchestrationChildrenToolEntry,
   listWorkspaceTasksToolEntry,
   enterPlanModeToolEntry,
@@ -269,6 +271,7 @@ export function registerBuiltInTools(
     if (
       (entry.metadata.name === "SpawnSubTask" ||
         entry.metadata.name === "LinkTask" ||
+        entry.metadata.name === "SendChildTaskPrompt" ||
         entry.metadata.name === "ListOrchestrationChildren" ||
         entry.metadata.name === "ListWorkspaceTasks") &&
       options.includeOrchestration !== true

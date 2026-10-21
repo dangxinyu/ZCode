@@ -80,10 +80,12 @@ interface TaskListItemProps {
    * 编排任务的行首子任务展开器（spec: orchestration-tasks.md）。仅编排分区/置顶区的
    * 编排行传入；普通列表不传，行首布局零变化。memo 比较按值（collapsed/childCount），
    * onToggle 视为同 key 下稳定（来自共享折叠 hook 的 useCallback）。
+   * runningCount：正在执行的子任务数（>0 时展开器旁显示小转圈，收起态也能看到有活在跑）。
    */
   orchestrationExpander?: {
     collapsed: boolean;
     childCount: number;
+    runningCount?: number;
     onToggle: () => void;
   };
   /**
@@ -134,7 +136,11 @@ function areOrchestrationExpandersEqual(
 ) {
   if (left === right) return true;
   if (!left || !right) return false;
-  return left.collapsed === right.collapsed && left.childCount === right.childCount;
+  return (
+    left.collapsed === right.collapsed &&
+    left.childCount === right.childCount &&
+    left.runningCount === right.runningCount
+  );
 }
 
 function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemProps) {
@@ -596,10 +602,20 @@ export const MemoTaskItem = memo(function TaskListItem({
         <button
           type="button"
           aria-expanded={!orchestrationExpander.collapsed}
-          aria-label={intl.formatMessage(
-            { id: "workspaceSidebar.orchestrationChildrenCount" },
-            { count: String(orchestrationExpander.childCount) },
-          )}
+          aria-label={
+            orchestrationExpander.runningCount && orchestrationExpander.runningCount > 0
+              ? intl.formatMessage(
+                  { id: "workspaceSidebar.orchestrationChildrenCountRunning" },
+                  {
+                    count: String(orchestrationExpander.childCount),
+                    running: String(orchestrationExpander.runningCount),
+                  },
+                )
+              : intl.formatMessage(
+                  { id: "workspaceSidebar.orchestrationChildrenCount" },
+                  { count: String(orchestrationExpander.childCount) },
+                )
+          }
           className={cn(
             "relative z-10 flex size-4 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest hover:text-foreground-subtle",
             // 与前置状态槽同款的首行对齐规则（timeline/两行体时贴首行，默认行垂直居中）。
@@ -624,6 +640,13 @@ export const MemoTaskItem = memo(function TaskListItem({
           ) : (
             <ChevronDown aria-hidden="true" className="size-3" />
           )}
+          {orchestrationExpander.runningCount && orchestrationExpander.runningCount > 0 ? (
+            // 收起态也能看到"有子任务在跑"：展开器旁的小转圈（用户要求：不用挨个找）。
+            <LoaderIcon
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 size-2.5 animate-spin text-status-running"
+            />
+          ) : null}
         </button>
       ) : null}
 

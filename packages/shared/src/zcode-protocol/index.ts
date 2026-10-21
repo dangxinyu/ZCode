@@ -3530,6 +3530,8 @@ export const zcodeOrchestrationLinkParamsSchema = z
   .object({
     sessionId: nonEmptyString,
     childTaskId: nonEmptyString,
+    // 用户点名强制重关联：仅当用户明确要求关联该任务时为 true（墓碑拦截的例外通道）。
+    force: z.boolean().optional(),
   })
   .strict();
 export type ZCodeOrchestrationLinkProtocolParams = z.infer<
@@ -3543,6 +3545,25 @@ export const zcodeOrchestrationLinkResultSchema = z
     alreadyLinked: z.boolean(),
   })
   .strict();
+
+// 向在册子任务下发追加指令（用户分发语义：子任务领域匹配时优先下发而非编排自己做）。
+export const zcodeOrchestrationSendChildTaskPromptParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    childTaskId: nonEmptyString,
+    prompt: nonEmptyString,
+  })
+  .strict();
+export type ZCodeOrchestrationSendChildTaskPromptProtocolParams = z.infer<
+  typeof zcodeOrchestrationSendChildTaskPromptParamsSchema
+>;
+
+export const zcodeOrchestrationSendChildTaskPromptResultSchema = z
+  .object({ childTaskName: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationSendChildTaskPromptProtocolResult = z.infer<
+  typeof zcodeOrchestrationSendChildTaskPromptResultSchema
+>;
 export type ZCodeOrchestrationLinkProtocolResult = z.infer<
   typeof zcodeOrchestrationLinkResultSchema
 >;
@@ -3759,6 +3780,7 @@ export const zcodeProtocolMethods = {
   // 编排任务派生/关联/查询：与 offPeak 同模式的独立方法族（spec: orchestration-tasks.md）。
   orchestrationSpawnSubTask: "orchestration/spawnSubTask",
   orchestrationLinkTask: "orchestration/linkTask",
+  orchestrationSendChildTaskPrompt: "orchestration/sendChildTaskPrompt",
   orchestrationListChildren: "orchestration/listChildren",
   orchestrationListWorkspaceTasks: "orchestration/listWorkspaceTasks",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。

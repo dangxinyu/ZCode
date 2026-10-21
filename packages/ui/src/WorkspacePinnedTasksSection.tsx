@@ -8,12 +8,17 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
 import { useLocalWorkspaceScopes } from "@/hooks/useLocalWorkspaceScopes.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import {
+  bumpTaskListManualRefresh,
+  useTaskListManualRefreshSerial,
+} from "@/v4/taskListManualRefresh.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
 import { resolveTaskFileTreeTargetFromTabs } from "@/lib/taskFileTreeTarget.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
-import { OrchestrationChildrenList } from "@/OrchestrationChildrenList.js";
+import { OrchestrationChildrenList, isChildRunning } from "@/OrchestrationChildrenList.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
 import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
@@ -166,23 +171,173 @@ export function WorkspacePinnedTasksSection({
       )
       .sort((left, right) => compareZCodeTaskListItems(left, right, taskSortBy));
   }, [localItems, orchestrationFilter, remoteItems, taskSortBy]);
-  // 编排 tab 的置顶编排任务需要展示子任务：active 列表查询（registry 缓存与编排分区/
-  // 时间线共享，无额外 Host RPC）取子任务行，按 orchestrationParentTaskId 分组。
-  // 普通模式下该查询结果不参与渲染。
+  // 编排 tab 的置顶编排任务需要展示子任务：三桶并集索引（timeline + pinned + archived，
+  // 各无 limit）——关联子任务可能已被置顶/归档/沉在深页，只用 timeline 条目建索引会
+  // 让父行子任务数失真（与编排分区同规则，spec: orchestration-tasks.md）。
+  // 普通模式传空 tabs：hook 直接空返回，零查询开销。
   const { items: orchestrationActiveItems } = useGlobalTaskList({
     kind: "timeline",
-    workspaceTabs: scopedWorkspaceTabs,
+    workspaceTabs: orchestrationFilter === "only" ? scopedWorkspaceTabs : [],
     sortBy: taskSortBy,
     searchQuery: "",
-    expanded: false,
-    collapsedLimit,
+    expanded: true,
+    collapsedLimit: 0,
   });
+  const { items: orchestrationPinnedIndexItems } = useGlobalTaskList({
+    kind: "pinned",
+    workspaceTabs: orchestrationFilter === "only" ? scopedWorkspaceTabs : [],
+    sortBy: taskSortBy,
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 0,
+  });
+  const { items: orchestrationArchivedIndexItems } = useGlobalTaskList({
+    kind: "archived",
+    workspaceTabs: orchestrationFilter === "only" ? scopedWorkspaceTabs : [],
+    sortBy: taskSortBy,
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 0,
+  });
+  // 用户手动取消关联（与编排分区同规则）：透传任务服务，成功后 bump 全局刷新串号
+  // 让所有列表实例统一重拉（局部 refresh 只覆盖本组件实例，会漏）。
+  const unlinkOrchestrationChild = useCallback(
+    (params: {
+      orchestrationTaskId: string;
+      childWorkspacePath: string;
+      childTaskId: string;
+      childWorkspaceIdentity?: string;
+    }) => {
+      const services = params.childWorkspaceIdentity
+        ? getRemoteWorkspaceServicesForIdentity(params.childWorkspaceIdentity)
+        : baseServices;
+      if (!services) {
+        return;
+      }
+      void services.zcodeTaskService
+        .unlinkOrchestrationChild({
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.childWorkspacePath,
+          ...(params.childWorkspaceIdentity
+            ? { workspaceIdentity: params.childWorkspaceIdentity }
+            : {}),
+          childTaskId: params.childTaskId,
+        })
+        .then((result) => {
+          if (!result.unlinked) {
+            toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildUnlinkFailed" }));
+            return;
+          }
+          bumpTaskListManualRefresh();
+        })
+        .catch(() => {
+          toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildUnlinkFailed" }));
+        });
+    },
+    [baseServices, intl],
+  );
+  // 权威子关系（links）按编排拉取（与编排分区同规则）：多编排跟踪下 parent 列
+  // 只记首个父，第二父的下拉/计数必须查 links。
+  const manualRefreshSerial = useTaskListManualRefreshSerial();
+  const orchestratorIdsKey = sortedItems
+    .filter((item) => isOrchestrationTask(item))
+    .map((item) => item.taskId)
+    .join(",");
+  const [authoritativeLinksByParentId, setAuthoritativeLinksByParentId] = useState<
+    Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>> | null
+  >(null);
+  useEffect(() => {
+    if (orchestrationFilter !== "only" || orchestratorIdsKey.length === 0) {
+      setAuthoritativeLinksByParentId(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      // 按编排任务所在 workspace 分组逐组查询再合并（服务按 workspace 定位 tasks-index，
+      // 用单一 scope 查全部编排会把别的 workspace 查成空）。
+      const orchestratorsByWorkspace = new Map<
+        string,
+        { workspacePath: string; workspaceIdentity?: string; ids: string[] }
+      >();
+      for (const item of sortedItems) {
+        if (!isOrchestrationTask(item)) continue;
+        const key = buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity);
+        const group = orchestratorsByWorkspace.get(key);
+        if (group) {
+          group.ids.push(item.taskId);
+        } else {
+          orchestratorsByWorkspace.set(key, {
+            workspacePath: item.workspacePath,
+            workspaceIdentity: item.workspaceIdentity,
+            ids: [item.taskId],
+          });
+        }
+      }
+      try {
+        const merged: Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>> =
+          {};
+        for (const group of orchestratorsByWorkspace.values()) {
+          const services = group.workspaceIdentity
+            ? getRemoteWorkspaceServicesForIdentity(group.workspaceIdentity)
+            : baseServices;
+          if (!services) continue;
+          const map = await services.zcodeTaskService.listOrchestrationChildrenMap({
+            orchestrationTaskIds: group.ids,
+            workspacePath: group.workspacePath,
+            ...(group.workspaceIdentity ? { workspaceIdentity: group.workspaceIdentity } : {}),
+          });
+          Object.assign(merged, map);
+        }
+        if (!cancelled) setAuthoritativeLinksByParentId(merged);
+      } catch {
+        if (!cancelled) setAuthoritativeLinksByParentId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseServices, orchestrationFilter, orchestratorIdsKey, manualRefreshSerial, sortedItems]);
+  // 子任务行执行指示的活流源（与编排分区同规则）：sessions-index meta phase 实时，
+  // running 帧不落库，静态列表运行期间 status 停在 completed。
+  const { items: liveSessionItems } = useWorkspaceSessionsIndexItems(
+    orchestrationFilter === "only"
+      ? scopedWorkspaceTabs.map((tab) => ({
+          workspacePath: tab.workspacePath,
+          ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+        }))
+      : [],
+  );
   const orchestrationChildrenByParentId = useMemo(() => {
     if (orchestrationFilter !== "only") return null;
+    const allItems = [
+      ...liveSessionItems,
+      ...orchestrationActiveItems,
+      ...orchestrationPinnedIndexItems,
+      ...orchestrationArchivedIndexItems,
+    ];
+    const metaByTaskId = new Map<string, ZCodeTaskMeta>();
+    for (const item of allItems) {
+      if (!metaByTaskId.has(item.taskId)) metaByTaskId.set(item.taskId, item);
+    }
+    if (authoritativeLinksByParentId) {
+      const byParent = new Map<string, ZCodeTaskMeta[]>();
+      for (const [parentId, links] of Object.entries(authoritativeLinksByParentId)) {
+        const children = links
+          .map((link) => metaByTaskId.get(link.childTaskId))
+          .filter((meta): meta is ZCodeTaskMeta => Boolean(meta));
+        if (children.length > 0) byParent.set(parentId, children);
+      }
+      return byParent;
+    }
+    // 兜底（links 未就绪/失败）：parent 列分组，仅首父视角。
     const byParent = new Map<string, ZCodeTaskMeta[]>();
-    for (const item of orchestrationActiveItems) {
+    const seenTaskKeys = new Set<string>();
+    for (const item of allItems) {
       const parentId = item.orchestrationParentTaskId?.trim();
       if (!parentId) continue;
+      const taskKey = buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) + ":" + item.taskId;
+      if (seenTaskKeys.has(taskKey)) continue;
+      seenTaskKeys.add(taskKey);
       const list = byParent.get(parentId);
       if (list) {
         list.push(item);
@@ -191,7 +346,14 @@ export function WorkspacePinnedTasksSection({
       }
     }
     return byParent;
-  }, [orchestrationActiveItems, orchestrationFilter]);
+  }, [
+    authoritativeLinksByParentId,
+    liveSessionItems,
+    orchestrationActiveItems,
+    orchestrationArchivedIndexItems,
+    orchestrationFilter,
+    orchestrationPinnedIndexItems,
+  ]);
   const { isCollapsed: isOrchestrationChildrenCollapsed, toggleCollapsed: toggleOrchestrationChildren } =
     useOrchestrationChildrenCollapsed();
   // 编排行的工作区显示名（tab.label）：置顶区同样跨 workspace 混排，与编排分区同规则；
@@ -638,6 +800,7 @@ export function WorkspacePinnedTasksSection({
                         ? {
                             collapsed: orchestrationChildrenCollapsed,
                             childCount: orchestrationChildTasks.length,
+                            runningCount: orchestrationChildTasks.filter(isChildRunning).length,
                             onToggle: () => {
                               toggleOrchestrationChildren(item.taskId);
                             },
@@ -667,6 +830,14 @@ export function WorkspacePinnedTasksSection({
                     <OrchestrationChildrenList
                       parentTaskId={item.taskId}
                       childTasks={orchestrationChildTasks}
+                      onUnlinkTask={(childWorkspacePath, childTaskId, childWorkspaceIdentity) => {
+                        unlinkOrchestrationChild({
+                          orchestrationTaskId: item.taskId,
+                          childWorkspacePath,
+                          childTaskId,
+                          childWorkspaceIdentity,
+                        });
+                      }}
                       isActiveTaskId={(child) =>
                         child.taskId === activeTaskId &&
                         buildTaskWorkspaceKey(child.workspacePath, child.workspaceIdentity) ===

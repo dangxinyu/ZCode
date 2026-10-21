@@ -815,7 +815,9 @@ export function createDynamicCuaProductMcpServerResolver(options: {
       // 委托到底层真实 resolver（由 ICuaPermissionService.restartHelper 经此调用）。
       const resolver = await options.getResolver();
       if (!resolver) {
-        throw new Error("Don’t-think Computer Use is not enabled (plugin off or not product mode).");
+        throw new Error(
+          "Don’t-think Computer Use is not enabled (plugin off or not product mode).",
+        );
       }
       await resolver.restart();
     },
@@ -823,7 +825,9 @@ export function createDynamicCuaProductMcpServerResolver(options: {
       // 授权完成后的 restart 必须保留 session id，才能复用底层的幂等与时序保障。
       const resolver = await options.getResolver();
       if (!resolver) {
-        throw new Error("Don’t-think Computer Use is not enabled (plugin off or not product mode).");
+        throw new Error(
+          "Don’t-think Computer Use is not enabled (plugin off or not product mode).",
+        );
       }
       await resolver.restartAfterPermissionGrant(onboardingSessionId);
     },
@@ -2340,6 +2344,8 @@ export function createLocalServices(options: {
     taskIndexSyncer: zcodeTaskIndexSyncer,
     settingService,
     cuaProductMcpServerResolver,
+    // 编排服务晚于 adapter 创建，经前向 holder 晚期引用（取消关联透传用）。
+    resolveOrchestrationTaskService: () => orchestrationTaskServiceForAgent,
   });
   // 编排任务服务（spec: orchestration-tasks.md）：spawn/link 的关系写入路径唯一。
   // 在 zcodeAgentService 之后创建，经前向 holder 供 orchestration/* 反向请求 handler 使用。
@@ -2349,6 +2355,9 @@ export function createLocalServices(options: {
     zcodeAgentService,
   });
   orchestrationTaskServiceForAgent = orchestrationTaskService;
+  // 启动恢复（spec）：持久化的终态通知意图接管——停机期间到达的子任务终态补投、
+  // 未终态的按原水位线重新武装。内部逐行兜错不抛出，不阻塞服务装配。
+  void orchestrationTaskService.recoverPendingChildNotifications();
   const oauthService = createOAuthService(credentialService, {
     apiClient,
     onProviderLogout: handleOAuthProviderLogout,
