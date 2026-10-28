@@ -272,7 +272,7 @@ export function countContextPrefixMessages(
   let count = 0;
   for (const item of messagesOrEntries) {
     if (isRuntimeAttachmentEntry(item)) {
-      if (item.metadata.source === "context_prefix" || item.metadata.source === "skills_listing") {
+      if (isContextPrefixSource(item.metadata.source)) {
         count++;
         continue;
       }
@@ -286,7 +286,7 @@ export function countContextPrefixMessages(
     }
     if (message.role !== "user") break;
     if (metadata) {
-      if (metadata.source === "context_prefix" || metadata.source === "skills_listing") {
+      if (isContextPrefixSource(metadata.source)) {
         count++;
         continue;
       }
@@ -303,6 +303,11 @@ export function countContextPrefixMessages(
 
 function isMetaUserContext(content: ModelMessageContent): boolean {
   return modelMessageContentToText(content).trimStart().startsWith("<system-reminder>");
+}
+
+/** 前缀附件来源集合：与 SYSTEM_REMINDER_PREFIX_SOURCES 保持一致（compact 保留边界）。 */
+function isContextPrefixSource(source: string): boolean {
+  return source === "context_prefix" || source === "skills_listing" || source === "pinned_skill";
 }
 
 export function systemReminderRuntimeMetadata(

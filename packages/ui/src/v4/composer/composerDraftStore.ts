@@ -26,6 +26,11 @@ export interface V4ComposerDraft {
   modelSelection?: ModelSelection;
   /** 视觉委托模型草稿；null=用户显式清除（提交随 payload 传达清除语义），undefined=未选择。 */
   visionDelegateModel?: ModelSelection | null;
+  /**
+   * 常驻 skill 名单（catalog name，全量语义；空数组/缺省=无 pin）。只存名字：
+   * 失效判定由 UI 按当前 catalog 派生，不持久化路径等易变事实。
+   */
+  pinnedSkills?: string[];
   /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
   initializeFromNewTask?: true;
   updatedAt: number;
@@ -113,6 +118,10 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     .nullable()
     .optional()
     .safeParse(value.visionDelegateModel);
+  // 坏值（非字符串/空名）静默丢弃，不连带丢弃其余草稿字段；去重保序由写入侧负责。
+  const pinnedSkills = Array.isArray(value.pinnedSkills)
+    ? [...new Set(value.pinnedSkills.filter((name): name is string => typeof name === "string" && name.trim().length > 0))]
+    : undefined;
   const mention = value.mention;
   const hasMention =
     isRecord(mention) &&
@@ -144,6 +153,7 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     ...(visionDelegateModel.success && visionDelegateModel.data !== undefined
       ? { visionDelegateModel: visionDelegateModel.data }
       : {}),
+    ...(pinnedSkills && pinnedSkills.length > 0 ? { pinnedSkills } : {}),
     ...(value.initializeFromNewTask === true && !mode.success
       ? { initializeFromNewTask: true as const }
       : {}),
@@ -201,6 +211,7 @@ export function persistV4ComposerDraft(
     !draft.modelSelection &&
     // 已选视觉委托（非 null/undefined）也是显式用户意图，不能让空文本 scope 被清掉。
     !draft.visionDelegateModel &&
+    !(draft.pinnedSkills && draft.pinnedSkills.length > 0) &&
     !draft.initializeFromNewTask
   ) {
     delete file.scopes[scopeId];

@@ -10,8 +10,8 @@
 - 派生子任务（child）：由 host 域创建普通任务并盖 child 标记；child 会话**会话级**禁用三个编排工具（不可再派生/关联），其内部 subagent 能力不受影响。
 - 关联语义（已确认决策）：关联动作本身不注入指令；编排通过显式的 `SendChildTaskPrompt` 向在册子任务（derived/linked）追加下发指令——子目标命中某个子任务领域时优先分发而非自己做。取消关联的子任务不再接受下发（不在册即拒绝）。派生任务由 spawn 时携带的首条 prompt 驱动。
 - 取消关联（用户手动，UI 子任务行解链按钮 + 武装式二次确认）：关系行置 `unlinked_at` 墓碑（不物理删除），子任务编排标记清除、回归普通任务，终态不再通知。墓碑拦截自动重关联：LinkTask 对墓碑子任务默认拒绝，仅当用户明确点名要求时模型才可带 `force=true` 重试（服务层校验，`force` 是工具入参）。
-- 子任务任一终态（含用户手动多轮的终态）都通知编排会话，通知注明来源任务名称并附**最终回复的有界摘要**（尾部窗口最后一条 assistant 消息，约 400 字封顶；失败附错误摘要）：编排 agent 默认凭摘要汇报、不再全量读取子会话。摘要不可用（子任务 runtime 已被回收，v1 sessionMessages 只认活跃会话）时降级为引导语。面向编排会话的注入文本与工具输出不携带 taskId / inputId 等内部标识（诊断日志除外）。
-- 终态通知是**持久意图**（tasks-index `orchestration_pending_notifies` 表）：`armed_at` 是已处理终态的水位线——武装 relay 时落行（记水位线与 workspace 路径/身份快照），成功投递后把水位线推进到投递时刻，行随 link 存续（spec 既有要求"含用户手动多轮的终态都通知"，订阅不随单次终态销毁），取消关联时删行。投递必须消化两类瞬态失败——编排会话正在执行（v1 `session/send` 拒绝 "A prompt is already running"）退避重试；编排会话冷（runtime 已回收）先 `resumeSession`（带该编排任务 tasks-index 最后使用的 provider/model 兜底）再重试。重试有界，最终失败保留行。host 启动时恢复扫描：link 已墓碑→清行；子任务已终态且 `updated_at > armed_at`→补投；其余（未终态或终态早于水位线的陈旧终态）→按原水位线重新武装 relay。不持久化会导致：app 重启后武装全灭（长周期编排的子任务完成永远不通知，实测 11 个子任务零通知）、并行子任务挤进 busy 窗口的通知被静默丢弃（实测 15 个子任务丢 2 个）。
+- **下发驱动的终态上报**：一轮下发（spawn 首条指令 / SendChildTaskPrompt）只上报它触发的那个执行轮的终态（下发后的第一个新终态）；用户在子任务会话里的手动多轮**不上报**（用户确认 2026-10-21：关联任务常在非编排场景独立使用，任一终态都上报会持续骚扰编排会话）。通知注明来源任务名称并附**最终回复的有界摘要**（尾部窗口最后一条 assistant 消息，约 400 字封顶；失败附错误摘要）：编排 agent 默认凭摘要汇报、不再全量读取子会话。摘要不可用（子任务 runtime 已被回收，v1 sessionMessages 只认活跃会话）时降级为引导语。面向编排会话的注入文本与工具输出不携带 taskId / inputId 等内部标识（诊断日志除外）。
+- 终态通知是**持久意图**（tasks-index `orchestration_pending_notifies` 表）：下发武装 relay 时落行（记 `armed_at` 与 workspace 路径/身份快照），该轮终态**送达成功后删行**、relay 随之销毁；投递失败保留行。投递必须消化两类瞬态失败——编排会话正在执行（v1 `session/send` 拒绝 "A prompt is already running"）退避重试；编排会话冷（runtime 已回收）先 `resumeSession`（带该编排任务 tasks-index 最后使用的 provider/model 兜底）再重试。重试有界。host 启动时恢复扫描：link 已墓碑→清行；子任务终态且 `updated_at > armed_at`（下发轮已完成）→补投后删行；其余（未终态，或终态早于武装时刻=下发轮仍在排队/执行）→按原 `armed_at` 重新武装 relay。不持久化会导致：app 重启后武装全灭（长周期编排的子任务完成永远不通知，实测 11 个子任务零通知）、并行子任务挤进 busy 窗口的通知被静默丢弃（实测 15 个子任务丢 2 个）。
 - 关联分析（link 候选匹配）：`ListWorkspaceTasks` 每条带最近一条 assistant 回复的有界摘要（约 120 字，仅最近活跃前 20 个非 orchestrator 任务）——候选匹配以摘要（任务实际在做什么）为准，标题相似不足以判定；不确定时编排 agent 先对候选 `ReadSessionContext` 核查目标再关联（LinkTask modelInstructions 引导）。摘要读取经 v1 sessionMessages，CLI 侧对不在 v1 registry 的会话（v4/web 创建）用 sessionStore 冷读兜底，读不到才为 null。
 - 子任务命名：派生时 SpawnSubTask 入参含 `name`（模型按任务内容起的简短专名），host 在首条指令送达后经 `renameTask`（titleSource=custom）落为任务标题；该标题防自动改名覆盖（tasks-index `title_overridden`），侧边栏、通知、工具输出统一用它。
 - 其他对话的 # 引用候选不列出 orchestrator 任务；child 任务仍可被引用（它就是普通任务）。
@@ -25,7 +25,7 @@
 | 身份快照              | `ZCodeTaskMeta.orchestrationRole` / `orchestrationParentTaskId` + tasks 表投影列    | links 的投影，读侧加速；`syncTaskMetaWithGroupedAdmission` preserve 列表必须兜底，防止运行态 snapshot 冲掉标记                  |
 | 会话工具面            | CLI `AgentRuntimeConfig.taskType`（`orchestration_parent` / `orchestration_child`） | 会话级事实，非 turn 级 denylist（turn 级在用户手动输入后会拿回工具面）                                                          |
 | 子任务终态事件        | `zcodeTaskIndexSyncer.emitTerminalAndReady`（既有）                                 | host 消费，不另建订阅源                                                                                                         |
-| 终态通知的持久意图    | tasks-index `orchestration_pending_notifies` 表（taskIndexRepo）                    | PK 同 links；armed 时 upsert、投递后推进水位线、墓碑时删除；host 启动恢复扫描的唯一输入                                         |
+| 终态通知的持久意图    | tasks-index `orchestration_pending_notifies` 表（taskIndexRepo）                    | PK 同 links；armed 时 upsert、送达/墓碑时删除；host 启动恢复扫描的唯一输入                                                      |
 
 ## 接口
 
@@ -69,7 +69,7 @@
 1. 「新建编排任务」→ 首条消息 → 任务仅出现在「编排」分区；普通任务入口行为不变。
 2. 编排会话中 agent 调 `SpawnSubTask` → 新普通任务带 child 标记出现在任务列表，收到首条 prompt。
 3. child 会话中编排三工具不存在；`Agent`（子代理）工具仍可用。
-4. child 完成（含手动轮）→ 编排会话收到注明来源任务名称、附最终回复摘要的通知（无内部 id），且编排 agent 不为汇报而全量读取子会话。
+4. 下发的执行轮完成 → 编排会话收到注明来源任务名称、附最终回复摘要的通知（无内部 id），且编排 agent 不为汇报而全量读取子会话；该通知送达后，用户在子任务会话里的手动多轮终态**不再**产生通知（从编排子任务列表或项目/分组列表进入均同）。
 5. `LinkTask` 关联已有普通任务 → `ListOrchestrationChildren` 可见；关联任务不被注入指令。
 6. 任意其他对话 # 引用候选不含编排任务。
 7. 存量普通任务（无标记）在升级后所有路径行为不变。

@@ -4519,6 +4519,15 @@ const enUS: Record<string, string> = {
     "After compression, the context used by this conversation is still larger than the target model's available context after reserving maximum output. Model switching was canceled.",
   "chat.toolbar.mode.label": "Switch mode",
   // CUA composer entry button
+  "chat.toolbar.pinnedSkill.label": "Pinned Skills",
+  "chat.toolbar.pinnedSkill.tooltip": "Pinned Skills: selected skills load automatically at task start and survive context clearing",
+  "chat.toolbar.pinnedSkill.searchPlaceholder": "Search skills…",
+  "chat.toolbar.pinnedSkill.noMatch": "No matching skills",
+  "chat.toolbar.pinnedSkill.empty": "No skills available; install one in Settings or create one in the workspace",
+  "chat.toolbar.pinnedSkill.unavailable": "This skill is unavailable (deleted or disabled); click to remove",
+  "chat.toolbar.pinnedSkill.unavailableGroup": "Unavailable pinned skills",
+  "chat.toolbar.pinnedSkill.chipOpen": "View pinned skill {name}",
+  "chat.toolbar.pinnedSkill.chipRemove": "Remove pinned skill {name}",
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":
     "Computer Use is idle — it will start automatically on first use",

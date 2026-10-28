@@ -37,6 +37,9 @@ const createSessionRequestedConfigSchema = z.object({
   // 会把“没传 mode”误变成“请求切回 build”，覆盖 workspace 默认 yolo。
   mode: z.string().optional(),
   planEnabled: z.boolean().optional(),
+  // 常驻 skill 名单（catalog name；全量替换，空数组=清除）。applyRequestedSessionConfig
+  // 消费：与 runtime 真值不同才写，避免 createSession 空转事件。
+  pinnedSkills: z.array(z.string()).optional(),
 });
 
 // ── 命令 payload 全集 ──
@@ -223,6 +226,9 @@ export const commandPayloadSchemas = {
     mode: z.enum(["build", "edit", "plan", "yolo"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
+  // 常驻 skill 名单（catalog name 全量替换，空数组=清除）。与 switchModelConfig 同族：
+  // CAS 命令；同值切换由 CLI 回 noop（config.unchanged）。
+  setPinnedSkills: z.object({ skills: z.array(z.string()) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
@@ -314,6 +320,7 @@ export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Se
   "switchModelConfig",
   "switchCollaborationMode",
   "setFollowupMode",
+  "setPinnedSkills",
   "pauseGoal",
   "resumeGoal",
 ]);

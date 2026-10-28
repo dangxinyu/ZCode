@@ -64,6 +64,7 @@ import type {
   ContextSourceSnapshot,
   ExecutionShellSelection,
   HookRunner,
+  ResolvedPinnedSkill,
   TurnId,
 } from "./deps.js";
 import { installAgentRuntimeMethods } from "./methods/index.js";
@@ -157,6 +158,8 @@ export class AgentRuntime {
   private sessionModelSelection: ModelSelection | undefined;
   private sessionVisionDelegateSelection: ModelSelection | undefined;
   private visionDelegateDescriptionCache = new Map<string, Promise<string>>();
+  private sessionPinnedSkills: readonly string[] = [];
+  private pinnedSkillContents: readonly ResolvedPinnedSkill[] = [];
   private messageHistory: MessageHistory;
   private readFileState: ReadFileStateMap;
   private cachedTools: ModelToolContract[] | null = null;
@@ -277,6 +280,8 @@ export class AgentRuntime {
     this.sessionModelSelection =
       config.modelSelection && cloneModelSelection(config.modelSelection);
     this.sessionVisionDelegateSelection = undefined;
+    this.sessionPinnedSkills = [];
+    this.pinnedSkillContents = [];
     this.messageHistory = new MessageHistoryImpl();
     this.readFileState = new Map();
     this.runtimeCommandQueue = createRuntimeCommandQueue();
@@ -359,6 +364,9 @@ export interface AgentRuntime {
   setSessionModelSelection(selection: ModelSelection | undefined): void;
   getVisionDelegateSelection(): ModelSelection | undefined;
   setVisionDelegateSelection(selection: ModelSelection | undefined): void;
+  getPinnedSkills(): readonly string[];
+  setSessionPinnedSkills(skills: readonly string[]): void;
+  setPinnedSkills(input: { skills: readonly string[]; traceContext?: TraceContext }): Promise<void>;
   getProjectId(): ProjectId;
   ensureSessionPersistedForExternalActivity(
     input: string,

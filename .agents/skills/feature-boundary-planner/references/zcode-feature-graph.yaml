@@ -343,6 +343,36 @@ nodes:
         symbol: handleSelectModel
       - file: packages/ui/src/v4/SessionPane.tsx
         symbol: createComposerSubmissionConfig
+  - id: surface.composer-pinned-skill-entry
+    kind: ui-surface
+    label: Composer pinned skill entry and chips
+    aliases:
+      - 常驻 skill
+      - 常驻技能
+      - pinned skills
+    codeSeeds:
+      - file: packages/ui/src/v4/composer/V4ComposerPinnedSkillEntry.tsx
+        symbol: V4ComposerPinnedSkillEntry
+      - file: packages/ui/src/v4/composer/V4ComposerPinnedSkillChips.tsx
+        symbol: V4ComposerPinnedSkillChips
+    invariants:
+      - "Draft is the display owner; runtime sync only via setPinnedSkills command (SessionPane
+        sync effect) or createSession.config. Chips never write runtime directly."
+  - id: runtime.pinned-skill-prefix-injection
+    kind: capability
+    label: Pinned skill request-prefix injection (compaction-immune)
+    aliases:
+      - 常驻 skill 注入
+    codeSeeds:
+      - file: apps/zcode-cli/packages/core/src/context/sections/pinned-skills.ts
+        symbol: buildPinnedSkillsSection
+      - file: apps/zcode-cli/packages/core/src/runtime/methods/pinned-skills.ts
+        symbol: setPinnedSkills
+      - file: apps/zcode-cli/packages/core/src/system-reminder/source.ts
+        symbol: SYSTEM_REMINDER_PREFIX_SOURCES
+    invariants:
+      - "pinned_skill is a request_prefix lifecycle source: rebuilt every request by
+        rebuildContextPrefix and preserved by compact prefix slicing (countContextPrefixMessages)."
   - id: service.conversation-submission
     kind: service
     label: CLI sendText submission handling
@@ -598,3 +628,10 @@ edges:
     type: emits-model-selection-for
     rank: must-inspect
     condition: Applied runtime model selection is projected through ModelSelected events.
+  - from: surface.composer-pinned-skill-entry
+    to: runtime.pinned-skill-prefix-injection
+    type: commits-via
+    rank: must-inspect
+    condition:
+      Draft changes sync via the setPinnedSkills command or createSession.config; runtime
+      resolves full SKILL.md content and injects it as a pinned_skill request-prefix attachment.

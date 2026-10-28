@@ -1,10 +1,12 @@
 // 子任务终态通知 relay（spec: packages/services/specs/orchestration-tasks.md）。
 // 从 orchestrationTaskService 拆出：通知是"持久意图 + 健壮投递 + 启动恢复"的
 // 独立机制，与 spawn/link 的关系写入职责分开，避免服务文件继续膨胀。
-// 可靠性语义（实测丢失驱动）：armed_at 是已处理终态的水位线，持久化在
-// tasks-index orchestration_pending_notifies 行上——app 重启后由恢复扫描接管
-// （长周期编排 11 个子任务零通知），busy 拒绝退避重试（并行子任务 15 个丢 2 个），
-// 订阅不随单次终态销毁（失败后用户重跑完成时主任务毫不知情）。
+// 语义（用户确认 2026-10-21）：**下发驱动**——一轮下发（spawn 首条指令 /
+// SendChildTaskPrompt）只上报它触发的那个执行轮的终态（下发后的第一个新终态），
+// 送达即销毁 relay 与 pending 行；用户在子任务会话里的手动多轮不上报（关联任务
+// 常在非编排场景独立使用，终身上报会持续骚扰编排会话）。可靠性（实测丢失驱动）：
+// armed_at 持久化在 tasks-index orchestration_pending_notifies 行上——app 重启后
+// 由恢复扫描接管（长周期编排 11 个子任务零通知），busy 拒绝退避重试（并行 15 丢 2）。
 
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
@@ -252,15 +254,17 @@ export function createOrchestrationNotifyRelay(options: {
     //   不会被轮询兜底误报（实测：子任务 09:47:23 收指令、09:47:26 误发通知、
     //   09:48:51 才真正完成）。只接受 updatedAt 晚于武装时刻的终态。
     const armedAt = options?.recoveredArmedAt ?? Date.now();
+    // pending 行的 orchestration scope 快照：武装与送达清理两处共用。
+    const pendingRowScope = () => ({
+      workspacePath: scope.workspacePath,
+      ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
+      taskId: scope.orchestrationTaskId,
+    });
     // 通知意图持久化（spec: orchestration-tasks.md）：app 重启后由恢复扫描接管，
     // busy/冷会话投递失败也不丢。
     void taskIndexRepo
       .upsertOrchestrationPendingNotify({
-        orchestration: {
-          workspacePath: scope.workspacePath,
-          ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
-          taskId: scope.orchestrationTaskId,
-        },
+        orchestration: pendingRowScope(),
         childTaskId,
         armedAt,
       })
@@ -276,6 +280,8 @@ export function createOrchestrationNotifyRelay(options: {
     // 新终态排队为最新一条，投递完成后补发，不丢也不并发双发。
     let delivering = false;
     let queuedOutcome: { outcome: "succeeded" | "failed"; failureError?: string } | null = null;
+    // 本 relay 是否已被废弃（同父重下发/解链）：废弃后送达不得清理新 relay 的行与 map 项。
+    let superseded = false;
     const notifyChildTerminal = async (
       outcome: "succeeded" | "failed",
       inputId?: string,
@@ -296,25 +302,33 @@ export function createOrchestrationNotifyRelay(options: {
       });
       try {
         await deliverChildTerminalNotice(scope, childTaskId, fallbackTitle, outcome, failureError);
-        // 水位线推进到本次投递时刻：下次重启恢复不会重复投递同一条终态。
-        // relay 不随单次终态销毁——spec 要求"任一终态（含用户手动多轮的终态）
-        // 都通知"，订阅继续等下一次终态（实测丢失场景：失败通知送达后用户重跑
-        // 子任务，完成时主任务毫不知情）。
-        void taskIndexRepo
-          .upsertOrchestrationPendingNotify({
-            orchestration: {
-              workspacePath: scope.workspacePath,
-              ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
-              taskId: scope.orchestrationTaskId,
-            },
-            childTaskId,
-            armedAt: Date.now(),
-          })
-          .catch(() => {
-            // 水位线推进失败只影响下次恢复的重复投递风险，不影响本次已送达的事实。
-          });
+        // 一轮下发至多一条通知（用户确认 2026-10-21）：送达即销毁 relay 与持久行，
+        // 用户后续在子任务会话里的手动多轮不再上报编排（关联任务常在非编排场景
+        // 独立使用，终身上报会持续骚扰编排会话）。superseded = 本 relay 已被同父
+        // 重下发/解链废弃，行与 map 归新 relay 所有，不动它们。
+        if (!superseded) {
+          subscription.dispose();
+          if (childTerminalRelays.get(relayKey) === dispose) {
+            childTerminalRelays.delete(relayKey);
+          }
+          await taskIndexRepo
+            .clearOrchestrationPendingNotify({
+              orchestration: pendingRowScope(),
+              childTaskId,
+            })
+            .catch((error: unknown) => {
+              // 清行失败只让下次恢复扫描做一次冗余判断（届时终态已陈旧→重新武装），
+              // 送达事实不受影响。
+              logger.warn("Failed to clear orchestration pending notify after delivery", {
+                childTaskId,
+                event: "orchestration.pending_notify.deliver_clear_failed",
+                errorMessage: error instanceof Error ? error.message : String(error),
+                orchestrationTaskId: scope.orchestrationTaskId,
+              });
+            });
+        }
       } catch (error: unknown) {
-        // 投递最终失败：pending 行保留（armed_at 未推进），下次启动恢复扫描补投。
+        // 投递最终失败：pending 行保留，下次启动恢复扫描补投。
         logger.warn(
           "Orchestration child terminal notification delivery failed; retained for recovery",
           {
@@ -342,6 +356,7 @@ export function createOrchestrationNotifyRelay(options: {
       );
     });
     const dispose = () => {
+      superseded = true;
       subscription.dispose();
     };
     childTerminalRelays.set(relayKey, dispose);
@@ -441,17 +456,17 @@ export function createOrchestrationNotifyRelay(options: {
           (childMeta.status === "completed" || childMeta.status === "error") &&
           childMeta.updatedAt > row.armedAt
         ) {
-          // 停机期间到达的终态（晚于水位线）：直接补投，成功后推进水位线。
+          // 停机期间到达的终态（晚于武装时刻 = 下发轮已完成）：补投，成功后删行——
+          // 一轮下发至多一条通知，手动轮不续报。
           await deliverChildTerminalNotice(
             scope,
             row.childTaskId,
             childMeta.title,
             childMeta.status === "error" ? "failed" : "succeeded",
           );
-          await taskIndexRepo.upsertOrchestrationPendingNotify({
+          await taskIndexRepo.clearOrchestrationPendingNotify({
             orchestration: row.orchestration,
             childTaskId: row.childTaskId,
-            armedAt: Date.now(),
           });
           logger.info("Recovered orchestration child terminal notification", {
             childTaskId: row.childTaskId,
@@ -459,8 +474,8 @@ export function createOrchestrationNotifyRelay(options: {
             orchestrationTaskId: scope.orchestrationTaskId,
           });
         } else {
-          // 未终态，或终态早于水位线（已投递过的陈旧终态）：按原水位线重新武装，
-          // 等待下一次终态（含用户停机期间手动多轮后的后续执行）。
+          // 未终态，或终态早于武装时刻（上一轮的陈旧终态 = 下发轮仍在排队/执行）：
+          // 按原武装时刻重新武装，等待下发轮自己的终态。
           armChildTerminalRelay(scope, row.childTaskId, childMeta.title, {
             recoveredArmedAt: row.armedAt,
           });

@@ -153,6 +153,9 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
+import { V4ComposerPinnedSkillEntry } from "@/v4/composer/V4ComposerPinnedSkillEntry.js";
+import { V4ComposerPinnedSkillChips } from "@/v4/composer/V4ComposerPinnedSkillChips.js";
+import { useSkills } from "@/hooks/useSkills.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -434,6 +437,8 @@ interface ConversationComposerProps {
   /** 选择视觉委托模型；modelId 传 null 表示清除会话级委托。 */
   onSelectVisionDelegate?: (providerId: string, modelId: string | null) => void;
   onSwitchMode: (mode: string) => void;
+  /** 替换常驻 skill 名单；宿主负责会话内 setPinnedSkills 命令派发（草稿态可缺省）。 */
+  onSetPinnedSkills?: (skills: string[]) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
   /**
@@ -490,6 +495,7 @@ function ConversationComposerImpl({
   snapshot,
   sessionId = null,
   skillCatalogSessionId = sessionId,
+  onSetPinnedSkills,
   draftMode = false,
   draftConfig,
   composerDraft,
@@ -574,6 +580,17 @@ function ConversationComposerImpl({
   }
   const activeConfigPicker =
     configPickerState.scopeKey === configPickerScopeKey ? configPickerState.activePicker : null;
+  // 常驻 skill catalog：工具条入口与 chips 共用一次拉取（与 $ 面板同源同 scope）。
+  const { skills: pinnedCatalogSkills } = useSkills({
+    workspacePath,
+    workspaceIdentity,
+    sessionId: skillCatalogSessionId,
+    enabled: true,
+  });
+  const pinnedAvailableSkillNames = useMemo(
+    () => new Set(pinnedCatalogSkills.map((skill) => skill.name)),
+    [pinnedCatalogSkills],
+  );
   const handleConfigPickerOpenChange = useCallback(
     (picker: V4ComposerConfigPicker, open: boolean) => {
       // composer 内容为导航 rail 恢复 pointer-events 后，三个 Radix modal
@@ -768,6 +785,15 @@ function ConversationComposerImpl({
   });
   const draftPersistTimerRef = useRef<number | null>(null);
   const suppressDraftPersistRef = useRef(false);
+
+  const handleSetPinnedSkills = useCallback(
+    (skills: string[]) => {
+      // 草稿是显示事实的 owner；会话内 runtime 同步由宿主 onSetPinnedSkills 派发命令。
+      replaceComposerDraft({ ...ownerDraftRef.current.draft, pinnedSkills: skills });
+      onSetPinnedSkills?.(skills);
+    },
+    [onSetPinnedSkills, replaceComposerDraft],
+  );
 
   const snapshotDraftOfEditor = useCallback((): {
     text: string;
@@ -1699,18 +1725,29 @@ function ConversationComposerImpl({
       ),
     [composerAttachments],
   );
+  const composerPinnedSkills = draftConfig?.pinnedSkills ?? [];
   const topContentNode = useMemo(() => {
     if (
       composerAttachments.length === 0 &&
       codeCommentContexts.length === 0 &&
       webElementContexts.length === 0 &&
       pptxElementReferences.length === 0 &&
-      conversationSelectionReferences.length === 0
+      conversationSelectionReferences.length === 0 &&
+      composerPinnedSkills.length === 0
     ) {
       return null;
     }
     return (
       <div className="flex max-w-full flex-col items-start gap-2">
+        <V4ComposerPinnedSkillChips
+          pinnedSkills={composerPinnedSkills}
+          availableSkillNames={pinnedAvailableSkillNames}
+          disabled={disabled}
+          onRemoveSkill={(name) =>
+            handleSetPinnedSkills(composerPinnedSkills.filter((skill) => skill !== name))
+          }
+          onOpenPicker={() => handleConfigPickerOpenChange("pinnedSkill", true)}
+        />
         {composerAttachments.length > 0 ? (
           <Attachments
             variant="inline"
@@ -2026,6 +2063,11 @@ function ConversationComposerImpl({
     pptxElementReferences,
     onOpenCodeViewer,
     openPptxElementReference,
+    composerPinnedSkills,
+    pinnedAvailableSkillNames,
+    handleSetPinnedSkills,
+    handleConfigPickerOpenChange,
+    disabled,
   ]);
 
   // 发送/停止控制簇（对齐旧 ChatViewComposer.submitControlNode 结构：
@@ -2174,6 +2216,14 @@ function ConversationComposerImpl({
           remoteSessionId={remoteSessionId}
           currentSessionBusy={canStop}
         />
+        <V4ComposerPinnedSkillEntry
+          skills={pinnedCatalogSkills}
+          draftConfig={draftConfig}
+          disabled={disabled}
+          activeConfigPicker={activeConfigPicker}
+          onConfigPickerOpenChange={handleConfigPickerOpenChange}
+          onSetPinnedSkills={handleSetPinnedSkills}
+        />
         <ConversationBackgroundWorkTrigger
           backgroundWorks={snapshot?.backgroundWorks ?? []}
           runningSubagentCount={runningSubagentCount}
@@ -2188,6 +2238,8 @@ function ConversationComposerImpl({
       disabled,
       draftConfig,
       handleConfigPickerOpenChange,
+      handleSetPinnedSkills,
+      pinnedCatalogSkills,
       backgroundWorkOpenTarget,
       onOpenRunningBackgroundWorks,
       onSwitchMode,

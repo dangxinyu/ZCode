@@ -808,6 +808,7 @@ export const SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION =
 export const SESSION_ENTRY_BASH_SHELL_SELECTION = "runtime/bash_shell_selection" as const;
 export const SESSION_ENTRY_MODEL_SELECTION = "runtime/model_selection" as const;
 export const SESSION_ENTRY_VISION_DELEGATE = "runtime/vision_delegate" as const;
+export const SESSION_ENTRY_PINNED_SKILLS = "runtime/pinned_skills" as const;
 export const SESSION_ENTRY_EXECUTION_STATE = "runtime/execution_state" as const;
 export const SESSION_ENTRY_USER_INPUT_AUTO_RESOLUTION =
   "runtime/user_input_auto_resolution" as const;
@@ -819,6 +820,7 @@ export const SESSION_ENTRY_TYPES = [
   SESSION_ENTRY_BASH_SHELL_SELECTION,
   SESSION_ENTRY_MODEL_SELECTION,
   SESSION_ENTRY_VISION_DELEGATE,
+  SESSION_ENTRY_PINNED_SKILLS,
   SESSION_ENTRY_EXECUTION_STATE,
   SESSION_ENTRY_USER_INPUT_AUTO_RESOLUTION,
   SESSION_ENTRY_WORKSPACE_CHECKPOINT,

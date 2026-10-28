@@ -1378,6 +1378,7 @@ export function SessionPane({
   const toolGroupingChangesEnabled = sharedSettings?.toolGroupingChangesEnabled ?? false;
   const snapshotSessionId = snapshot?.sessionId ?? null;
   const snapshotFollowupMode = snapshot?.config.followupMode ?? null;
+  const snapshotPinnedSkills = snapshot?.config.pinnedSkills ?? null;
   const snapshotRevision = snapshot?.revision ?? null;
 
   // 注入模式对齐 PermissionDialog：theme/codePreviewSettings 在宿主取 store，
@@ -3407,6 +3408,28 @@ export function SessionPane({
         );
         requireAcceptedConfigAck("setFollowupMode", ack);
       }
+
+      // 常驻 skill：预热首发走 sendText，不经过 createSession.config，这里是名单进入
+      // runtime 的唯一确定性时点（在首条 turn 之前）。与 followupMode 不同，失败不阻断
+      // 发送——最坏结果是首个 turn 缺常驻注入，后续同步 effect 会继续收敛。
+      const projectedPinned = projectedConfig?.pinnedSkills ?? [];
+      const desiredPinned = desiredConfig.pinnedSkills;
+      if (
+        desiredPinned &&
+        (projectedPinned.length !== desiredPinned.length ||
+          projectedPinned.some((name, index) => name !== desiredPinned[index]))
+      ) {
+        const ack = await dispatchConfigCas(
+          "setPinnedSkills",
+          { skills: desiredPinned },
+          { targetSessionId },
+        );
+        if (!ack || !(ack.status === "accepted" || ack.status === "noop" || ack.status === "duplicate")) {
+          logger.warn(
+            `[v4-pane] setPinnedSkills 首发前未收敛: ${ack?.status ?? "missing-ack"} ${ack?.reasonCode ?? ""}`,
+          );
+        }
+      }
     },
     [appFollowupMode, dispatchConfigCas, draftConfigRef],
   );
@@ -3440,6 +3463,43 @@ export function SessionPane({
     snapshotRevision,
     snapshotSessionId,
   ]);
+  // ── 常驻 skill：草稿名单 → runtime 同步（setPinnedSkills 命令，唯一 runtime 写路径）──
+  // draft 是用户意图 owner；snapshot 投影是 runtime 回声。两者发散时按值补发一次命令，
+  // 收敛（回声一致）后停止；会话内即时改选与 prewarm 首发前同步都走同一条路。
+  const pinnedSkillsSyncRef = useRef<string | null>(null);
+  const draftPinnedSkills = draftConfig.pinnedSkills ?? [];
+  useEffect(() => {
+    const targetSessionId = sessionId ?? prewarmSessionId;
+    if (!targetSessionId) return;
+    if (snapshotSessionId !== targetSessionId) return;
+    const desiredKey = JSON.stringify(draftPinnedSkills);
+    if (pinnedSkillsSyncRef.current === desiredKey) return;
+    const projected = snapshotPinnedSkills ?? [];
+    if (
+      projected.length === draftPinnedSkills.length &&
+      projected.every((name, index) => name === draftPinnedSkills[index])
+    ) {
+      pinnedSkillsSyncRef.current = desiredKey;
+      return;
+    }
+    pinnedSkillsSyncRef.current = desiredKey;
+    void configCommandBarrier.enqueue(() =>
+      dispatchConfigCas(
+        "setPinnedSkills",
+        { skills: draftPinnedSkills },
+        { targetSessionId },
+      ),
+    );
+  }, [
+    configCommandBarrier,
+    dispatchConfigCas,
+    draftPinnedSkills,
+    prewarmSessionId,
+    sessionId,
+    snapshotPinnedSkills,
+    snapshotSessionId,
+  ]);
+
 
   // Composer 选择表达“下一次提交”。点击只更新 renderer intent；Session Selection
   // 在 Submission 真正开跑（Guide 为下一次 model-step）时由 CLI/Core 更新。

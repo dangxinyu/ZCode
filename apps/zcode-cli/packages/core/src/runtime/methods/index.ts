@@ -12,6 +12,12 @@ import {
   getVisionDelegateSelection,
   setVisionDelegateSelection,
 } from "./config.js";
+import {
+  getPinnedSkills,
+  setSessionPinnedSkills,
+  setPinnedSkills,
+  resolvePinnedSkillContents,
+} from "./pinned-skills.js";
 import { getProjectId } from "./config.js";
 import { setWorkingDirectory } from "./config.js";
 import { ensureSessionPersistedForExternalActivity } from "./config.js";
@@ -214,6 +220,10 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.setSessionModelSelection = setSessionModelSelection;
   proto.getVisionDelegateSelection = getVisionDelegateSelection;
   proto.setVisionDelegateSelection = setVisionDelegateSelection;
+  proto.getPinnedSkills = getPinnedSkills;
+  proto.setSessionPinnedSkills = setSessionPinnedSkills;
+  proto.setPinnedSkills = setPinnedSkills;
+  proto.resolvePinnedSkillContents = resolvePinnedSkillContents;
   proto.getProjectId = getProjectId;
   proto.setWorkingDirectory = setWorkingDirectory;
   proto.ensureSessionPersistedForExternalActivity = ensureSessionPersistedForExternalActivity;

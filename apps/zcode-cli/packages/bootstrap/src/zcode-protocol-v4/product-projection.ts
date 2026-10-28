@@ -1402,6 +1402,8 @@ export class ProductProjection {
         return this.onQueueAutoDrainChanged(event);
       case SessionEventType.FollowupModeChanged:
         return this.onFollowupModeChanged(event);
+      case SessionEventType.PinnedSkillsChanged:
+        return this.onPinnedSkillsChanged(event);
       case SessionEventType.SessionModeChanged:
         return this.onSessionModeChanged(event);
       case SessionEventType.TurnComplete:
@@ -3744,6 +3746,29 @@ export class ProductProjection {
       {
         op: "state.updated",
         patch: this.queuePatch(queue),
+      },
+    ];
+  }
+
+  // setPinnedSkills：config.pinnedSkills 全量替换（空数组按缺席处理，与 seed 同口径）。
+  private onPinnedSkillsChanged(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as { skills?: string[] };
+    const skills = Array.isArray(payload.skills) ? payload.skills : [];
+    const current = this.snapshot.config.pinnedSkills ?? [];
+    if (current.length === skills.length && current.every((name, index) => name === skills[index])) {
+      return [];
+    }
+    const nextConfig: ConversationSnapshot["config"] = {
+      ...this.snapshot.config,
+      ...(skills.length > 0 ? { pinnedSkills: skills } : {}),
+    };
+    if (skills.length === 0) {
+      delete nextConfig.pinnedSkills;
+    }
+    return [
+      {
+        op: "state.updated",
+        patch: { config: nextConfig },
       },
     ];
   }

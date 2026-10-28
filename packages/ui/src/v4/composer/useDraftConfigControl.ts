@@ -101,6 +101,8 @@ interface DraftConfigControl {
   visionDelegateModel: ModelSelection | null | undefined;
   /** 选择视觉委托模型；modelId 传 null 表示显式清除会话级委托。 */
   handleDraftSelectVisionDelegate: (providerId: string, modelId: string | null) => void;
+  /** 替换常驻 skill 名单（全量语义；空数组=清除）。 */
+  handleDraftSetPinnedSkills: (skills: string[]) => void;
 }
 
 export function useDraftConfigControl(params: {
@@ -194,8 +196,11 @@ export function useDraftConfigControl(params: {
       // 不能写成 `?? undefined`：?? 对 null 也生效，会把「显式清除」降级成「未选择」，
       // 提交时就丢失清除语义。这里三态原样透传给 Submission。
       visionDelegateModel: draft.visionDelegateModel,
+      ...(draft.pinnedSkills && draft.pinnedSkills.length > 0
+        ? { pinnedSkills: draft.pinnedSkills }
+        : {}),
     }),
-    [draft.mode, draft.planEnabled, draft.visionDelegateModel, effectiveSelection],
+    [draft.mode, draft.planEnabled, draft.visionDelegateModel, draft.pinnedSkills, effectiveSelection],
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
@@ -232,6 +237,9 @@ export function useDraftConfigControl(params: {
         thought: selection?.options?.reasoningLevel ?? "",
         // 同上：visionDelegateModel 三态（未选/已选/显式清除 null）原样进投影。
         visionDelegateModel: next.visionDelegateModel,
+        ...(next.pinnedSkills && next.pinnedSkills.length > 0
+          ? { pinnedSkills: next.pinnedSkills }
+          : {}),
       };
       setStoredState(nextState);
       persistV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, next);
@@ -479,6 +487,25 @@ export function useDraftConfigControl(params: {
     [updateComposerDraft],
   );
 
+  const handleDraftSetPinnedSkills = useCallback(
+    (skills: string[]) => {
+      // 与 visionDelegate 同路：不经过 updateDraftConfig 的 modelSelection 校验链。
+      // 全量替换语义；写入前规范化（trim/去空/去重保序），与 runtime 侧规则一致。
+      const seen = new Set<string>();
+      const normalized = skills.filter((raw) => {
+        const name = raw.trim();
+        if (!name || seen.has(name)) return false;
+        seen.add(name);
+        return true;
+      });
+      updateComposerDraft((current) => ({
+        ...current,
+        pinnedSkills: normalized,
+      }));
+    },
+    [updateComposerDraft],
+  );
+
   const handleDraftSwitchMode = useCallback(
     (mode: string) => {
       if (mode === "plan" || mode === "plan-off") {
@@ -517,6 +544,7 @@ export function useDraftConfigControl(params: {
     handleDraftSwitchMode,
     visionDelegateModel: draft.visionDelegateModel,
     handleDraftSelectVisionDelegate,
+    handleDraftSetPinnedSkills,
   };
 }
 

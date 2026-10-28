@@ -34,6 +34,7 @@ import type {
   ToolRegistry,
   ContextBuilder,
   ContextBuildResult,
+  ResolvedPinnedSkill,
 } from "./deps.js";
 import type {
   ActiveTurnSteeringState,
@@ -87,6 +88,10 @@ export interface AgentRuntimeInternal
   sessionVisionDelegateSelection: ModelSelection | undefined;
   /** 视觉描述缓存：图片内容 hash → 描述 Promise；进程内存态，失败不缓存。 */
   visionDelegateDescriptionCache: Map<string, Promise<string>>;
+  /** 常驻 skill 名单（catalog name；会话真值，setPinnedSkills 唯一写入口）。 */
+  sessionPinnedSkills: readonly string[];
+  /** 常驻 skill 已解析全文；context 初始化与每次 set 后经 skillPort 重解析。 */
+  pinnedSkillContents: readonly ResolvedPinnedSkill[];
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
   cachedTools: ModelToolContract[] | null;

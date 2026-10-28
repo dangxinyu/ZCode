@@ -62,6 +62,7 @@ import {
   openStartupSessionStore,
   readProjectPermissionMode,
   readSessionModelSelection,
+  readSessionPinnedSkills,
   readSessionVisionDelegateSelection,
 } from "./session-store.js";
 import { createWorkflowFacade } from "./workflow-facade.js";
@@ -489,6 +490,23 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       }
     };
 
+    const restorePersistedPinnedSkills = async (): Promise<void> => {
+      try {
+        // 恢复阶段不校验 skill 存在性：失效项由 runtime 注入 unavailable 占位行呈现，
+        // context 初始化（首个 turn）时才做实际解析。
+        const skills = await readSessionPinnedSkills(sessionStore, sessionId);
+        // 免事件写入：恢复只还原真值（PinnedSkillsChanged 不重放），全文由首个
+        // turn 的 context 初始化解析。
+        getRuntime().setSessionPinnedSkills(skills);
+      } catch (error) {
+        logger.warn("Session pinned skills restore failed", {
+          error: error instanceof Error ? error.message : String(error),
+          event: "session.pinned_skills.restore_failed",
+          sessionId,
+        });
+      }
+    };
+
     const resumeFromStore = async (resumeOptions?: ResumeOptions): Promise<ResumeSessionResult> => {
       const runtime = getRuntime();
       const unsubscribe = resumeOptions?.onEvent
@@ -499,6 +517,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         const resumeTraceContext = resumeOptions?.traceContext ?? traceContext;
         const modelSelection = await restorePersistedModelSelection();
         await restorePersistedVisionDelegateSelection();
+        await restorePersistedPinnedSkills();
         await initializeSessionShellEnvironment();
         const result = await runtime.resumeFromStore({
           ...(resumeOptions?.abortSignal ? { abortSignal: resumeOptions.abortSignal } : {}),

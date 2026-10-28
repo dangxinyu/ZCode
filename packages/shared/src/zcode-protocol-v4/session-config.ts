@@ -27,6 +27,8 @@ export const sessionConfigStateSchema = z.object({
     .optional(),
   /** 视觉委托模型；仅 UI 草稿态携带，createSession config 覆盖面不消费（走 firstInput/sendText）。 */
   visionDelegateModel: modelSelectionSchema.nullable().optional(),
+  /** 常驻 skill 名单（catalog name 全量替换语义，空数组=清除）；runtime 以前缀注入全文。 */
+  pinnedSkills: z.array(z.string()).optional(),
 });
 export type SessionConfigState = z.infer<typeof sessionConfigStateSchema>;
 

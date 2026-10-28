@@ -281,7 +281,9 @@ export type {
   ContextBuilderConfig,
   ContextBuildResult,
   OutputStylePromptConfig,
+  ResolvedPinnedSkill,
 } from "../context/index.js";
+export { buildPinnedSkillsSection } from "../context/index.js";
 export { createContextBuilder, estimateTokens } from "../context/index.js";
 export type { EnvInfo, ProjectContext, UserInstructionsOptions } from "../context/index.js";
 export {

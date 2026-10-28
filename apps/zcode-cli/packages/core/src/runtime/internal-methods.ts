@@ -83,6 +83,11 @@ export interface AgentRuntimeCoreMethods {
   setSessionModelSelection(selection: ModelSelection | undefined): void;
   getVisionDelegateSelection(): ModelSelection | undefined;
   setVisionDelegateSelection(selection: ModelSelection | undefined): void;
+  getPinnedSkills(): readonly string[];
+  /** 免事件的名单写入（冷恢复专用）；不重解析、不追加事件。 */
+  setSessionPinnedSkills(skills: readonly string[]): void;
+  setPinnedSkills(input: { skills: readonly string[]; traceContext: TraceContext }): Promise<void>;
+  resolvePinnedSkillContents(traceContext: TraceContext): Promise<void>;
   getProjectId(): ProjectId;
   setWorkingDirectory(cwd: string): void;
   ensureSessionPersistedForExternalActivity(

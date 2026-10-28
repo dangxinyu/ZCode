@@ -34,6 +34,7 @@ export type ContextSource =
   | "env_info" // 环境信息 (cwd, platform, git repo boolean)
   | "system_context" // git snapshot context
   | "skills" // 可用 skills
+  | "pinned_skills" // 常驻 skill：会话级 pin 名单的全文注入（压缩免疫前缀）
   | "tools" // 工具定义
   | "request_user_context" // request-level user context provider-visible 组合块
   | "memory" // 长期 memory read path
@@ -53,6 +54,17 @@ export type ContextInjectionTarget = "system" | "meta_user";
 
 export type ContextCacheHint = "stable" | "dynamic";
 
+/**
+ * 常驻 skill 的单条解析结果。content=null 表示名单项在当前发现结果/文件系统里
+ * 解析失败（被删、改名、超限），注入占位行而不是静默消失——用户与模型都要能感知。
+ */
+export interface ResolvedPinnedSkill {
+  name: string;
+  content: string | null;
+  baseDirectory?: string;
+  truncated?: boolean;
+}
+
 export type PresentationSurface = "terminal" | "zcode_desktop";
 
 // -----------------------------------------------
@@ -70,7 +82,7 @@ export interface ContextSection {
   preview: string; // 前 100 字符预览
 }
 
-export type ContextMetaUserAttachmentSource = "skills_listing" | "context_prefix";
+export type ContextMetaUserAttachmentSource = "skills_listing" | "context_prefix" | "pinned_skill";
 
 export interface ContextMetaUserAttachment {
   source: ContextMetaUserAttachmentSource;
@@ -111,6 +123,8 @@ export interface ContextBuilderConfig {
   memoryRoot?: string;
   memoryIndexContent?: string;
   skills?: SkillLoadOutcome;
+  /** 常驻 skill 的已解析全文（按 pin 名单顺序）；空/缺省 = 无常驻注入。 */
+  pinnedSkills?: readonly ResolvedPinnedSkill[];
   agentProfiles?: readonly AgentProfile[];
   embeddedSearchEnabled?: boolean;
   skillMetadataBudget?: number;

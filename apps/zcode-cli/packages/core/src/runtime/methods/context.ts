@@ -63,6 +63,9 @@ export async function ensureContextInitialized(
   this.contextSourceSnapshot = snapshot;
   this.startMcpStartup(traceContext);
   this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
+  // 常驻 skill 全文：discover 之后解析，resume/create config 恢复的名单在这里第一次
+  // 变成注入内容；setPinnedSkills 运行中改选时也走同一解析入口。
+  await this.resolvePinnedSkillContents(traceContext);
   this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
   this.memoryIndexContent = await loadProjectMemoryIndexContent(this, this.memoryRoot);
   this.contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
@@ -130,6 +133,7 @@ export function createContextBuilderFromSnapshot(
     memoryIndexContent: options.memoryIndexContent,
     memoryRoot,
     skills: this.skillLoadOutcome,
+    pinnedSkills: this.pinnedSkillContents,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,

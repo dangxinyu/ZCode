@@ -4,6 +4,7 @@ import { resolveLocale } from "@zcode/i18n";
 import { normalizeModelSelection, type ModelSelection } from "@zcode/provider";
 import {
   SESSION_ENTRY_MODEL_SELECTION,
+  SESSION_ENTRY_PINNED_SKILLS,
   SESSION_ENTRY_VISION_DELEGATE,
   traceContextToLogContext,
   type CollaborationMode,
@@ -76,6 +77,7 @@ type SessionFacade = Pick<
   | "setModel"
   | "setThoughtLevel"
   | "setVisionDelegateSelection"
+  | "setPinnedSkills"
   | "setLocale"
   | "setTarget"
   | "updateTargetStatus"
@@ -543,6 +545,15 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
         status: "completed",
       });
     },
+    setPinnedSkills: async (skills) => {
+      // runtime 写入是唯一真值入口（重解析全文 + PinnedSkillsChanged 事件）；
+      // entry 持久化失败不回滚 runtime（与 vision delegate 同语义），只留生产日志。
+      await deps.runtime.setPinnedSkills({
+        skills,
+        traceContext: deps.traceContext,
+      });
+      await persistSessionPinnedSkills(deps, [...deps.runtime.getPinnedSkills()]);
+    },
     setThoughtLevel: async (level) => {
       const registryState = currentRegistrySelection();
       if (registryState.owned) {
@@ -748,6 +759,33 @@ async function persistSessionVisionDelegateSelection(
       ...traceContextToLogContext(deps.traceContext),
       error: error instanceof Error ? error.message : String(error),
       event: "session.vision_delegate.persist_failed",
+      module: "bootstrap",
+      status: "failed",
+    });
+  }
+}
+
+/** 常驻 skill 名单落盘：每次写全量快照；空名单落 cleared 标记（恢复侧视为空）。 */
+async function persistSessionPinnedSkills(
+  deps: CreateSessionFacadeDeps,
+  skills: readonly string[],
+): Promise<void> {
+  if (!deps.sessionStore.saveSessionEntry) return;
+  const timestamp = Date.now();
+  try {
+    await deps.sessionStore.saveSessionEntry({
+      id: `${deps.sessionId}:runtime-pinned-skills`,
+      sessionID: deps.sessionId,
+      type: SESSION_ENTRY_PINNED_SKILLS,
+      touchSession: false,
+      time: { created: timestamp, updated: timestamp },
+      data: skills.length > 0 ? { skills: [...skills] } : { cleared: true },
+    });
+  } catch (error) {
+    deps.logger.warn("Session pinned skills persistence failed", {
+      ...traceContextToLogContext(deps.traceContext),
+      error: error instanceof Error ? error.message : String(error),
+      event: "session.pinned_skills.persist_failed",
       module: "bootstrap",
       status: "failed",
     });

@@ -17,7 +17,11 @@ type SystemReminderLifecycle =
 
 type SystemReminderProviderVisibility = "provider_visible" | "provider_hidden";
 
-export const SYSTEM_REMINDER_PREFIX_SOURCES = ["context_prefix", "skills_listing"] as const;
+export const SYSTEM_REMINDER_PREFIX_SOURCES = [
+  "context_prefix",
+  "skills_listing",
+  "pinned_skill",
+] as const;
 
 export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
   "todo_reminder",
@@ -89,6 +93,7 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   incoming_message: descriptor("mid_turn_event", "mid_turn_event", true, "sr.incoming_message"),
   context_prefix: descriptor("request_prefix", "request_prefix", true, "sr.context_prefix"),
   skills_listing: descriptor("request_prefix", "request_prefix", true, "sr.skills_listing"),
+  pinned_skill: descriptor("request_prefix", "request_prefix", true, "sr.pinned_skill"),
   hook_context: descriptor("current_turn", "per_current_turn", true, "sr.hook_context"),
   runtime_mode: descriptor("current_turn", "per_current_turn", true, "sr.runtime_mode"),
   plan_mode_exit: descriptor("current_turn", "runtime_local", true, "sr.plan_mode_exit"),
