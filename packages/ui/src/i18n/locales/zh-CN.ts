@@ -1304,6 +1304,7 @@ const zhCN: Record<string, string> = {
   "orchestration.plan.invalidGraphEmptyGoal": "有节点没有填写目标，填写后才能确认执行",
   "orchestration.plan.deleteEdge": "删除连线",
   "orchestration.plan.addNode": "添加节点",
+  "orchestration.plan.tidyLayout": "整理布局",
   "orchestration.plan.undo": "撤销（⌘Z / Ctrl+Z）",
   "orchestration.plan.redo": "重做（⌘⇧Z / Ctrl+Shift+Z）",
   "orchestration.plan.submitEdit": "提交修改（生成新草案）",

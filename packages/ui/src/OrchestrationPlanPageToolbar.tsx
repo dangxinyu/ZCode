@@ -8,6 +8,7 @@ import {
   Redo2Icon,
   SaveIcon,
   Undo2Icon,
+  WorkflowIcon,
 } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Button } from "@/components/ui/button.js";
@@ -38,6 +39,8 @@ export interface OrchestrationPlanPageToolbarProps {
   onExecutePlan: () => void;
   onBack: () => void;
   onAddNode: () => void;
+  /** 整理布局（用户需求 2026-11-04）：编辑缓冲全量重排（入撤销栈），随保存落库不自动存。 */
+  onTidyLayout: () => void;
   onSave: () => void;
   onConfirm: () => void;
 }
@@ -59,6 +62,7 @@ export function OrchestrationPlanPageToolbar({
   onExecutePlan,
   onBack,
   onAddNode,
+  onTidyLayout,
   onSave,
   onConfirm,
 }: OrchestrationPlanPageToolbarProps) {
@@ -105,6 +109,14 @@ export function OrchestrationPlanPageToolbar({
             <Redo2Icon aria-hidden="true" className="size-3.5" />
           </Button>
         </div>
+      ) : null}
+      {/* 整理布局（用户需求 2026-11-04）：分层布局算法全量重排（消连线交叉）；
+          只改编辑缓冲，保存按钮/⌘S 落库，⌘Z 可退。 */}
+      {editable && hasNodes ? (
+        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onTidyLayout}>
+          <WorkflowIcon aria-hidden="true" className="size-3.5" />
+          {intl.formatMessage({ id: "orchestration.plan.tidyLayout" })}
+        </Button>
       ) : null}
       {/* 保存按钮：有修改就常驻（用户需求点 6）；图不合法时点击只强调原因，不保存 */}
       {editable && dirty ? (

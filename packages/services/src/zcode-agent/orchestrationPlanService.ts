@@ -9,6 +9,8 @@
 import { randomUUID } from "node:crypto";
 import type { ModelSelection, ZCodeOrchestrationPlansMapProtocol } from "@zcode/shared";
 import { ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL } from "@zcode/shared";
+// 分层布局落库（用户需求 2026-11-04）：与 UI 整理布局/渲染兜底同一算法（shared 单一实现）。
+import { applyMissingLayouts } from "@zcode/shared/orchestration-plan-layout";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
 import type { IModelSelectionService } from "../model-provider/providerFacadeServices.js";
@@ -381,13 +383,17 @@ export function createOrchestrationPlanService(options: {
           reviseDefaultAuto = false;
         }
         // 修订后重新规范起始（agent 修订可能丢掉 start）、根节点接线兜底，并复验不变量。
-        const nodes = wireRootsToStart(
-          withStartNode(revisePlanNodes(current.nodes, proposed, reviseDefaultAuto), (seed) => ({
-            ...seed,
-            status: "pending" as const,
-            childTaskId: null,
-            layout: { x: 60, y: 60 },
-          })),
+        // 布局只补缺（用户需求 2026-11-04）：新增/注入节点（含 start 种子）按分层布局
+        // 补算坐标并与存量位置避让；用户拖过/存过的 layout 一律不动（布局必须透传）。
+        const nodes = applyMissingLayouts(
+          wireRootsToStart(
+            withStartNode(revisePlanNodes(current.nodes, proposed, reviseDefaultAuto), (seed) => ({
+              ...seed,
+              status: "pending" as const,
+              childTaskId: null,
+              layout: { x: 60, y: 60 },
+            })),
+          ),
         );
         validatePlanGraph(nodes);
         // 查缺补漏（用户需求 2026-10-30，完成态可编辑的配套）：修订后被改节点回
@@ -462,11 +468,15 @@ export function createOrchestrationPlanService(options: {
           ? `${params.nodes[0].name} 等 ${params.nodes.length} 项`
           : "编排计划");
       const now = Date.now();
-      const nodes: OrchestrationPlanNode[] = proposed.map((node) => ({
-        ...node,
-        status: "pending",
-        childTaskId: null,
-      }));
+      // 创建即落库布局（用户需求 2026-11-04"创建计划时也遵守梳理办法"）：agent 协议
+      // 不带坐标，服务端按分层布局算法补算每个节点（画布打开即整齐，不再是定义顺序堆叠）。
+      const nodes: OrchestrationPlanNode[] = applyMissingLayouts(
+        proposed.map((node) => ({
+          ...node,
+          status: "pending" as const,
+          childTaskId: null,
+        })),
+      );
       await writePlanRow({
         workspacePath: params.workspacePath,
         ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),

@@ -8,7 +8,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyNodeChanges, type NodeChange, type Node as FlowNode } from "@xyflow/react";
 import {
-  autoPosition,
+  computePlanLayout,
+  fillMissingLayoutPositions,
+} from "@zcode/shared/orchestration-plan-layout";
+import {
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
   DEFAULT_START_NODE_HEIGHT,
@@ -40,7 +43,9 @@ function buildFlowNodes(
   onNameChange: (nodeId: string, name: string) => void,
   childTaskTitles: Record<string, string> = {},
 ): PlanFlowNode[] {
-  const fallback = autoPosition(planNodes);
+  // 兜底布局（2026-11-04 整理布局）：与「整理布局」/服务端落库同一算法（shared 分层布局），
+  // fixed = 已保存坐标——存量混合计划里缺坐标节点落在合理位置，不压盖已保存节点。
+  const fallback = fillMissingLayoutPositions(planNodes);
   return planNodes.map((node) => ({
     id: node.nodeId,
     type: "planNode" as const,
@@ -317,9 +322,15 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
     (position?: { x: number; y: number }) => {
       const existing = editNodes ?? buildFlow();
       const id = `n${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-      const fallback = autoPosition(
-        existing.map((node) => ({ nodeId: node.id, dependsOn: node.data.dependsOn })),
-      ).get(id) ?? { x: 60, y: 60 };
+      // 兜底位 = 分层布局给新节点（无依赖 → 第 0 层）算的不碰撞槽位。
+      const fallback = fillMissingLayoutPositions([
+        ...existing.map((node) => ({
+          nodeId: node.id,
+          dependsOn: node.data.dependsOn,
+          layout: { x: node.position.x, y: node.position.y },
+        })),
+        { nodeId: id, dependsOn: [] },
+      ]).get(id) ?? { x: 60, y: 60 };
       const layout = {
         x: position?.x ?? fallback.x,
         y: position?.y ?? fallback.y,
@@ -603,6 +614,26 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
     [buildFlow, pushHistory, setEditNodesBoth],
   );
 
+  /** 整理布局（用户需求 2026-11-04）：编辑缓冲全量重跑分层布局（不看存量坐标，
+   * "梳理" = 重排全部）。入撤销栈可退；置 dirty 不自动保存——与拖动同一落库路径
+   * （保存按钮 / ⌘S 读 toSavePayload 时带出新坐标）。 */
+  const tidyLayout = useCallback(() => {
+    const base = editNodesRef.current ?? buildFlow();
+    if (base.length === 0) return;
+    pushHistory(base);
+    const positions = computePlanLayout(
+      base.map((node) => ({ nodeId: node.id, dependsOn: node.data.dependsOn })),
+    );
+    setEditNodesBoth(
+      base.map((node) => {
+        const position = positions.get(node.id);
+        return position ? { ...node, position } : node;
+      }),
+    );
+    setDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildFlow, pushHistory, setEditNodesBoth]);
+
   const clearBuffers = useCallback(() => {
     editNodesRef.current = null;
     setEditNodes(null);
@@ -703,6 +734,7 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
     clearInlineEdit,
     clearBuffers,
     setAllAutoExecute,
+    tidyLayout,
     toSavePayload,
     undo,
     redo,

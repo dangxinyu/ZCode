@@ -620,6 +620,7 @@ export function OrchestrationPlanPage({
             : undefined;
           editor.addNode(position);
         }}
+        onTidyLayout={editor.tidyLayout}
         onSave={handleSave}
         onConfirm={confirmPlan}
         progress={progress}

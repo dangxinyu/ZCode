@@ -1403,6 +1403,7 @@ const enUS: Record<string, string> = {
     "Some nodes have no goal; fill them in before confirming",
   "orchestration.plan.deleteEdge": "Delete edge",
   "orchestration.plan.addNode": "Add node",
+  "orchestration.plan.tidyLayout": "Tidy layout",
   "orchestration.plan.undo": "Undo (⌘Z / Ctrl+Z)",
   "orchestration.plan.redo": "Redo (⌘⇧Z / Ctrl+Shift+Z)",
   "orchestration.plan.submitEdit": "Submit changes (new draft)",

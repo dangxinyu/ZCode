@@ -374,41 +374,8 @@ function PlanNodeCard({ id, data, selected }: NodeProps<FlowNode<CardData>>) {
 
 export const planNodeTypes: NodeTypes = { planNode: PlanNodeCard };
 
-/** 自动分层兜底布局（无 layout 的节点）：最长路径定层，层内顺序排布。 */
-export function autoPosition(
-  nodes: Array<{ nodeId: string; dependsOn: string[] }>,
-): Map<string, { x: number; y: number }> {
-  const depth = new Map<string, number>();
-  const resolve = (node: { nodeId: string; dependsOn: string[] }, seen: Set<string>): number => {
-    if (depth.has(node.nodeId)) return depth.get(node.nodeId)!;
-    if (seen.has(node.nodeId)) return 0;
-    seen.add(node.nodeId);
-    const level =
-      node.dependsOn.length === 0
-        ? 0
-        : Math.max(
-            ...node.dependsOn.map((dep) => {
-              const upstream = nodes.find((candidate) => candidate.nodeId === dep);
-              return upstream ? resolve(upstream, seen) + 1 : 0;
-            }),
-          );
-    depth.set(node.nodeId, level);
-    return level;
-  };
-  for (const node of nodes) resolve(node, new Set());
-  const columns = new Map<number, Array<{ nodeId: string; dependsOn: string[] }>>();
-  for (const node of nodes) {
-    const level = depth.get(node.nodeId) ?? 0;
-    columns.set(level, [...(columns.get(level) ?? []), node]);
-  }
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [level, column] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
-    column.forEach((node, index) => {
-      positions.set(node.nodeId, { x: level * 320, y: index * 176 });
-    });
-  }
-  return positions;
-}
+// 自动布局（兜底/整理/落库）统一收敛到 @zcode/shared/orchestration-plan-layout：
+// 旧 autoPosition（最长路径定层 + 定义顺序堆叠）层内不看连线关系，边必然交叉，已删除。
 
 /** target→…→source 可达即成环（新增 source→target 依赖前检查）。 */
 export function wouldCycle(from: string, to: string, nodes: EditableNode[]): boolean {
