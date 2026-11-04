@@ -4,13 +4,13 @@
 
 配套文档，各管一摊：
 
-| 文件 | 管什么 |
-| --- | --- |
-| `AGENTS.md` | 工作流程纪律、命令表、进程/协议/日志边界 |
-| `DESIGN.md` | UI 设计规范（`text-ui-*` 字号、语义色、圆角层级） |
-| `CONTEXT.md` | 插件商店领域词汇表 |
-| `architecture-policy.yaml` | 模块边界与检查规则（唯一可执行来源） |
-| 本文件 | 架构地图与改动定位索引 |
+| 文件                       | 管什么                                            |
+| -------------------------- | ------------------------------------------------- |
+| `AGENTS.md`                | 工作流程纪律、命令表、进程/协议/日志边界          |
+| `DESIGN.md`                | UI 设计规范（`text-ui-*` 字号、语义色、圆角层级） |
+| `CONTEXT.md`               | 插件商店领域词汇表                                |
+| `architecture-policy.yaml` | 模块边界与检查规则（唯一可执行来源）              |
+| 本文件                     | 架构地图与改动定位索引                            |
 
 ## 全局分层与依赖方向
 
@@ -27,6 +27,7 @@ shared（协议/类型）  rpc（RPC 框架）  provider / provider-node（模�
 ```
 
 三条消费路径共享同一套 ui + services：
+
 - **Desktop**：Renderer(壳) ← `@zcode/client` connectViaMessagePort → 窗口 Host utility process → spawn Agent CLI 子进程（stdio）。
 - **Web/命令行版**：浏览器 ← `@zcode/client` connectViaWebSocket → `packages/server`（Hono，静态托管 + WS）→ spawn Agent CLI。
 - **纯 CLI**：TUI（Ink）直接跑 Agent，不经 Host。
@@ -48,23 +49,23 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 
 ### UI 与交互（packages/ui）
 
-| 想改什么 | 去哪 | 注意 |
-| --- | --- | --- |
-| 对话消息流、工具调用块 | `src/ToolCallBlocks*/`、`ModelTrajectory*`（平铺） | 状态只读 `zcodeSessionStore`，别自建副本 |
-| 聊天输入框 | `src/prompt-editor/`（`ChatPromptEditor`）、`chat-input-toolbar/` | 输入壳是唯一 `rounded-2xl` 白名单例外；未提交草稿归 Renderer，已提交归 CommandInbox |
-| 多 Tab 工作区 | `src/store/tabStore.ts` + `tabWorkspaceIdentity.ts` | 身份 key 用 `workspaceIdentity?.trim() \|\| workspacePath` |
-| 插件商店 | `src/settings/PluginStore*.tsx` + `src/store/pluginStore.ts`、`pluginManagementStore*` | 术语严格按 CONTEXT.md；服务在 services/plugins、plugin-sync |
-| 设置页 | `src/SettingsPage.tsx` + `src/settings/` | 存储走 services/storage（受控模块） |
-| 终端 | `src/terminal/`、`SidePaneTerminalPane.tsx`、`Terminal.tsx` | 服务在 services/terminal |
-| Git 面板 | `GitPane*`（平铺）、`git-graph/` | 服务在 services/git |
-| MCP/Skill/命令/Hooks 管理 | `mcpStore*(+Desktop/Helpers/Migration)`、`skillStore.ts`、`commandsStore.ts`、`hooksStore.ts` | 对应服务 mcp-sync、skill-sync、official-mcp、commands、hooks |
-| 子代理/动态工作流面板 | `subagentsStore.ts`、`savedWorkflowStore.ts`、`components/workflow-graph/` | 引擎在 apps/zcode-cli 的 dynamic-workflow 包 |
-| 远程连接向导/SSH 对话框 | `RemoteConnection*`（平铺）、`remote-connection/` | 连接状态真相在 Host 侧注册表，UI 只做投影 |
-| 权限/审批/澄清弹窗 | `PermissionDialog.tsx`、`ElicitationDialog.tsx` | 等待徽章统一用 confirmation 色（DESIGN.md） |
-| 移动端 Web 适配 | `src/v4/`、`lib/mobileTextInput.ts` | iOS 输入用 `text-mobile-input-safe`；单列 + 抽屉布局 |
-| 主题/i18n/日志 | `hooks/useTheme.ts`、`i18n/`、`src/logger.ts` | UI 日志只用 `logger.ts`，禁 `console.log`/`window.zcode.log` |
-| 头部动作区按钮 / 侧栏底部按钮 | `WorkspaceHeaderSections/WorkspaceHeaderActionSection.tsx`、`WorkspaceSidebarFooter.tsx` | 刷新当前对话复用 `onReloadSession`；任务列表刷新走 `v4/taskListManualRefresh.ts` + membership bump（spec: `packages/ui/specs/task-list-manual-refresh.md`） |
-| 模型选择器 / 视觉委托下拉 | `V4ComposerToolbar.tsx`（ModelConfigSelect）+ `useDraftConfigControl.ts`（draft 三态） | 视觉下拉仅主模型 `supportsImage !== true` 时显示；提交经 sendText/createSession payload `visionDelegateModel`（spec: `apps/zcode-cli/packages/core/specs/vision-delegate.md`） |
+| 想改什么                      | 去哪                                                                                          | 注意                                                                                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 对话消息流、工具调用块        | `src/ToolCallBlocks*/`、`ModelTrajectory*`（平铺）                                            | 状态只读 `zcodeSessionStore`，别自建副本                                                                                                                                       |
+| 聊天输入框                    | `src/prompt-editor/`（`ChatPromptEditor`）、`chat-input-toolbar/`                             | 输入壳是唯一 `rounded-2xl` 白名单例外；未提交草稿归 Renderer，已提交归 CommandInbox                                                                                            |
+| 多 Tab 工作区                 | `src/store/tabStore.ts` + `tabWorkspaceIdentity.ts`                                           | 身份 key 用 `workspaceIdentity?.trim() \|\| workspacePath`                                                                                                                     |
+| 插件商店                      | `src/settings/PluginStore*.tsx` + `src/store/pluginStore.ts`、`pluginManagementStore*`        | 术语严格按 CONTEXT.md；服务在 services/plugins、plugin-sync                                                                                                                    |
+| 设置页                        | `src/SettingsPage.tsx` + `src/settings/`                                                      | 存储走 services/storage（受控模块）                                                                                                                                            |
+| 终端                          | `src/terminal/`、`SidePaneTerminalPane.tsx`、`Terminal.tsx`                                   | 服务在 services/terminal                                                                                                                                                       |
+| Git 面板                      | `GitPane*`（平铺）、`git-graph/`                                                              | 服务在 services/git                                                                                                                                                            |
+| MCP/Skill/命令/Hooks 管理     | `mcpStore*(+Desktop/Helpers/Migration)`、`skillStore.ts`、`commandsStore.ts`、`hooksStore.ts` | 对应服务 mcp-sync、skill-sync、official-mcp、commands、hooks                                                                                                                   |
+| 子代理/动态工作流面板         | `subagentsStore.ts`、`savedWorkflowStore.ts`、`components/workflow-graph/`                    | 引擎在 apps/zcode-cli 的 dynamic-workflow 包                                                                                                                                   |
+| 远程连接向导/SSH 对话框       | `RemoteConnection*`（平铺）、`remote-connection/`                                             | 连接状态真相在 Host 侧注册表，UI 只做投影                                                                                                                                      |
+| 权限/审批/澄清弹窗            | `PermissionDialog.tsx`、`ElicitationDialog.tsx`                                               | 等待徽章统一用 confirmation 色（DESIGN.md）                                                                                                                                    |
+| 移动端 Web 适配               | `src/v4/`、`lib/mobileTextInput.ts`                                                           | iOS 输入用 `text-mobile-input-safe`；单列 + 抽屉布局                                                                                                                           |
+| 主题/i18n/日志                | `hooks/useTheme.ts`、`i18n/`、`src/logger.ts`                                                 | UI 日志只用 `logger.ts`，禁 `console.log`/`window.zcode.log`                                                                                                                   |
+| 头部动作区按钮 / 侧栏底部按钮 | `WorkspaceHeaderSections/WorkspaceHeaderActionSection.tsx`、`WorkspaceSidebarFooter.tsx`      | 刷新当前对话复用 `onReloadSession`；任务列表刷新走 `v4/taskListManualRefresh.ts` + membership bump（spec: `packages/ui/specs/task-list-manual-refresh.md`）                    |
+| 模型选择器 / 视觉委托下拉     | `V4ComposerToolbar.tsx`（ModelConfigSelect）+ `useDraftConfigControl.ts`（draft 三态）        | 视觉下拉仅主模型 `supportsImage !== true` 时显示；提交经 sendText/createSession payload `visionDelegateModel`（spec: `apps/zcode-cli/packages/core/specs/vision-delegate.md`） |
 
 组件访问服务的唯一通道：`hooks/useServices.tsx`（`IServiceAccessor`）与 `hooks/usePlatform.tsx`（`IPlatformService`）。禁止 UI 直调 Repo、直调 `window.zcode`。
 
@@ -82,35 +83,36 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 
 ### 协议（packages/shared）
 
-| 层 | 位置 | 说明 |
-| --- | --- | --- |
-| v1 协议 | `src/zcode-protocol/index.ts`（Zod schema，约 3700 行） | 信封 + `session/*`、`plugins/*`、`workflows/*`、`interaction/*`、`automation/*`、`offPeak/*` 等命令与通知 |
-| v4 wire | `src/zcode-protocol-v4/`（wire-codec、transport） | 新二进制编解码，含 clientMode/deliveryProfile 校验 |
-| 实时链路 | `src/task-realtime.ts` | 手机 relay 的 owner/delivery kind 定义 |
-| 平台桥 | `src/platform.ts` | `IPlatformService` 接口 |
+| 层       | 位置                                                    | 说明                                                                                                      |
+| -------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| v1 协议  | `src/zcode-protocol/index.ts`（Zod schema，约 3700 行） | 信封 + `session/*`、`plugins/*`、`workflows/*`、`interaction/*`、`automation/*`、`offPeak/*` 等命令与通知 |
+| v4 wire  | `src/zcode-protocol-v4/`（wire-codec、transport）       | 新二进制编解码，含 clientMode/deliveryProfile 校验                                                        |
+| 实时链路 | `src/task-realtime.ts`                                  | 手机 relay 的 owner/delivery kind 定义                                                                    |
+| 平台桥   | `src/platform.ts`                                       | `IPlatformService` 接口                                                                                   |
 
 协议改动的联动清单：
+
 1. `zcode-protocol/index.ts` 或 `zcode-protocol-v4/` 同步改类型 + 运行时校验（AGENTS.md 硬性要求）。
 2. 实现侧：Agent 宿主在 `apps/zcode-cli/packages/bootstrap/src/zcode-protocol(-v4)/`；服务侧在 packages/services；消费侧在 packages/ui hooks。
 3. 两条投递链路（continuous/replayable）都要验证（见下文机制速查）。
 
 ### Agent 运行时（apps/zcode-cli/packages/）
 
-| 想改什么 | 去哪 |
-| --- | --- |
-| 会话循环/turn 状态机 | `core/src/agent/turn-machine.ts`、`runtime/agent-runtime.ts`、`runtime/command-queue.ts` |
-| 工具注册与执行 | `core/src/tool/registry.ts`、`executor.ts`、`scheduler.ts`、`handlers/`（80+ 工具） |
-| 权限/审批策略 | `core/src/permission/`（broker、service、rule-matching、plan-mode-policy） |
-| 上下文组装/压缩 | `core/src/context/`、`core/src/compact/`（policy、microcompact） |
-| 端口与事件契约 | `contracts/`；基础设施实现在 `adapters/`（fs/model/provider/skills/mcp） |
-| Desktop 协议宿主/命令准入 | `bootstrap/src/zcode-protocol-v4/command-inbox.ts`（串行 admission，in-flight pinned / settled LRU / stale 裁决）、`v4-gateway.ts` |
-| 模型工厂 | `bootstrap/src/model-factory.ts`、`model-config.ts` + `adapters/src/model/` |
-| 媒体能力投影（图片/PDF/视频剔除与预算） | `core/src/runtime/helpers/media-capability.ts`、`media-budget.ts` + `contracts/src/model/media-policy.ts` | 主模型 `inputFormat.supportsImage=false` 时图片换占位文本 |
-| 视觉委托（无视觉主模型的图片描述代理） | `core/src/runtime/methods/vision-delegate.ts`（注入点 `methods/model.ts` runModelTextRequest）+ facade `bootstrap/src/app/session-facade.ts#setVisionDelegateSelection`（必须 `allowMissingReasoning: true`）+ 持久化 entry `runtime/vision_delegate` | spec: `core/specs/vision-delegate.md`；sha256 缓存按 runtime 实例，失败回退占位 |
-| TUI 界面 | `tui/src/app-*.tsx`（approval-panel、input-pane 等） |
-| 动态工作流引擎 | `dynamic-workflow/`、`dynamic-workflow-runtime/` |
-| 编排任务（主任务派生/关联普通子任务） | 协议 `shared/src/zcode-protocol/index.ts`（orchestration/* 方法族）+ CLI 工具面 `core/src/tool/handlers/orchestration.ts`（注册门 `runtime-tools.ts` includeOrchestration；orchestration_child 结构性禁用在 `runtime/helpers/tool-allowlist.ts`）+ 反向 RPC `bootstrap/src/zcode-protocol/orchestration-port.ts` + 服务 `services/src/zcode-agent/orchestrationTaskService.ts`（关系唯一写入点，orchestration_links 表 migration 0004）+ UI「编排」分区 `ui/src/WorkspaceOrchestrationTasksSection.tsx` | spec: `packages/services/specs/orchestration-tasks.md`；会话级 taskType（orchestration_parent/child）驱动工具注入与禁用，非 turn 级 denylist |
-| slash 命令中心 | `cli/src/command-center/` |
+| 想改什么                                | 去哪                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 会话循环/turn 状态机                    | `core/src/agent/turn-machine.ts`、`runtime/agent-runtime.ts`、`runtime/command-queue.ts`                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 工具注册与执行                          | `core/src/tool/registry.ts`、`executor.ts`、`scheduler.ts`、`handlers/`（80+ 工具）                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 权限/审批策略                           | `core/src/permission/`（broker、service、rule-matching、plan-mode-policy）                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 上下文组装/压缩                         | `core/src/context/`、`core/src/compact/`（policy、microcompact）                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 端口与事件契约                          | `contracts/`；基础设施实现在 `adapters/`（fs/model/provider/skills/mcp）                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Desktop 协议宿主/命令准入               | `bootstrap/src/zcode-protocol-v4/command-inbox.ts`（串行 admission，in-flight pinned / settled LRU / stale 裁决）、`v4-gateway.ts`                                                                                                                                                                                                                                                                                                                                                                       |
+| 模型工厂                                | `bootstrap/src/model-factory.ts`、`model-config.ts` + `adapters/src/model/`                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 媒体能力投影（图片/PDF/视频剔除与预算） | `core/src/runtime/helpers/media-capability.ts`、`media-budget.ts` + `contracts/src/model/media-policy.ts`                                                                                                                                                                                                                                                                                                                                                                                                | 主模型 `inputFormat.supportsImage=false` 时图片换占位文本                                                                                    |
+| 视觉委托（无视觉主模型的图片描述代理）  | `core/src/runtime/methods/vision-delegate.ts`（注入点 `methods/model.ts` runModelTextRequest）+ facade `bootstrap/src/app/session-facade.ts#setVisionDelegateSelection`（必须 `allowMissingReasoning: true`）+ 持久化 entry `runtime/vision_delegate`                                                                                                                                                                                                                                                    | spec: `core/specs/vision-delegate.md`；sha256 缓存按 runtime 实例，失败回退占位                                                              |
+| TUI 界面                                | `tui/src/app-*.tsx`（approval-panel、input-pane 等）                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 动态工作流引擎                          | `dynamic-workflow/`、`dynamic-workflow-runtime/`                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 编排任务（主任务派生/关联普通子任务）   | 协议 `shared/src/zcode-protocol/index.ts`（orchestration/\* 方法族）+ CLI 工具面 `core/src/tool/handlers/orchestration.ts`（注册门 `runtime-tools.ts` includeOrchestration；orchestration_child 结构性禁用在 `runtime/helpers/tool-allowlist.ts`）+ 反向 RPC `bootstrap/src/zcode-protocol/orchestration-port.ts` + 服务 `services/src/zcode-agent/orchestrationTaskService.ts`（关系唯一写入点，orchestration_links 表 migration 0004）+ UI「编排」分区 `ui/src/WorkspaceOrchestrationTasksSection.tsx` | spec: `packages/services/specs/orchestration-tasks.md`；会话级 taskType（orchestration_parent/child）驱动工具注入与禁用，非 turn 级 denylist |
+| slash 命令中心                          | `cli/src/command-center/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 改完 Agent 侧代码后：桌面重跑 `pnpm dev:desktop` 即可（自动重打）；**web 端必须 `pnpm --filter @zcode/cli build && pnpm --filter @zcode/server build:remote` 再重启 dev:web**（server 的 tsup watch 不会重建 `dist/remote/zcode-server.cjs`，旧 bundle 会把新 payload 字段静默剥掉）。
 
@@ -120,14 +122,14 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 
 ### 桌面（packages/desktop）
 
-| 想改什么 | 去哪 | 注意 |
-| --- | --- | --- |
-| 窗口/原生能力/IPC 转发 | `src/main/`（入口 index.ts；窗口生命周期 desktopWindowLifecycle、主窗口协调 primaryWindowCoordinator） | Main 不承载 task/session 业务状态，只做窗口、进程调度、消息转发 |
-| Host 编排/远程 workspace | `src/host/index.ts`、`windowRemoteConnectionRegistry.ts`、`remoteWorkspaceServiceCollection.ts` | 每窗口一个 Host；远程连接走窗口内注册表，不建 Desktop Remote Host |
-| 手机远控帧镜像 | `src/host/taskRealtimeBridge.ts` + shared `task-realtime.ts` | relay 只做鉴权/配对/心跳/转发/attachment 调度，不存业务状态 |
-| 定时/闲时任务调度进程 | `src/scheduler/` | 业务逻辑在 services/session（automation*、offPeak*） |
-| 打包/运行资源 | `scripts/`（prepare-runtime-assets、bundle、agent-node-bundle、mock-cdn） | 远程资源开发态取自本地 mock-cdn，SFTP 上传 |
-| 原生模块 | `src/native/`（macos-window-bounds、windows-browser-import-helper） | 三平台兼容 |
+| 想改什么                 | 去哪                                                                                                   | 注意                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| 窗口/原生能力/IPC 转发   | `src/main/`（入口 index.ts；窗口生命周期 desktopWindowLifecycle、主窗口协调 primaryWindowCoordinator） | Main 不承载 task/session 业务状态，只做窗口、进程调度、消息转发   |
+| Host 编排/远程 workspace | `src/host/index.ts`、`windowRemoteConnectionRegistry.ts`、`remoteWorkspaceServiceCollection.ts`        | 每窗口一个 Host；远程连接走窗口内注册表，不建 Desktop Remote Host |
+| 手机远控帧镜像           | `src/host/taskRealtimeBridge.ts` + shared `task-realtime.ts`                                           | relay 只做鉴权/配对/心跳/转发/attachment 调度，不存业务状态       |
+| 定时/闲时任务调度进程    | `src/scheduler/`                                                                                       | 业务逻辑在 services/session（automation*、offPeak*）              |
+| 打包/运行资源            | `scripts/`（prepare-runtime-assets、bundle、agent-node-bundle、mock-cdn）                              | 远程资源开发态取自本地 mock-cdn，SFTP 上传                        |
+| 原生模块                 | `src/native/`（macos-window-bounds、windows-browser-import-helper）                                    | 三平台兼容                                                        |
 
 ### Web 与命令行版（packages/web、server、zcode-server-cli）
 
@@ -165,14 +167,14 @@ mobile/web: replayable ─ 快照 + 分块队列补洞 ──┘
 
 ## 验证清单
 
-| 时机 | 命令 |
-| --- | --- |
-| 开工前基线 | `node scripts/check-workspace-freshness.mjs` |
-| 类型检查（必跑） | `pnpm typecheck` |
-| Lint（必跑） | `pnpm lint` / `pnpm lint:fix` |
-| 格式 | `pnpm fmt:check` |
-| 架构检查 | `pnpm architecture:check --changed` |
-| 提交前 | `pnpm verify:pre-push` |
-| 未使用依赖/导出 | `pnpm knip`；导出引用 `pnpm dep:refs --list-exports <file>` |
+| 时机             | 命令                                                        |
+| ---------------- | ----------------------------------------------------------- |
+| 开工前基线       | `node scripts/check-workspace-freshness.mjs`                |
+| 类型检查（必跑） | `pnpm typecheck`                                            |
+| Lint（必跑）     | `pnpm lint` / `pnpm lint:fix`                               |
+| 格式             | `pnpm fmt:check`                                            |
+| 架构检查         | `pnpm architecture:check --changed`                         |
+| 提交前           | `pnpm verify:pre-push`                                      |
+| 未使用依赖/导出  | `pnpm knip`；导出引用 `pnpm dep:refs --list-exports <file>` |
 
 行为改动先补测试；交互改动补 E2E 场景。测试入口以目标包 `package.json` 和实际测试文件为准，不存在统一命令。

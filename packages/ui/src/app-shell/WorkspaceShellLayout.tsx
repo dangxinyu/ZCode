@@ -863,6 +863,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   );
   // 工作流「运行」现由中枢直接启动：GUI 建空会话 +
   // 发 startSavedWorkflow 命令，不再合成对话文案。本层只在 accepted 后把会话切到前台。
+  // 注意：这里不能关编排计划页——WorkbenchPane 对会话区内任何点击（包括计划页画布）
+  // 都会走"激活当前会话"进到本函数，在此关闭会把计划页内的普通点击变成退出。
+  // 关页归口在侧栏行选择入口 WorkspaceSidebar.handleTaskRowSelect（用户主动导航）。
   const handleSelectTaskInChat = useCallback(
     (
       targetWorkspacePath: string,

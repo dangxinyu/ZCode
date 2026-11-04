@@ -10,16 +10,24 @@ Skill 工具加载，且以普通 tool result 进入历史——compact/清理�
 ## 产品规则
 
 1. Composer 工具栏（`leadingActionsNode`，「电脑操作」入口旁）新增「常驻 skill」
-   图钉入口：popover 列出可用 skill（复用 `useSkills` catalog），可多选、可取消。
-2. 新任务屏与会话内共用同一 composer：入口与展示两个面都在。会话内修改立即生效于
-   后续模型请求（前缀每请求重建），当前正在生成的 turn 不回改。
-3. 选中后，输入框上方 pills 行（`topContent`）显示常驻 chip（图钉图标 + 名字，× 移除、
-   点名字打开 picker）；skill 不在当前 catalog（被删/改名/禁用）时 chip 呈失效态。
+   图钉入口（单选）：popover 列出可用 skill（复用 `useSkills` catalog），带搜索框
+   前缀匹配；点击即选中并替换旧选择，再点已选项取消。协议仍为 array，UI 约束
+   长度 ≤1（兼容旧多选草稿取第一个）。
+2. 新任务屏与会话内共用同一 composer。会话内修改立即生效于后续模型请求（前缀每
+   请求重建），当前正在生成的 turn 不回改。
+3. 触发器直接显示当前选中 skill 名（未选时显示「常驻 Skill」占位），没有独立
+   chips 行与计数；选中的 skill 不在当前 catalog（被删/改名/禁用）时触发器与菜单
+   条目呈失效态（warning 色），点击可移除。
 4. 常驻 skill 全文以 `request_prefix` 生命周期 system-reminder 注入：与
    `skills_listing` 同通道，每请求由 `rebuildContextPrefix` 重建，压缩只保留前缀——
    因此「压缩后不丢」「丢失自动重载」由通道语义天然满足，不需要 compact 钩子。
-5. 预算：单个 skill 沿用 Skill 工具 100KB 截断；section 总预算 20k 字符，超限降级为
-   仅列名字并指示模型按需用 Skill 工具加载全文。
+5. 预算：单个 skill 沿用 Skill 工具 100KB 截断；section 总预算 **50k 字符**（section
+   常量 DEFAULT_PINNED_SKILLS_BUDGET，2026-11-04 由 20k 上调）。**不复用**
+   `skills.metadataBudget`（listing 元数据截断预算，默认 20k）——此前 builder 把它顺手
+   传给 pinned section，真实 skill 1.5~3 万字符必然降级为挂名（"用 Skill 工具按需加载"
+   的指示模型不会主动执行，编排派发挂载形同虚设；实测 2026-11-04 改了 section 常量仍
+   降级才定位到这层覆盖）。50k 约合 1.6~2.2 万 token，可同时全文常驻两个真实 skill；
+   超限降级为仅列名字并指示模型按需用 Skill 工具加载全文。
 6. 作用域：会话级（`SessionConfigState`），随 createSession config 进入；草稿按
    workspace scope 持久化（重开应用、新任务屏仍显示）。跨 workspace 全局常驻不在
    v1 范围。

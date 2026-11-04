@@ -120,7 +120,13 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     .safeParse(value.visionDelegateModel);
   // 坏值（非字符串/空名）静默丢弃，不连带丢弃其余草稿字段；去重保序由写入侧负责。
   const pinnedSkills = Array.isArray(value.pinnedSkills)
-    ? [...new Set(value.pinnedSkills.filter((name): name is string => typeof name === "string" && name.trim().length > 0))]
+    ? [
+        ...new Set(
+          value.pinnedSkills.filter(
+            (name): name is string => typeof name === "string" && name.trim().length > 0,
+          ),
+        ),
+      ]
     : undefined;
   const mention = value.mention;
   const hasMention =

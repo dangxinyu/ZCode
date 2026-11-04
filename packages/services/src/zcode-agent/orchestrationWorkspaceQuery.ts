@@ -26,12 +26,26 @@ function toTaskStatus(status: ZCodeTaskMeta["status"]): "running" | "completed" 
 export async function listOrchestrationChildrenSummaries(
   taskIndexRepo: TaskIndexRepo,
   params: { orchestrationTaskId: string; workspacePath: string; workspaceIdentity?: string },
-): Promise<{ children: OrchestrationChildSummary[] }> {
-  const links = await taskIndexRepo.listOrchestrationChildren({
+): Promise<{
+  children: OrchestrationChildSummary[];
+  planMode: boolean;
+  pendingNewPlan: boolean;
+}> {
+  const scope = {
     workspacePath: params.workspacePath,
     ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-    taskId: params.orchestrationTaskId,
-  });
+    orchestrationTaskId: params.orchestrationTaskId,
+  };
+  const [links, planMode, pendingNewPlan] = await Promise.all([
+    taskIndexRepo.listOrchestrationChildren({
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      taskId: params.orchestrationTaskId,
+    }),
+    taskIndexRepo.isOrchestrationPlanModeOn(scope).catch(() => false),
+    // 「另起新计划」等待态与 planMode 同通道透出（用户需求 2026-10-29：起不起由对话决定）。
+    taskIndexRepo.getOrchestrationNewPlanPending(scope).catch(() => false),
+  ]);
   const children: OrchestrationChildSummary[] = [];
   for (const link of links) {
     const meta = await taskIndexRepo
@@ -50,15 +64,17 @@ export async function listOrchestrationChildrenSummaries(
       updatedAt: meta.updatedAt,
     });
   }
-  return { children };
+  return { children, planMode, pendingNewPlan };
 }
 
 /** ListWorkspaceTasks 的数据面：归档排除 + 候选摘要窗口（见各注释）。 */
 export async function listOrchestrationWorkspaceTasks(
   taskIndexRepo: TaskIndexRepo,
   agentService: Pick<IZCodeAgentService, "readSessionMessages">,
-  params: { workspacePath: string; workspaceIdentity?: string },
+  params: { workspacePath: string; workspaceIdentity?: string; orchestrationTaskId?: string },
 ): Promise<{
+  planMode: boolean;
+  pendingNewPlan: boolean;
   tasks: Array<{
     taskId: string;
     title: string;
@@ -102,7 +118,28 @@ export async function listOrchestrationWorkspaceTasks(
       }),
     );
   }
+  const planMode = params.orchestrationTaskId
+    ? await taskIndexRepo
+        .isOrchestrationPlanModeOn({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          orchestrationTaskId: params.orchestrationTaskId,
+        })
+        .catch(() => false)
+    : false;
+  // 与 planMode 同通道透出「另起新计划」等待态（用户需求 2026-10-29）。
+  const pendingNewPlan = params.orchestrationTaskId
+    ? await taskIndexRepo
+        .getOrchestrationNewPlanPending({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          orchestrationTaskId: params.orchestrationTaskId,
+        })
+        .catch(() => false)
+    : false;
   return {
+    planMode,
+    pendingNewPlan,
     tasks: metas.map((meta) => ({
       taskId: meta.taskId,
       title: meta.title,

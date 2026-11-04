@@ -61,7 +61,8 @@ const enUS: Record<string, string> = {
   "occupationOnboarding.migration": "Migrate conversations",
   "occupationOnboarding.migrationDescription": "Migrate conversation history from Claude Code",
   "occupationOnboarding.memory": "Enable Workspace Memory",
-  "occupationOnboarding.memoryDescription": "Let Don’t-think remember your preferences and work context.",
+  "occupationOnboarding.memoryDescription":
+    "Let Don’t-think remember your preferences and work context.",
   "occupationOnboarding.suggestions": "Enable proactive task suggestions",
   "occupationOnboarding.suggestionsDescription":
     "Show suggestions in new conversations. Click to fill the composer.",
@@ -1312,10 +1313,128 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.orchestrationChildrenCountRunning": "{count} child tasks, {running} running",
   "workspaceSidebar.orchestrationChildPin": "Pin this child task to the top of the dropdown",
   "workspaceSidebar.orchestrationChildUnpin": "Unpin from dropdown top",
-  "workspaceSidebar.orchestrationChildUnlink": "Unlink (stops terminal notifications for this task)",
+  "workspaceSidebar.orchestrationChildUnlink":
+    "Unlink (stops terminal notifications for this task)",
   "confirmDialog.orchestrationChildUnlinkTitle": "Unlink this child task?",
-  "confirmDialog.orchestrationChildUnlinkDescription": "Once unlinked, \"{title}\" returns to a normal task; the orchestration stops receiving its terminal notifications and will not relink it automatically. You can link it again anytime.",
+  "confirmDialog.orchestrationChildUnlinkDescription":
+    'Once unlinked, "{title}" returns to a normal task; the orchestration stops receiving its terminal notifications and will not relink it automatically. You can link it again anytime.',
   "workspaceSidebar.orchestrationChildUnlinkFailed": "Failed to unlink, please retry",
+  "orchestration.plan.modeToggle": "Plan mode",
+  "orchestration.plan.modeToggleHint":
+    "When on: the orchestration proposes a plan draft first; child tasks spawn only after you confirm it here",
+  "orchestration.plan.statusNone": "Plan mode on, waiting for a plan proposal",
+  "orchestration.plan.statusDraft": "Plan draft (pending confirmation)",
+  "orchestration.plan.statusConfirmed": "Confirmed plan · running",
+  "orchestration.plan.nodeDeps": "Depends on {deps}",
+  "orchestration.plan.needsResult": " · needs upstream results",
+  "orchestration.plan.confirm": "Confirm and run",
+  "orchestration.plan.confirmFailed": "Failed to confirm the plan, please retry",
+  "orchestration.plan.listTitle": "Plans",
+  "orchestration.plan.openCanvasHint": "Select and open the plan canvas",
+  "orchestration.plan.progress": "{done}/{total}",
+  "orchestration.plan.activeBadge": "Active",
+  "orchestration.plan.canvasSubtitle": "v{version}",
+  "orchestration.plan.canvasDescription":
+    "Orchestration plan canvas: nodes are child tasks, edges are dependencies; drafts can be edited and confirmed",
+  "orchestration.plan.editNodeTitle": "Edit node",
+  "orchestration.plan.editHint": "Click a node on the canvas to edit it",
+  "orchestration.plan.fieldName": "Name",
+  "orchestration.plan.fieldGoal": "Goal",
+  "orchestration.plan.fieldDeps": "Depends on (upstream nodes)",
+  "orchestration.plan.fieldNeedsResult": "Inject upstream results on dispatch",
+  "orchestration.plan.deleteNode": "Delete node",
+  "orchestration.plan.executePlan": "Execute plan",
+  "orchestration.plan.continuePlan": "Continue",
+  "orchestration.plan.planExecuteRunning": "A node is running; continue after it finishes",
+  "orchestration.plan.planExecuteNoneReady":
+    "No node is ready to run (upstreams unfinished or all done)",
+  "orchestration.plan.nodeExecute": "Run",
+  "orchestration.plan.nodeExecuteHint":
+    "Run this node now: dispatches its goal to the linked child task, or spawns a new child if none is linked; it turns blue while running.",
+  "orchestration.plan.nodeExecuting": "Running",
+  "orchestration.plan.nodeManualDone": "Mark done",
+  "orchestration.plan.nodeManualDoneHint":
+    "Fallback switch: on marks this node complete, off returns it to pending; the linked child task is unaffected.",
+  "orchestration.plan.nodeAuto": "Run downstream when done",
+  "orchestration.plan.nodeAutoHint":
+    "On = run this node's downstream automatically when it finishes. A node auto-runs only when every upstream switch is on; an off upstream pauses the flow right before it.",
+  "orchestration.plan.nodeUnsavedHint":
+    "This node is not saved yet: save the plan before running it or enabling auto-run.",
+  "orchestration.plan.nodeEmptyGoalHint": "This node has no goal: fill it in before executing.",
+  "orchestration.plan.pinnedSkillField": "Resident skill",
+  "orchestration.plan.pinnedSkillNone": "None",
+  "orchestration.plan.pinnedSkillHint":
+    "Write the selected skill into the child session's resident skills when dispatching this node; none leaves the child session unchanged.",
+  "orchestration.plan.childFrozenHint":
+    "Bindings of running/finished nodes are execution facts and cannot be changed; adjust after it completes.",
+  "orchestration.plan.autoAll": "Auto all",
+  "orchestration.plan.autoAllHint":
+    "Master switch: click once to enable auto-run for all nodes, click again to disable all.",
+  "orchestration.plan.actionFailed": "Action failed: {message}",
+  "orchestration.plan.startBadge": "Start",
+  "orchestration.plan.deleteNodeConfirmTitle": 'Delete node "{name}"?',
+  "orchestration.plan.deleteNodeConfirmDescription":
+    "Its downstream will lose this upstream; reconnect before saving.",
+  "orchestration.plan.upstreamStartOnlyHint":
+    "Only the start node upstream — no upstream delivery available.",
+  "orchestration.plan.childBlockLabel": "Child task",
+  "orchestration.plan.childBlockEmpty": "Unlinked",
+  "orchestration.plan.childBlockEmptyHint": "Select the node, then link a child task in the editor",
+  "orchestration.plan.childFieldLabel": "Child task",
+  "orchestration.plan.childUnbound": "Unlinked",
+  "orchestration.plan.childLockedBadge": "Fixed",
+  "orchestration.plan.childLockedHint":
+    "Manually fixed: the orchestrator cannot rebind it; only you can change it",
+  "orchestration.plan.childFinishedHint":
+    "This node has finished executing; its child task can no longer be changed.",
+  "orchestration.plan.deleteFrozenNodeTitle": '"{name}" is already executing',
+  "orchestration.plan.deleteFrozenNodeDescription":
+    "Dispatched or finished nodes are execution facts; removing them would orphan child-task outcomes. Only pending nodes can be deleted.",
+  "orchestration.plan.startNodeHint":
+    "Start node: the structural marker of this plan. It is never dispatched and cannot be deleted; every other node must connect to it directly or indirectly.",
+  "orchestration.plan.invalidGraphDangling":
+    "Some nodes are not connected to the start node; connect them before saving",
+  "orchestration.plan.invalidGraphCycle":
+    "The plan has a dependency cycle; adjust the connections before saving",
+  "orchestration.plan.invalidGraphStart": "The plan is missing its start node",
+  "orchestration.plan.invalidGraphDuplicate":
+    "Duplicate nodes detected; refresh the page and retry",
+  "orchestration.plan.invalidGraphEmptyGoal":
+    "Some nodes have no goal; fill them in before confirming",
+  "orchestration.plan.deleteEdge": "Delete edge",
+  "orchestration.plan.addNode": "Add node",
+  "orchestration.plan.undo": "Undo (⌘Z / Ctrl+Z)",
+  "orchestration.plan.redo": "Redo (⌘⇧Z / Ctrl+Shift+Z)",
+  "orchestration.plan.submitEdit": "Submit changes (new draft)",
+  "orchestration.plan.newNodeName": "New node",
+  "orchestration.plan.newPlanEntry": "New plan",
+  "orchestration.plan.newPlanAiEntry": "New plan (AI-generated)",
+  "orchestration.plan.pendingNewPlan": "New plan (pending creation)",
+  "orchestration.plan.cancelNewPlan": "Cancel new plan",
+  "orchestration.plan.defaultNewTitle": "New plan",
+  "orchestration.plan.openPageHint": "Open the plan page (edit plan and view progress)",
+  "orchestration.plan.backToChat": "Back to chat",
+  "orchestration.plan.selectPlan": "Select plan",
+  "orchestration.plan.noPlans": "No plans yet",
+  "orchestration.plan.newPlan": "New plan",
+  "orchestration.plan.savePlan": "Save plan",
+  "orchestration.plan.loading": "Loading plans…",
+  "orchestration.plan.loadFailed": "Failed to load the plan",
+  "orchestration.plan.retry": "Retry",
+  "orchestration.plan.editModeHint": "Edit mode: drag/connect/resize nodes, then save",
+  "orchestration.plan.viewModeHint":
+    "Read-only: the orchestration executes confirmed plans; revise to adjust",
+  "orchestration.plan.openChildTask": "Open linked child task",
+  "orchestration.plan.rename": "Rename",
+  "orchestration.plan.delete": "Delete plan",
+  "orchestration.plan.deleteConfirmTitle": 'Delete plan "{title}"?',
+  "orchestration.plan.deleteConfirmDescription":
+    "Only the plan is deleted; spawned child tasks and orchestration links are unaffected. This cannot be undone.",
+  "orchestration.plan.originAgent": "Proposed",
+  "orchestration.plan.originManual": "Manual",
+  "orchestration.plan.originManualSuffix": " (manual)",
+  "orchestration.plan.emptyCanvasHint":
+    "Double-click empty space or use the button to add nodes; edges are dependencies (upstream → downstream) that drive execution",
   "workspaceSidebar.orchestrationChildJump": "Jump to this child task in the project list",
   "workspaceSidebar.orchestrationChildrenCount": "Child tasks ({count})",
   "workspaceSidebar.conversationsSection": "Tasks",
@@ -2105,7 +2224,8 @@ const enUS: Record<string, string> = {
   "settings.embeddedBrowserAllowInsecureCertificatesSavedHint":
     "Certificate setting saved. Restart the app to take effect.",
   "settings.browser.data.section": "Browser data",
-  "settings.browser.desktopOnly": "Browser data can only be managed in the Don’t-think desktop app.",
+  "settings.browser.desktopOnly":
+    "Browser data can only be managed in the Don’t-think desktop app.",
   "settings.browser.import.title": "Import Chrome sign-in state",
   "settings.browser.import.description":
     "Bring your Chrome sign-in state into the built-in browser once, so the AI can open sites you are already signed in to and work more smoothly.",
@@ -3236,7 +3356,8 @@ const enUS: Record<string, string> = {
   "sidebar.usage.plan.toolCalls": "Tool calls",
   "sidebar.usage.plan.mcp": "Don’t-think MCP",
   "sidebar.usage.plan.zcodeMcp": "Don’t-think MCP",
-  "sidebar.usage.plan.zcodeMcpDescription": "Daily aggregate quota for Don’t-think built-in plugin MCPs",
+  "sidebar.usage.plan.zcodeMcpDescription":
+    "Daily aggregate quota for Don’t-think built-in plugin MCPs",
   "chat.planUsage.title": "Plan usage",
   "chat.planUsage.titleWithPlan": "{plan} Plan usage",
   "chat.planUsage.providerFallback": "Current provider",
@@ -4519,15 +4640,17 @@ const enUS: Record<string, string> = {
     "After compression, the context used by this conversation is still larger than the target model's available context after reserving maximum output. Model switching was canceled.",
   "chat.toolbar.mode.label": "Switch mode",
   // CUA composer entry button
-  "chat.toolbar.pinnedSkill.label": "Pinned Skills",
-  "chat.toolbar.pinnedSkill.tooltip": "Pinned Skills: selected skills load automatically at task start and survive context clearing",
+  "chat.toolbar.pinnedSkill.label": "Pinned Skill",
+  "chat.toolbar.pinnedSkill.tooltip":
+    "Pinned Skill: the selected skill loads automatically at task start and survives context clearing",
   "chat.toolbar.pinnedSkill.searchPlaceholder": "Search skills…",
   "chat.toolbar.pinnedSkill.noMatch": "No matching skills",
-  "chat.toolbar.pinnedSkill.empty": "No skills available; install one in Settings or create one in the workspace",
-  "chat.toolbar.pinnedSkill.unavailable": "This skill is unavailable (deleted or disabled); click to remove",
-  "chat.toolbar.pinnedSkill.unavailableGroup": "Unavailable pinned skills",
-  "chat.toolbar.pinnedSkill.chipOpen": "View pinned skill {name}",
-  "chat.toolbar.pinnedSkill.chipRemove": "Remove pinned skill {name}",
+  "chat.toolbar.pinnedSkill.empty":
+    "No skills available; install one in Settings or create one in the workspace",
+  "chat.toolbar.pinnedSkill.unavailable":
+    "This skill is unavailable (deleted or disabled); click to remove",
+  "chat.toolbar.pinnedSkill.unavailableGroup": "Unavailable pinned skill",
+  "chat.toolbar.pinnedSkill.tooltipSelected": "Pinned Skill: {name} (click to change or clear)",
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":
     "Computer Use is idle — it will start automatically on first use",
@@ -5461,10 +5584,8 @@ const enUS: Record<string, string> = {
     "The system is busy, and automatic retries have reached the maximum count. Please try again later or upgrade your account.",
   "chat.quota.startPlan.concurrentLimit.switchModel":
     "The current model request concurrency limit has been reached. Switch models to continue your current task.",
-  "chat.quota.mcp.quotaExhausted":
-    `Don’t-think MCP "{server}" has used up today's quota. It resets tomorrow.`,
-  "chat.quota.mcp.codingPlanRequired":
-    `No Don’t-think MCP "{server}" quota. Sign in or get a Coding Plan to use it.`,
+  "chat.quota.mcp.quotaExhausted": `Don’t-think MCP "{server}" has used up today's quota. It resets tomorrow.`,
+  "chat.quota.mcp.codingPlanRequired": `No Don’t-think MCP "{server}" quota. Sign in or get a Coding Plan to use it.`,
   "chat.quota.providerLimited":
     "The current account quota or plan limit has been reached. Upgrade or adjust the plan to continue.",
   "chat.quota.action.upgrade": "Upgrade",

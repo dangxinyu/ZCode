@@ -71,6 +71,11 @@ function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSem
       return "system_reminder";
     case "plugin_reference":
       return "system_reminder";
+    // 前向兼容词表新增（2026-11-03）：与安装版映射一致，均为 system reminder 语义。
+    case "agent_listing_delta":
+      return "system_reminder";
+    case "bot_topic_context":
+      return "system_reminder";
     case "rewind":
       return "rewind_notice";
     case "selection_side_chat":

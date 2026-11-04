@@ -33,6 +33,7 @@ import type {
   ZCodePermissionResponse,
   ModelSelection,
   ZCodeBackgroundTurnAttribution,
+  ZCodeOrchestrationPlansMap,
 } from "@zcode/shared";
 import type {
   SessionMessageDeliveryResult,
@@ -684,6 +685,150 @@ export interface IZCodeTaskService {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>>;
+
+  /**
+   * 按编排批量读计划（spec: packages/services/specs/orchestration-plan.md）。
+   * UI 编排分区的计划面板用：模式开关状态 + 草案/确认 + 节点进度一次拉齐。
+   */
+  getOrchestrationPlansMap(params: {
+    orchestrationTaskIds: string[];
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<Record<string, ZCodeOrchestrationPlansMap>>;
+
+  /** 计划模式开关（切换即时生效，只约束后续派生；不发消息）。返回全量计划视图。 */
+  setOrchestrationPlanMode(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    enabled: boolean;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** 计划选中切换（planId=null 取消选中；不发消息）。 */
+  selectOrchestrationPlan(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string | null;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /**
+   * UI 画布编辑提交（spec: orchestration-plan.md 微调）：对 planId 指定计划提案新版本
+   * （被修改的 terminal 节点回 pending 并保留原子任务引用）；缺省 planId = active 计划。
+   * 与 CLI ProposeOrchestrationPlan 同一 host 入口，不注入会话消息（草案等用户在 UI 确认）。
+   */
+  proposeOrchestrationPlanEdit(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    /** 目标计划（用户需求 2026-10-30：看哪个存哪个，与 active 解耦）；缺省 = active。 */
+    planId?: string;
+    title?: string;
+    nodes: Array<{
+      nodeId: string;
+      name: string;
+      goal: string;
+      dependsOn: string[];
+      needsUpstreamResult: boolean;
+      /** 依赖满足后自动执行（用户需求 2026-11-03 画布可编辑配置）：编辑缓冲随保存落库；
+       * 缺省 = 服务端按计划 origin/新建语义取默认。 */
+      autoExecute?: boolean;
+      /** 手动绑定的子任务（null = 解绑；仅对 pending 节点生效，执行事实节点保存不改写）。 */
+      childTaskId?: string | null;
+      /** 用户手动绑定的锁定标记。 */
+      childLocked?: boolean;
+      /** 派发时写入子会话的常驻 skill（catalog name 列表；缺省保留存量）。 */
+      pinnedSkills?: string[];
+      layout?: { x: number; y: number; w?: number; h?: number };
+    }>;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /**
+   * UI 手动改绑节点子任务（用户需求 2026-10-30）：绑定即"确定"（此后主任务/agent 不可
+   * 再改绑该节点），解绑清除锁定；门 = 节点未执行完成。planId 定位目标计划
+   * （缺省 = active）；返回最新 plansMap。
+   */
+
+  /**
+   * UI 手动执行计划节点（用户需求 2026-11-02，容错/手动推进）：目标计划非 active 先选中；
+   * 提示词 = 节点目标（needsUpstreamResult 时附上游子任务最终回复摘要）；有绑定子任务 →
+   * 向它下发（带 planNodeId 置 dispatched），无 → 派生新子任务（带 planNodeId）。返回最新 plansMap。
+   */
+  executeOrchestrationPlanNode(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+    planNodeId: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /**
+   * UI 计划级执行/继续执行（用户需求 2026-11-02）：批量派发当前可执行的非起始节点
+   * （pending/stale 且依赖已 terminal；已完成节点不重跑），单节点派发与手动执行同通道。
+   * 无可执行节点/有节点执行中 → 抛错（UI toast 提示）。返回最新 plansMap。
+   */
+  executeOrchestrationPlanNodes(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** UI 手动完成滑块：done → terminal，!done → pending（关联/锁定不动）。返回最新 plansMap。 */
+  setOrchestrationPlanNodeManualDone(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+    planNodeId: string;
+    done: boolean;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** UI 手动创建空计划（draft、0 节点、置 active）。 */
+  createOrchestrationPlan(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    title: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** 下拉「新建计划（AI 生成）」等待态开关：只翻服务端事实、不发任何消息
+   * （用户需求 2026-10-29 改版）；起不起新计划由后续对话决定。返回更新后的 plansMap。 */
+  setOrchestrationNewPlanPending(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    pending: boolean;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** UI 重命名计划。 */
+  renameOrchestrationPlan(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+    title: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /** UI 删除计划（计划行；子任务/关系不动）。 */
+  deleteOrchestrationPlan(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
+
+  /**
+   * 用户确认计划草案：目标 draft → confirmed，host 注入确认消息驱动编排 agent 执行；
+   * 确认的计划同时置为 active（执行口径跟随确认，用户需求 2026-10-30）。缺省 planId =
+   * active 计划。
+   */
+  confirmOrchestrationPlan(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId?: string;
+  }): Promise<ZCodeOrchestrationPlansMap>;
 
   /** 更新 task 置顶状态 */
   setTaskPinned(params: {

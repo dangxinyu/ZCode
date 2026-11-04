@@ -157,8 +157,6 @@ export function useAppChromeState({
     });
   }, [isDesktop, isMacDesktop, isWindowsDesktop, platform]);
 
-
-
   return {
     isMacFullscreen,
     desktopWindowChromeState,

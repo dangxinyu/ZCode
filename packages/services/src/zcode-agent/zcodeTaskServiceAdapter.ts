@@ -109,6 +109,7 @@ import {
   type ZCodeUserInputResponse,
   type ZCodeAgentMcpServer,
   zcodeSessionKindToOrchestrationRole,
+  type ZCodeOrchestrationPlansMap,
 } from "@zcode/shared";
 import type {
   ZCodeTaskListQuery,
@@ -120,6 +121,12 @@ import type {
   ZCodeTaskTerminalOutcome,
 } from "../session/zcodeTaskService.js";
 import type { IOrchestrationTaskService } from "./orchestrationTaskService.js";
+import type { IOrchestrationPlanService } from "./orchestrationPlanService.js";
+import {
+  autoDispatchReadyNodes,
+  dispatchPlanNodeOnce,
+  type PlanNodeDispatchDeps,
+} from "./orchestrationPlanAutoDispatch.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -190,6 +197,8 @@ interface CreateZCodeTaskServiceAdapterOptions {
    * handler 的 resolveOrchestrationTaskService 同款装配模式。
    */
   resolveOrchestrationTaskService?: () => IOrchestrationTaskService | undefined;
+  // 编排计划服务（spec: orchestration-plan.md）：UI 计划面板（读/开关/确认）的透传执行面。
+  resolveOrchestrationPlanService?: () => IOrchestrationPlanService | undefined;
 }
 
 interface TaskTarget {
@@ -216,6 +225,39 @@ type ZCodeTerminalStreamEvent =
 const GLM_PROVIDER: ZCodeProvider = ZCODE_AGENT_PROVIDER;
 const EMPTY_SLASH_COMMANDS: ZCodeSlashCommand[] = [];
 const logger = createServiceLogger("zcode-task-service");
+
+/** 自动派发扫描 + 重读 plansMap（确认计划/手动完成后共用，用户需求
+ * 2026-11-03 节点自动执行）：扫描幂等，派发/失败结果记 info 日志；返回刷新后的
+ * plansMap 给 UI（扫描可能刚把节点置 dispatched，不能沿用旧快照）。
+ * triggerNodeIds（2026-11-04 实测修复"无关节点被连带执行"）：手动完成某节点后只释放
+ * 该节点的直接下游；不传 = 全图扫描，仅供确认计划这类显式"跑整个计划"的动作。 */
+async function sweepPlanAutoDispatchAndRefresh(
+  deps: PlanNodeDispatchDeps & { planService: IOrchestrationPlanService },
+  scope: { orchestrationTaskId: string; workspacePath: string; workspaceIdentity?: string },
+  options?: { triggerNodeIds?: readonly string[] },
+): Promise<ZCodeOrchestrationPlansMap> {
+  const outcome = await autoDispatchReadyNodes(deps, scope, options);
+  if (outcome.dispatched.length > 0 || outcome.failed.length > 0) {
+    logger.info("Orchestration plan auto-dispatch sweep", {
+      dispatchedNodeIds: outcome.dispatched,
+      event: "orchestration.plan.auto_dispatch_sweep",
+      failures: outcome.failed,
+      orchestrationTaskId: scope.orchestrationTaskId,
+    });
+  }
+  const map = await deps.planService.getPlansMap({
+    orchestrationTaskIds: [scope.orchestrationTaskId],
+    workspacePath: scope.workspacePath,
+    ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
+  });
+  return (
+    map[scope.orchestrationTaskId] ?? {
+      planMode: true,
+      activePlanId: null,
+      plans: [],
+    }
+  );
+}
 const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 const EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
 const EXIT_PLAN_MODE_APPROVAL_QUESTION = "Review this implementation plan.";
@@ -1309,9 +1351,7 @@ export function createZCodeTaskServiceAdapter(
         ...(snapshot.session.sessionKind === "orchestration_parent" ||
         snapshot.session.sessionKind === "orchestration_child"
           ? {
-              orchestrationRole: zcodeSessionKindToOrchestrationRole(
-                snapshot.session.sessionKind,
-              ),
+              orchestrationRole: zcodeSessionKindToOrchestrationRole(snapshot.session.sessionKind),
             }
           : {}),
         status: deriveZCodeTaskStatusFromSessionSnapshot(snapshot),
@@ -1854,7 +1894,9 @@ export function createZCodeTaskServiceAdapter(
           mode: toZCodeMode(params.mode),
           model: requestedSelection,
           thoughtLevel: requestedSelection?.options?.reasoningLevel,
-          ...(params.automationId || params.deferPersistenceUntilFirstPrompt || params.orchestrationParentTaskId
+          ...(params.automationId ||
+          params.deferPersistenceUntilFirstPrompt ||
+          params.orchestrationParentTaskId
             ? {
                 // automation / 闲时任务新建空 session 后会立即 sendText。session_input 有
                 // session 外键，必须让 V4 admission 在首发前统一持久化 session 主记录；
@@ -1870,7 +1912,10 @@ export function createZCodeTaskServiceAdapter(
             : {}),
           // 编排子任务身份 → 会话级 taskType=orchestration_child（结构性禁用编排工具）。
           ...(params.orchestrationParentTaskId
-            ? { orchestrationRole: "child" as const, orchestrationParentTaskId: params.orchestrationParentTaskId }
+            ? {
+                orchestrationRole: "child" as const,
+                orchestrationParentTaskId: params.orchestrationParentTaskId,
+              }
             : {}),
           // replayable task facade 创建 session 时同样会启动 runtime；
           // 之前这里丢掉 mcpServers，导致手机远控路径和 desktop-continuous 的 MCP 行为不一致。
@@ -3005,9 +3050,9 @@ export function createZCodeTaskServiceAdapter(
       return result;
     },
 
-    async listOrchestrationChildrenMap(params): Promise<
-      Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>
-    > {
+    async listOrchestrationChildrenMap(
+      params,
+    ): Promise<Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>>> {
       // links 权威源（多编排跟踪）：UI 子任务下拉/计数不能依赖 tasks 行的单值父列。
       const orchestrationService = options.resolveOrchestrationTaskService?.();
       if (!orchestrationService) {
@@ -3026,6 +3071,340 @@ export function createZCodeTaskServiceAdapter(
         }));
       }
       return result;
+    },
+
+    async getOrchestrationPlansMap(params): Promise<Record<string, ZCodeOrchestrationPlansMap>> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.getPlansMap({
+        orchestrationTaskIds: params.orchestrationTaskIds,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      });
+    },
+
+    async setOrchestrationPlanMode(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.setPlanMode({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        enabled: params.enabled,
+      });
+    },
+
+    async proposeOrchestrationPlanEdit(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      await planService.proposePlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        ...(params.title ? { title: params.title } : {}),
+        // UI 编辑显式定位正在查看的计划（用户需求 2026-10-30：看哪个存哪个，
+        // 与 active 执行口径解耦）；缺省 = agent 通道，修订/新建 active 计划。
+        ...(params.planId ? { planId: params.planId } : {}),
+        nodes: params.nodes,
+      });
+      // 保存**不触发执行**（用户需求 2026-11-04：实测保存后就绪的自动节点被立即派发，
+      // "保存 ≠ 执行"）：只落库 + 返回最新 plansMap。刚落库的自动配置在下一个常规触发
+      // （确认起波、节点终态、手动完成开启）生效；要立即推进就绪节点用「继续执行」按钮。
+      const map = await planService.getPlansMap({
+        orchestrationTaskIds: [params.orchestrationTaskId],
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      });
+      return (
+        map[params.orchestrationTaskId] ?? {
+          planMode: true,
+          activePlanId: null,
+          plans: [],
+        }
+      );
+    },
+
+
+    async executeOrchestrationPlanNode(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!planService || !orchestrationService) {
+        throw new Error("Orchestration services are unavailable on this host");
+      }
+      const scope = {
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      };
+      const readMap = async () =>
+        (
+          await planService.getPlansMap({
+            orchestrationTaskIds: [params.orchestrationTaskId],
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          })
+        )[params.orchestrationTaskId] ?? { planMode: true, activePlanId: null, plans: [] };
+      let map = await readMap();
+      // 执行口径跟随被执行的计划：非 active 先选中（派发/绑定都以 active 计划为准）。
+      if (map.activePlanId !== params.planId) {
+        map = await planService.selectPlan({ ...scope, planId: params.planId });
+      }
+      const plan = map.plans.find((candidate) => candidate.planId === params.planId);
+      if (!plan) throw new Error("Plan no longer exists; reload the plan list.");
+      const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
+      if (!node) throw new Error(`Unknown plan node "${params.planNodeId}".`);
+      if (node.isStart) throw new Error("The start node cannot be executed.");
+      if (node.status === "dispatched") {
+        throw new Error("This node is already executing; wait for its outcome first.");
+      }
+      // 空目标不可执行（用户需求 2026-11-04）：提示词会退化成节点名，等于盲发。
+      if (!node.goal.trim()) {
+        throw new Error(
+          `Plan node "${node.name}" has no goal. Fill in its goal (side editor) before executing.`,
+        );
+      }
+      await dispatchPlanNodeOnce(
+        { zcodeAgentService: options.zcodeAgentService, orchestrationService },
+        scope,
+        plan,
+        node,
+      );
+      return readMap();
+    },
+
+    async executeOrchestrationPlanNodes(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!planService || !orchestrationService) {
+        throw new Error("Orchestration services are unavailable on this host");
+      }
+      const scope = {
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      };
+      const readMap = async () =>
+        (
+          await planService.getPlansMap({
+            orchestrationTaskIds: [params.orchestrationTaskId],
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          })
+        )[params.orchestrationTaskId] ?? { planMode: true, activePlanId: null, plans: [] };
+      let map = await readMap();
+      if (map.activePlanId !== params.planId) {
+        map = await planService.selectPlan({ ...scope, planId: params.planId });
+      }
+      const plan = map.plans.find((candidate) => candidate.planId === params.planId);
+      if (!plan) throw new Error("Plan no longer exists; reload the plan list.");
+      const taskNodes = plan.nodes.filter((candidate) => !candidate.isStart);
+      if (taskNodes.some((candidate) => candidate.status === "dispatched")) {
+        throw new Error("有节点正在执行中，等它完成后再继续。");
+      }
+      // 依赖满足判定要含起始节点：根节点直接依赖 start，而 start 只是结构标记、不在
+      // 可执行集合里（实测：只建非起始节点状态表，直连开始的节点永远判"不可执行"）。
+      const statusById = new Map(
+        plan.nodes.map((candidate) => [candidate.nodeId, candidate.status]),
+      );
+      const startNodeId = plan.nodes.find((candidate) => candidate.isStart)?.nodeId ?? "start";
+      // 只派发"当前可执行"的：pending/stale 且所有依赖已 terminal（start 视为满足）；
+      // 已完成节点绝不重跑（用户需求 2026-11-02：部分执行 → 继续执行，而不是从头执行）。
+      const ready = taskNodes.filter(
+        (candidate) =>
+          (candidate.status === "pending" || candidate.status === "stale" || candidate.status === "failed") &&
+          // 空目标节点不派发（用户需求 2026-11-04）：提示词会退化成节点名，等于盲发。
+          candidate.goal.trim() !== "" &&
+          candidate.dependsOn.every(
+            (dep) => dep === startNodeId || statusById.get(dep) === "terminal",
+          ),
+      );
+      if (ready.length === 0) {
+        throw new Error("没有满足依赖、可立即执行的节点（上游未完成或全部已完成）。");
+      }
+      for (const node of ready) {
+        await dispatchPlanNodeOnce(
+          { zcodeAgentService: options.zcodeAgentService, orchestrationService },
+          scope,
+          plan,
+          node,
+        );
+      }
+      return readMap();
+    },
+
+    async setOrchestrationPlanNodeManualDone(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      const scope = {
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      };
+      const map = await planService.setPlanNodeManualDone({
+        ...scope,
+        planId: params.planId,
+        planNodeId: params.planNodeId,
+        done: params.done,
+      });
+      // 手动完成也是"节点自己的完成"口径（用户需求 2026-11-03）：翻转后可能解锁自动下游。
+      // 非对称触发（用户需求 2026-11-04"点掉手动完成却被重跑"）：**开（terminal）**触发
+      // 就绪扫描解锁下游；**关（撤回完成 → pending）不触发**——撤回不是重跑指令，此刻
+      // 节点 pending+自动开+依赖满足会让扫描立刻把它重新派发（实测：刚点掉就给关联
+      // 子任务发了消息）。撤回后是否再执行由该节点的自动开关与后续常规触发决定。
+      if (!orchestrationService) return map;
+      if (!params.done) {
+        const map2 = await planService.getPlansMap({
+          orchestrationTaskIds: [params.orchestrationTaskId],
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        });
+        return (
+          map2[params.orchestrationTaskId] ?? {
+            planMode: true,
+            activePlanId: null,
+            plans: [],
+          }
+        );
+      }
+      return sweepPlanAutoDispatchAndRefresh(
+        {
+          zcodeAgentService: options.zcodeAgentService,
+          orchestrationService,
+          resolveOrchestrationPlanService: options.resolveOrchestrationPlanService,
+          planService,
+        },
+        scope,
+        // 手动完成只释放该节点自己的下游（2026-11-04 实测修复）：全图扫描会顺手把
+        // 与该节点无关、恰好就绪的其他节点也派发出去。
+        { triggerNodeIds: [params.planNodeId] },
+      );
+    },
+
+
+    async createOrchestrationPlan(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      await planService.createEmptyPlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        title: params.title,
+      });
+      const map = await planService.getPlansMap({
+        orchestrationTaskIds: [params.orchestrationTaskId],
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      });
+      return map[params.orchestrationTaskId] ?? { planMode: true, activePlanId: null, plans: [] };
+    },
+
+    async setOrchestrationNewPlanPending(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.setNewPlanPending({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        pending: params.pending,
+      });
+    },
+
+    async renameOrchestrationPlan(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.renamePlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        planId: params.planId,
+        title: params.title,
+      });
+    },
+
+    async deleteOrchestrationPlan(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.deletePlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        planId: params.planId,
+      });
+    },
+
+    async selectOrchestrationPlan(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      return planService.selectPlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        planId: params.planId,
+        // 下拉单选（用户需求 2026-11-02）：用户显式点选现有计划 = 放弃「另起新计划」等待态。
+        clearNewPlanPending: params.planId !== null,
+      });
+    },
+
+    async confirmOrchestrationPlan(params): Promise<ZCodeOrchestrationPlansMap> {
+      const planService = options.resolveOrchestrationPlanService?.();
+      const orchestrationService = options.resolveOrchestrationTaskService?.();
+      if (!planService) {
+        throw new Error("Orchestration plan service is unavailable on this host");
+      }
+      await planService.confirmPlan({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        // UI 确认显式定位正在查看的草稿；确认即置为 agent 执行口径（唯一 active）。
+        ...(params.planId ? { planId: params.planId } : {}),
+      });
+      // 确认 = 启动信号（用户需求 2026-11-03）：自动模式的计划确认后 host 直接派第一波。
+      if (!orchestrationService) {
+        const fallbackMap = await planService.getPlansMap({
+          orchestrationTaskIds: [params.orchestrationTaskId],
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        });
+        return (
+          fallbackMap[params.orchestrationTaskId] ?? {
+            planMode: true,
+            activePlanId: null,
+            plans: [],
+          }
+        );
+      }
+      return sweepPlanAutoDispatchAndRefresh(
+        {
+          zcodeAgentService: options.zcodeAgentService,
+          orchestrationService,
+          resolveOrchestrationPlanService: options.resolveOrchestrationPlanService,
+          planService,
+        },
+        {
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+      );
     },
 
     async setTaskPinned(params): Promise<ZCodeTaskMeta> {
@@ -3104,7 +3483,14 @@ export function createZCodeTaskServiceAdapter(
           listener({
             taskId,
             ...(inputId ? { inputId } : {}),
-            outcome: terminal.kind === "turn.failed" ? "failed" : "succeeded",
+            // 手动停止 = interrupted = 未完成（用户需求 2026-11-04）：relay 层把
+            // 非 succeeded 一律按失败处理（节点置 failed 红色）。
+            outcome:
+              terminal.kind === "turn.failed"
+                ? "failed"
+                : terminal.interrupted
+                  ? "stopped"
+                  : "succeeded",
           });
         });
     },
@@ -5812,3 +6198,6 @@ function turnSteerCommandKindValue(value: unknown): ZCodeTurnSteerCommandKind | 
     ? value
     : undefined;
 }
+
+/** 单节点派发实现已迁至 orchestrationPlanAutoDispatch.ts（手动执行/计划级继续执行/
+ * 自动派发三条路共用，用户需求 2026-11-03）。 */

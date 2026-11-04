@@ -12,6 +12,32 @@
 - 取消关联（用户手动，UI 子任务行解链按钮 + 武装式二次确认）：关系行置 `unlinked_at` 墓碑（不物理删除），子任务编排标记清除、回归普通任务，终态不再通知。墓碑拦截自动重关联：LinkTask 对墓碑子任务默认拒绝，仅当用户明确点名要求时模型才可带 `force=true` 重试（服务层校验，`force` 是工具入参）。
 - **下发驱动的终态上报**：一轮下发（spawn 首条指令 / SendChildTaskPrompt）只上报它触发的那个执行轮的终态（下发后的第一个新终态）；用户在子任务会话里的手动多轮**不上报**（用户确认 2026-10-21：关联任务常在非编排场景独立使用，任一终态都上报会持续骚扰编排会话）。通知注明来源任务名称并附**最终回复的有界摘要**（尾部窗口最后一条 assistant 消息，约 400 字封顶；失败附错误摘要）：编排 agent 默认凭摘要汇报、不再全量读取子会话。摘要不可用（子任务 runtime 已被回收，v1 sessionMessages 只认活跃会话）时降级为引导语。面向编排会话的注入文本与工具输出不携带 taskId / inputId 等内部标识（诊断日志除外）。
 - 终态通知是**持久意图**（tasks-index `orchestration_pending_notifies` 表）：下发武装 relay 时落行（记 `armed_at` 与 workspace 路径/身份快照），该轮终态**送达成功后删行**、relay 随之销毁；投递失败保留行。投递必须消化两类瞬态失败——编排会话正在执行（v1 `session/send` 拒绝 "A prompt is already running"）退避重试；编排会话冷（runtime 已回收）先 `resumeSession`（带该编排任务 tasks-index 最后使用的 provider/model 兜底）再重试。重试有界。host 启动时恢复扫描：link 已墓碑→清行；子任务终态且 `updated_at > armed_at`（下发轮已完成）→补投后删行；其余（未终态，或终态早于武装时刻=下发轮仍在排队/执行）→按原 `armed_at` 重新武装 relay。不持久化会导致：app 重启后武装全灭（长周期编排的子任务完成永远不通知，实测 11 个子任务零通知）、并行子任务挤进 busy 窗口的通知被静默丢弃（实测 15 个子任务丢 2 个）。
+- **运行时死亡带走的未完成轮次 = 失败（interrupted）**（用户需求 2026-11-04"崩了呢"）：
+  恢复扫描的"未终态"分支二分——子会话已不在此运行时（readSession 报 not active/
+  sessionnotfound/unavailable）= 上一轮随 runtime 死亡、永远不会有终态 → 按 failed 补投
+  红色通知并清行（修复"运行时崩了节点永远执行中"的盲区）；子会话仍活跃 → 按原武装时刻
+  重新武装等待真实终态。探测因非冷会话原因失败（启动竞态等）→ 保留行下次再试，不做
+  失败推断。终态已落库的行不受影响（仍走"终态晚于武装时刻 → 补投"分支）。
+- **手动停止 = 失败（红色）**（用户需求 2026-11-04，实测停止后节点变绿）：子任务终态
+  事件的结果有三种 `succeeded | failed | stopped`——手动停止发出 `stopped`，旧映射
+  `非 failed 即 succeeded` 把它归成了成功（节点变绿）。修正：**非 succeeded 一律按
+  failed 处理**（节点置 failed 红色，轮询兜底与恢复扫描的 error 终态同此口径）。
+- **编排会话冷恢复同样补选型**（bug 修复 2026-11-04，实测主任务对话出现
+  "Select a model before continuing"）：终态通知投递遇冷编排会话时，此前只带 resume
+  提示（且注释赌"编排会话是活跃会话、选型不会失效"）——dev 环境反复重启回收 runtime 后
+  提示不生效，注入的通知被运行时闸门拒绝并直接显示在用户对话里。现统一走
+  prepareChildSessionForDispatch（探测/冷恢复 + 快照 settings.model.current 校验 + 显式
+  setModel：归一 + 任务自身选型兜底 + 首个未禁用项），与子会话下发同一保障。仍无可用模型
+  时投递失败保留 pending 行交恢复扫描，下次启动带保障重试。
+  **current 非空 ≠ 可用**（同日二次实测：编排会话持久选型非空但已失效，照样在
+  model_creation 被 "Select a model before continuing" 拒绝）：生效判定升级为「current 能在
+  快照 available 的未禁用项里对上」；对不上/对不出来（available 为空）→ resume 拿完整设置
+  重判 → 仍失效走同一补选链。该保障由子会话下发与编排会话通知投递两条路共用。
+- **协议词表前向兼容**（bug 修复 2026-11-03）：子会话历史可能由**更新版本**的 App 写入（同一台机器上安装版与开发检出共用 `~/.zcode`），其中合成提醒消息的 `info.source` 可能是本检出未知的枚举值（实测 `agent_listing_delta`，2026-10-15 由安装版写入）。`zcodeSyntheticUserMessageSourceSchema`（shared 协议）与 contracts 的 `SYNTHETIC_USER_MESSAGE_SOURCES` 必须同词表并**前向包含已知新值**；否则冷恢复 readSession/resume 的 zod 校验整段失败、给该子任务的首发必败（agent 侧表现为"首发必报的校验错误，重试即好"——第二次走热路径不再校验）。新增来源时三处同步：contracts 词表、shared 协议枚举、投影策略集合。
+- **一轮一报闩 + 失败可见 + 冷恢复选型归一**（实测 2026-10-30 全体点名 12 子任务：5 个重复回报、1 个永远"在路上"）：
+  - relay 的订阅与 30 秒轮询是**同一终态的两个观察面**，不是两个终态：首个终态被任一通道捕获即闩住（`terminalCaptured`），另一通道随后的触发一律忽略并停掉（订阅 dispose、轮询 timer 清除）；relay 被同父重下发/解链废弃时同样停轮询。不再有"投递中到来的终态排队补发"——此前订阅先投递、投递期间（编排会话 busy 退避可达分钟级）轮询再触发被排进队列、首投完成后补发同一份摘要，编排会话收到内容相同的重复回报。送达失败仍保留 pending 行交恢复扫描。
+  - 轮询兜底除 tasks-index 终态外**补读子会话快照**（`readSession`，messageLimit=1）：`session.status === "error"` 且 `session.updatedAt > armed_at` 且无 activeTurn，**连续两次轮询命中**才认定（send ACK 到执行轮启动之间 status 可能仍是上一轮的 error 而 updatedAt 已被顶新，单次会误报）→ 以"失败"投递通知（正文带 status=error 提示）。此前下发后首轮即崩（模型选型失效等）既无 running→terminal 迁移、tasks-index 行也不更新，两条通道都看不见，编排侧永远等待、pending 行永久挂起。覆盖边界：`readSession` 只能读运行时里驻留的会话，所以此分支覆盖的是**下发后 30 秒窗内会话仍活着**的场景（本次事故的真实路径：resume 后首轮崩、error 态驻留运行时）；runtime 已回收的冷会话（如重启后恢复扫描重新武装的旧行）读不到状态（"Session is not active"），行继续挂起，直到下一次向该子任务下发时被新 relay 取代。
+  - 冷会话 resume 的模型提示必须先归一（`buildColdResumeModelHint`）：旧 provider 身份经 `migrateLegacyModelProviderId` 迁移（`builtin:bigmodel-coding-plan` → `account:bigmodel-individual-coding-plan`），混进 modelId 的 `$档位` 后缀拆回 thoughtLevel，官方 GLM 模型名规范化。但 resume 的 model 提示对**已持久化旧选型**的会话不生效（实测两次 resume 后 `settings.model.current` 仍为空，UI 显示"选择模型"，ACK 进去的输入被闸门挡住既不执行也不报错）——所以生效与否以快照 `settings.model.current` 为准：为空就显式 `setModel`，候选按序取**快照可用列表里的规范 ref**（`{providerId: 账号身份, modelId: 模型名}`，与 tasks-index 的 `身份/模型名` 复合串是两种形态，比对前先拆）：子任务归一后的旧选型 → 父编排任务选型 → 首个未禁用项，模型声明了思考档位时必须带 `options.reasoningLevel`（实测 setModel 被拒 "Reasoning level is required"；优先旧 `$档位` → 模型默认档 → 首个档）；setModel 后仍无生效模型或列表为空即抛错让下发失败**可见**（agent 据此转告用户）。这项检查对冷/热会话一视同仁：下发前统一先 `readSession`（messageLimit=1）拿快照，`not active` 才走 resume——此前只在冷恢复路径检查，热会话（上次失败后仍驻留运行时、没有生效模型）的输入照样被 ACK 进闸门后面（实测 agent 重试即命中）。实测：最老的子任务存的是 8 月的 `builtin:bigmodel-coding-plan/GLM-5.2$max`，其余 11 个是 `account:…/GLM-5.3`，只有它卡在闸门。
 - 关联分析（link 候选匹配）：`ListWorkspaceTasks` 每条带最近一条 assistant 回复的有界摘要（约 120 字，仅最近活跃前 20 个非 orchestrator 任务）——候选匹配以摘要（任务实际在做什么）为准，标题相似不足以判定；不确定时编排 agent 先对候选 `ReadSessionContext` 核查目标再关联（LinkTask modelInstructions 引导）。摘要读取经 v1 sessionMessages，CLI 侧对不在 v1 registry 的会话（v4/web 创建）用 sessionStore 冷读兜底，读不到才为 null。
 - 子任务命名：派生时 SpawnSubTask 入参含 `name`（模型按任务内容起的简短专名），host 在首条指令送达后经 `renameTask`（titleSource=custom）落为任务标题；该标题防自动改名覆盖（tasks-index `title_overridden`），侧边栏、通知、工具输出统一用它。
 - 其他对话的 # 引用候选不列出 orchestrator 任务；child 任务仍可被引用（它就是普通任务）。

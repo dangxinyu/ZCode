@@ -176,6 +176,18 @@ export function useDraftConfigControl(params: {
     draft = applyComposerPlanTransition(draft, sessionConfig.planTransition);
     draft = applyComposerPermissionGrant(draft, sessionConfig.permissionGrant);
   }
+  // 常驻 skill 草稿 hydrate（bug 修复 2026-11-04，实测"派发注入成功、打开会话页就被
+  // 清掉"）：draft.pinnedSkills === undefined = 用户从未表达过意图，此时以 runtime
+  // 回声（sessionConfig.pinnedSkills）为初值——composer chip 显示 host 注入的名单，
+  // SessionPane 同步 effect 视为已收敛不再覆盖。显式清空（[]）不走这里，仍由用户
+  // 意图下发清除命令。
+  if (
+    draft.pinnedSkills === undefined &&
+    sessionConfig?.pinnedSkills &&
+    sessionConfig.pinnedSkills.length > 0
+  ) {
+    draft = { ...draft, pinnedSkills: [...sessionConfig.pinnedSkills] };
+  }
   if (draft !== currentState.draft) currentState = { ...currentState, draft };
   if (currentState !== storedState) setStoredState(currentState);
   const stateRef = useRef(currentState);
@@ -200,7 +212,13 @@ export function useDraftConfigControl(params: {
         ? { pinnedSkills: draft.pinnedSkills }
         : {}),
     }),
-    [draft.mode, draft.planEnabled, draft.visionDelegateModel, draft.pinnedSkills, effectiveSelection],
+    [
+      draft.mode,
+      draft.planEnabled,
+      draft.visionDelegateModel,
+      draft.pinnedSkills,
+      effectiveSelection,
+    ],
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;

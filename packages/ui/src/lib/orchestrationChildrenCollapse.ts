@@ -54,10 +54,7 @@ export function useOrchestrationChildrenCollapsed(): {
     () => version,
   );
   void snapshot;
-  const isCollapsed = useCallback(
-    (parentTaskId: string) => !expandedIds.has(parentTaskId),
-    [],
-  );
+  const isCollapsed = useCallback((parentTaskId: string) => !expandedIds.has(parentTaskId), []);
   const toggleCollapsed = useCallback((parentTaskId: string) => {
     const next = new Set(expandedIds);
     if (next.has(parentTaskId)) {

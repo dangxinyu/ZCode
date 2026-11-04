@@ -1582,10 +1582,13 @@ export const zcodeSessionCreateParamsSchema = z
     orchestrationParentTaskId: nonEmptyString.optional(),
   })
   .strict()
-  .refine((input) => input.orchestrationRole !== "child" || input.orchestrationParentTaskId !== undefined, {
-    message: "orchestrationRole=child requires orchestrationParentTaskId",
-    path: ["orchestrationParentTaskId"],
-  });
+  .refine(
+    (input) => input.orchestrationRole !== "child" || input.orchestrationParentTaskId !== undefined,
+    {
+      message: "orchestrationRole=child requires orchestrationParentTaskId",
+      path: ["orchestrationParentTaskId"],
+    },
+  );
 export type ZCodeSessionCreateParams = z.infer<typeof zcodeSessionCreateParamsSchema>;
 
 export const zcodeSessionResumeParamsSchema = z
@@ -3513,6 +3516,9 @@ export const zcodeOrchestrationSpawnParamsSchema = z
     // 子任务专名：模型按任务内容起，host 经 renameTask 落为标题（spec: orchestration-tasks.md 命名规则）。
     name: nonEmptyString,
     prompt: nonEmptyString,
+    // 计划节点绑定（spec: orchestration-plan.md）：按已确认计划派生时携带节点 id，
+    // host 把节点置 dispatched 并记下子任务 id，供计划视图显示进度。
+    planNodeId: nonEmptyString.optional(),
   })
   .strict();
 export type ZCodeOrchestrationSpawnProtocolParams = z.infer<
@@ -3552,6 +3558,8 @@ export const zcodeOrchestrationSendChildTaskPromptParamsSchema = z
     sessionId: nonEmptyString,
     childTaskId: nonEmptyString,
     prompt: nonEmptyString,
+    /** 执行计划节点时携带：host 先把节点绑定到该子任务并置 dispatched，再下发（spec: orchestration-plan.md）。 */
+    planNodeId: nonEmptyString.optional(),
   })
   .strict();
 export type ZCodeOrchestrationSendChildTaskPromptProtocolParams = z.infer<
@@ -3589,7 +3597,14 @@ export type ZCodeOrchestrationListChildrenProtocolParams = z.infer<
 >;
 
 export const zcodeOrchestrationListChildrenResultSchema = z
-  .object({ children: z.array(zcodeOrchestrationChildSummaryProtocolSchema) })
+  .object({
+    children: z.array(zcodeOrchestrationChildSummaryProtocolSchema),
+    // 计划模式开关态（spec: orchestration-plan.md）：模型感知通道之一——true 时先提案。
+    planMode: z.boolean(),
+    // 「另起新计划」等待态（用户需求 2026-10-29）：true = 用户挂起了新建意图，
+    // 起不起由后续对话决定；旧 host 不带此字段（optional 兼容）。
+    pendingNewPlan: z.boolean().optional(),
+  })
   .strict();
 export type ZCodeOrchestrationListChildrenProtocolResult = z.infer<
   typeof zcodeOrchestrationListChildrenResultSchema
@@ -3618,10 +3633,202 @@ export type ZCodeOrchestrationListWorkspaceTasksProtocolParams = z.infer<
 >;
 
 export const zcodeOrchestrationListWorkspaceTasksResultSchema = z
-  .object({ tasks: z.array(zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema) })
+  .object({
+    tasks: z.array(zcodeOrchestrationWorkspaceTaskSummaryProtocolSchema),
+    planMode: z.boolean(),
+    // 「另起新计划」等待态（同 listChildren；用户需求 2026-10-29）。
+    pendingNewPlan: z.boolean().optional(),
+  })
   .strict();
 export type ZCodeOrchestrationListWorkspaceTasksProtocolResult = z.infer<
   typeof zcodeOrchestrationListWorkspaceTasksResultSchema
+>;
+
+// ---- 编排计划（orchestration plan）协议（spec: packages/services/specs/orchestration-plan.md）----
+// 计划模式默认关闭：关闭时 proposePlan 在 host 侧拒绝（结构性不可用的运行时投影），
+// spawn/link 不受计划门约束，行为与现状一致。
+export const zcodeOrchestrationPlanNodeSchema = z
+  .object({
+    nodeId: nonEmptyString,
+    name: nonEmptyString,
+    goal: nonEmptyString,
+    /** 上游节点 id（DAG；host 校验引用存在、无环、全部可达 start）。 */
+    dependsOn: z.array(nonEmptyString),
+    /** 派发时是否把上游交付摘要注入指令（默认 true = 结果依赖边）。 */
+    needsUpstreamResult: z.boolean(),
+    /** 起始节点标记：每计划恰好一个、无依赖、不可删除/派发，其余节点必须直接或间接连到它。 */
+    isStart: z.boolean().optional(),
+    /** stale = 上游已变更待复核（spec: orchestration-plan.md 微调传播）；
+     * failed = 绑定子任务失败/被取消（用户需求 2026-11-04：失败=红色，与成功=绿色对等）。 */
+    status: z.enum(["pending", "dispatched", "terminal", "stale", "failed"]),
+    /** dispatched 起绑定的子任务 id（host 回填；pending 为 null）。 */
+    childTaskId: z.string().nullable(),
+    /** 用户手动确定的绑定（用户需求 2026-10-30）：true = 主任务/agent 不可再改绑该节点
+     * 的子任务，只能向已定子任务下发指令；缺省 false（agent 绑定/未绑定）。 */
+    childTaskLocked: z.boolean().optional(),
+    /** 依赖满足后由 host 自动派发（用户需求 2026-11-03）：需依赖全部 terminal 且所有
+     * 非起始直接上游也 autoExecute=true（手动闸门级联断流）。缺省/缺字段 = false。 */
+    autoExecute: z.boolean().optional(),
+    /** 派发时写入子会话的常驻 skill（用户需求 2026-11-04，catalog name 全量替换语义）；
+     * 空数组/缺省 = 不动子会话现有常驻配置。 */
+    pinnedSkills: z.array(z.string()).optional(),
+    /** 微调重执行的原原子任务引用（pending + reuse = 确认后优先下发原子任务）。 */
+    reuseChildTaskId: z.string().nullable().optional(),
+    /** 画布布局（用户拖动/缩放的自由布局持久化；缺省 = 自动分层布局）。 */
+    layout: z
+      .object({ x: z.number(), y: z.number(), w: z.number().optional(), h: z.number().optional() })
+      .optional(),
+  })
+  .strict();
+export type ZCodeOrchestrationPlanNodeProtocol = z.infer<typeof zcodeOrchestrationPlanNodeSchema>;
+// 服务/UI 侧短名（协议 schema 同源，不重复定义）。
+export type ZCodeOrchestrationPlanNode = ZCodeOrchestrationPlanNodeProtocol;
+
+export const zcodeOrchestrationPlanSchema = z
+  .object({
+    planId: nonEmptyString,
+    title: z.string(),
+    /** 来源：agent = 编排提案；manual = 用户在画布手动创建（用户需求 2026-10-29）。 */
+    origin: z.enum(["agent", "manual"]).optional(),
+    status: z.enum(["draft", "confirmed", "completed"]),
+    /** 每次提案自增；确认注入消息携带版本，模型与用户对齐"确认的是哪一版"。 */
+    version: z.number().int().nonnegative(),
+    nodes: z.array(zcodeOrchestrationPlanNodeSchema),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ZCodeOrchestrationPlanProtocol = z.infer<typeof zcodeOrchestrationPlanSchema>;
+
+// plansMap（UI 批量读，spec: orchestration-plan.md v2 多计划）：模式开关 + 全量计划 + 选中态。
+export const zcodeOrchestrationPlansMapSchema = z
+  .object({
+    planMode: z.boolean(),
+    activePlanId: z.string().nullable(),
+    plans: z.array(zcodeOrchestrationPlanSchema),
+    /** 「另起新计划」等待态（用户需求 2026-10-29：选中只挂状态不发消息，
+     * 起不起由后续对话决定；新计划落地或用户取消时清除）。 */
+    pendingNewPlan: z.boolean().optional(),
+  })
+  .strict();
+export type ZCodeOrchestrationPlansMapProtocol = z.infer<typeof zcodeOrchestrationPlansMapSchema>;
+export type ZCodeOrchestrationPlan = ZCodeOrchestrationPlanProtocol;
+export type ZCodeOrchestrationPlansMap = ZCodeOrchestrationPlansMapProtocol;
+
+/** 编排计划变更广播（spec: packages/services/specs/orchestration-plan.md）：host 侧任一
+ * 计划变更（提案/确认/派发/进度/等待态）后发送；UI 订阅并重拉 plansMap——agent 侧变更
+ * 不经过 UI 动作，没有这个信号画布/列表会一直停在旧快照。payload 仅含 orchestrationTaskId。 */
+export const ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL = "orchestration:plans-changed";
+
+export const zcodeOrchestrationProposePlanParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    /** 新建计划时的标题（缺省 host 按首节点名生成）；提案到已有计划时忽略。 */
+    title: nonEmptyString.optional(),
+    /** true = 另起新计划承载本提案（不改 active 计划；下拉「新建计划（AI 生成）」链路）。 */
+    createNew: z.boolean().optional(),
+    nodes: z
+      .array(
+        z
+          .object({
+            nodeId: nonEmptyString,
+            name: nonEmptyString,
+            /** 目标允许空串：起始节点没有目标（UI 保存通道透传）。 */
+            goal: z.string(),
+            dependsOn: z.array(nonEmptyString).optional(),
+            needsUpstreamResult: z.boolean().optional(),
+            /** 起始节点标记（缺省 host 自动补一个；恰好一个，其余节点必须可达它）。 */
+            isStart: z.boolean().optional(),
+            layout: z
+              .object({
+                x: z.number(),
+                y: z.number(),
+                w: z.number().optional(),
+                h: z.number().optional(),
+              })
+              .optional(),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+export type ZCodeOrchestrationProposePlanProtocolParams = z.infer<
+  typeof zcodeOrchestrationProposePlanParamsSchema
+>;
+
+export const zcodeOrchestrationProposePlanResultSchema = z
+  .object({
+    // 新计划的 planId（修订 = active 计划 id）。CLI 端口显式映射，不透传给模型。
+    planId: nonEmptyString,
+    version: z.number().int().nonnegative(),
+    status: z.literal("draft"),
+    nodeCount: z.number().int().positive(),
+  })
+  .strict();
+export type ZCodeOrchestrationProposePlanProtocolResult = z.infer<
+  typeof zcodeOrchestrationProposePlanResultSchema
+>;
+
+// 计划选中切换（UI 动作；不发会话消息）。
+export const zcodeOrchestrationSelectPlanParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    planId: nonEmptyString.nullable(),
+  })
+  .strict();
+export type ZCodeOrchestrationSelectPlanProtocolParams = z.infer<
+  typeof zcodeOrchestrationSelectPlanParamsSchema
+>;
+
+// 微调变更传播（spec: orchestration-plan.md）：agent 把修改节点的直接下游标 stale/
+// 复核完成（stale=false 回 terminal）。host 校验节点在 active 计划内。
+export const zcodeOrchestrationMarkPlanNodesStaleParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    nodeIds: z.array(nonEmptyString).min(1),
+    stale: z.boolean(),
+  })
+  .strict();
+export type ZCodeOrchestrationMarkPlanNodesStaleProtocolParams = z.infer<
+  typeof zcodeOrchestrationMarkPlanNodesStaleParamsSchema
+>;
+
+export const zcodeOrchestrationMarkPlanNodesStaleResultSchema = z
+  .object({ updated: z.number().int().nonnegative(), message: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationMarkPlanNodesStaleProtocolResult = z.infer<
+  typeof zcodeOrchestrationMarkPlanNodesStaleResultSchema
+>;
+
+// 计划节点 ↔ 子任务绑定（spec: orchestration-plan.md）：把已关联（linked/derived）
+// 子任务挂到 active 计划节点上，画布才能显示每个节点的子任务与执行进度。
+// childTaskId=null 表示解绑（节点回到 pending）。childTaskId 出模型侧不安全，由
+// host 从 List 结果拿到后再回传，这里不做 further 校验（host 负责关联关系核验）。
+export const zcodeOrchestrationBindPlanNodesParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    bindings: z
+      .array(
+        z
+          .object({
+            planNodeId: nonEmptyString,
+            childTaskId: nonEmptyString.nullable(),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+export type ZCodeOrchestrationBindPlanNodesProtocolParams = z.infer<
+  typeof zcodeOrchestrationBindPlanNodesParamsSchema
+>;
+
+export const zcodeOrchestrationBindPlanNodesResultSchema = z
+  .object({ updated: z.number().int().nonnegative(), message: nonEmptyString })
+  .strict();
+export type ZCodeOrchestrationBindPlanNodesProtocolResult = z.infer<
+  typeof zcodeOrchestrationBindPlanNodesResultSchema
 >;
 
 // ---- Off-Peak（闲时任务）会话内创建协议----
@@ -3783,6 +3990,10 @@ export const zcodeProtocolMethods = {
   orchestrationSendChildTaskPrompt: "orchestration/sendChildTaskPrompt",
   orchestrationListChildren: "orchestration/listChildren",
   orchestrationListWorkspaceTasks: "orchestration/listWorkspaceTasks",
+  orchestrationProposePlan: "orchestration/proposePlan",
+  orchestrationSelectPlan: "orchestration/selectPlan",
+  orchestrationMarkPlanNodesStale: "orchestration/markPlanNodesStale",
+  orchestrationBindPlanNodes: "orchestration/bindPlanNodes",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。
   // 仅剩 CLI server 的 wire 兼容 case；随旧词整体删除时一并移除。
   usageStats: "usage/stats",

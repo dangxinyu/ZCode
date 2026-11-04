@@ -1,14 +1,23 @@
 import {
+  type BindPlanNodesOutput,
   type LinkTaskOutput,
   type ListOrchestrationChildrenOutput,
   type ListWorkspaceTasksOutput,
+  type MarkPlanNodesStaleOutput,
   type OrchestrationPort,
+  type ProposeOrchestrationPlanOutput,
   type SendChildTaskPromptInput,
   type SendChildTaskPromptOutput,
   type SpawnSubTaskOutput,
 } from "@zcode/contracts";
 import {
+  zcodeOrchestrationBindPlanNodesParamsSchema,
+  zcodeOrchestrationBindPlanNodesResultSchema,
   zcodeOrchestrationLinkParamsSchema,
+  zcodeOrchestrationMarkPlanNodesStaleParamsSchema,
+  zcodeOrchestrationMarkPlanNodesStaleResultSchema,
+  zcodeOrchestrationProposePlanParamsSchema,
+  zcodeOrchestrationProposePlanResultSchema,
   zcodeOrchestrationLinkResultSchema,
   zcodeOrchestrationListChildrenParamsSchema,
   zcodeOrchestrationListChildrenResultSchema,
@@ -41,6 +50,7 @@ export function createProtocolOrchestrationPort(
           sessionId: taskContext.sessionId,
           name: input.name,
           prompt: input.prompt,
+          ...(input.planNodeId ? { planNodeId: input.planNodeId } : {}),
         }),
         zcodeOrchestrationSpawnResultSchema,
       );
@@ -78,6 +88,7 @@ export function createProtocolOrchestrationPort(
           sessionId: taskContext.sessionId,
           childTaskId: input.taskId,
           prompt: input.prompt,
+          ...(input.planNodeId ? { planNodeId: input.planNodeId } : {}),
         }),
         zcodeOrchestrationSendChildTaskPromptResultSchema,
       );
@@ -103,6 +114,57 @@ export function createProtocolOrchestrationPort(
           status: child.status,
           updatedAt: child.updatedAt,
         })),
+        planMode: result.planMode,
+        pendingNewPlan: result.pendingNewPlan,
+      };
+    },
+    async markPlanNodesStale(input, taskContext): Promise<MarkPlanNodesStaleOutput> {
+      const result = await context.requestClient(
+        zcodeProtocolMethods.orchestrationMarkPlanNodesStale,
+        zcodeOrchestrationMarkPlanNodesStaleParamsSchema.parse({
+          sessionId: taskContext.sessionId,
+          nodeIds: input.nodeIds,
+          stale: input.stale,
+        }),
+        zcodeOrchestrationMarkPlanNodesStaleResultSchema,
+      );
+      return { updated: result.updated, message: result.message };
+    },
+    async bindPlanNodes(input, taskContext): Promise<BindPlanNodesOutput> {
+      const result = await context.requestClient(
+        zcodeProtocolMethods.orchestrationBindPlanNodes,
+        zcodeOrchestrationBindPlanNodesParamsSchema.parse({
+          sessionId: taskContext.sessionId,
+          bindings: input.bindings,
+        }),
+        zcodeOrchestrationBindPlanNodesResultSchema,
+      );
+      return { updated: result.updated, message: result.message };
+    },
+    async proposePlan(input, taskContext): Promise<ProposeOrchestrationPlanOutput> {
+      const result = await context.requestClient(
+        zcodeProtocolMethods.orchestrationProposePlan,
+        zcodeOrchestrationProposePlanParamsSchema.parse({
+          sessionId: taskContext.sessionId,
+          ...(input.title ? { title: input.title } : {}),
+          ...(input.createNew ? { createNew: true } : {}),
+          nodes: input.nodes.map((node) => ({
+            nodeId: node.nodeId,
+            name: node.name,
+            goal: node.goal,
+            ...(node.dependsOn ? { dependsOn: node.dependsOn } : {}),
+            ...(node.needsUpstreamResult !== undefined
+              ? { needsUpstreamResult: node.needsUpstreamResult }
+              : {}),
+            ...(node.isStart ? { isStart: true } : {}),
+          })),
+        }),
+        zcodeOrchestrationProposePlanResultSchema,
+      );
+      return {
+        version: result.version,
+        nodeCount: result.nodeCount,
+        message: `Plan draft v${result.version} submitted (${result.nodeCount} nodes). Waiting for the user to review and confirm it in the orchestration panel; do NOT spawn or link any child task until the 【编排计划·确认】 confirmation message arrives. If the user requests changes, revise and submit again.`,
       };
     },
     async listWorkspaceTasks(_input, taskContext): Promise<ListWorkspaceTasksOutput> {
@@ -131,6 +193,8 @@ export function createProtocolOrchestrationPort(
               hint: "Tasks with orchestrationRole=null are not linked to this orchestration. When a task corresponds to the user's message (question or work), link it with LinkTask by default — linkage is cheap and keeps its context in the family.",
             }
           : {}),
+        planMode: result.planMode,
+        pendingNewPlan: result.pendingNewPlan,
       };
     },
   };

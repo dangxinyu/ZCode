@@ -2470,7 +2470,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   if (msg.type === HostMessageTypes.SessionMessageDeliveryResult) {
     const zcodeTaskService = activeServices?.getOptional(IZCodeTaskService);
     if (!zcodeTaskService) {
-      logger.warn("session message delivery result received before Don’t-think task service initialized");
+      logger.warn(
+        "session message delivery result received before Don’t-think task service initialized",
+      );
       return;
     }
     void zcodeTaskService.sendSessionMessageDeliveryResult(msg.result).catch((error) => {

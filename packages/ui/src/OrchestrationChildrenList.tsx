@@ -7,16 +7,21 @@
 // 取消关联：行尾解链按钮 → 确认弹窗（useConfirmDialog）→ 解除。
 // 解除后编排不再收该任务的终态，误触代价高，必须弹窗二次确认。
 import { memo } from "react";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta, ZCodeOrchestrationPlansMap } from "@zcode/shared";
 import { ArrowUpRight, CornerDownRight, LoaderIcon, Pin, Unlink } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { cn } from "@/components/lib/utils.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { useOrchestrationChildrenPinned } from "@/lib/orchestrationChildrenPinned.js";
+import { openOrchestrationPlanPage } from "@/lib/orchestrationPlanSync.js";
+import { OrchestrationPlanList } from "@/OrchestrationPlanList.js";
 
 interface OrchestrationChildrenListProps {
   parentTaskId: string;
+  /** 主任务工作区：计划条目点击要先跳主任务会话（计划页挂在主任务面板里）。 */
+  parentWorkspacePath: string;
+  parentWorkspaceIdentity?: string;
   childTasks: ZCodeTaskMeta[];
   isActiveTaskId: (task: ZCodeTaskMeta) => boolean;
   /** 单击行：打开子任务会话（不切视图、不滚动定位）。 */
@@ -33,6 +38,12 @@ interface OrchestrationChildrenListProps {
     targetWorkspaceIdentity?: string,
     expectedUnreadAt?: number,
   ) => void;
+  /** 计划列表数据（spec: orchestration-plan.md v2 多计划）；null/缺省 = 不渲染。 */
+  plansMap?: ZCodeOrchestrationPlansMap | null;
+  onCreatePlan?: () => void;
+  onRenamePlan?: (planId: string, title: string) => void;
+  onDeletePlan?: (planId: string) => void;
+  planBusy?: boolean;
   /** 行尾解链按钮：用户手动取消关联（二次确认通过后调用）。 */
   onUnlinkTask: (
     targetWorkspacePath: string,
@@ -60,11 +71,18 @@ export function isChildRunning(child: ZCodeTaskMeta): boolean {
 
 const OrchestrationChildrenListComponent = ({
   parentTaskId,
+  parentWorkspacePath,
+  parentWorkspaceIdentity,
   childTasks,
   isActiveTaskId,
   onOpenTask,
   onJumpToTask,
   onUnlinkTask,
+  plansMap,
+  onCreatePlan,
+  onRenamePlan,
+  onDeletePlan,
+  planBusy,
 }: OrchestrationChildrenListProps) => {
   const { intl } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
@@ -81,16 +99,38 @@ const OrchestrationChildrenListComponent = ({
     }
     return pinned.length > 0 ? [...pinned, ...rest] : childTasks;
   })();
+  const planList =
+    plansMap && plansMap.planMode && onCreatePlan && onRenamePlan && onDeletePlan ? (
+      <OrchestrationPlanList
+        parentTaskId={parentTaskId}
+        plansMap={plansMap}
+        busy={planBusy}
+        onOpenPlan={(planId) => {
+          // 计划页挂在主任务会话面板里，主任务未选中时只发页面信号看不见
+          // （用户需求 2026-10-30：点计划要自动跳转）。onOpenTask 同步关掉旧
+          // 计划页并选中主任务会话，随后打开目标计划页——计划间互切同一路径。
+          onOpenTask(parentWorkspacePath, parentTaskId, parentWorkspaceIdentity);
+          openOrchestrationPlanPage(parentTaskId, planId);
+        }}
+        onCreatePlan={onCreatePlan}
+        onRenamePlan={onRenamePlan}
+        onDeletePlan={onDeletePlan}
+      />
+    ) : null;
   if (childTasks.length === 0) {
     return (
-      <li className="pl-8 pr-2 py-0.5 text-ui-base text-foreground-subtlest">
-        {intl.formatMessage({ id: "workspaceSidebar.orchestrationNoChildren" })}
-      </li>
+      <>
+        {planList}
+        <li className="pl-8 pr-2 py-0.5 text-ui-base text-foreground-subtlest">
+          {intl.formatMessage({ id: "workspaceSidebar.orchestrationNoChildren" })}
+        </li>
+      </>
     );
   }
   return (
     <li className="py-0.5" data-testid="orchestration-children-list">
       <ul className="space-y-0.5">
+        {planList}
         {orderedChildTasks.map((child) => {
           const active = isActiveTaskId(child);
           const pinnedInDropdown = isChildPinned(parentTaskId, child.taskId);
@@ -111,19 +151,31 @@ const OrchestrationChildrenListComponent = ({
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                   onClick={() => {
-                    onOpenTask(child.workspacePath, child.taskId, child.workspaceIdentity, child.unreadAt);
+                    onOpenTask(
+                      child.workspacePath,
+                      child.taskId,
+                      child.workspaceIdentity,
+                      child.unreadAt,
+                    );
                   }}
                 >
-                  <CornerDownRight aria-hidden="true" className="size-3 shrink-0 text-foreground-subtlest" />
+                  <CornerDownRight
+                    aria-hidden="true"
+                    className="size-3 shrink-0 text-foreground-subtlest"
+                  />
                   {running ? (
                     // 执行中：转圈指示（用户要求：不用挨个找谁在跑）。
                     <LoaderIcon
-                      aria-label={intl.formatMessage({ id: "workspaceSidebar.orchestrationChildStatus" })}
+                      aria-label={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildStatus",
+                      })}
                       className="size-3 shrink-0 animate-spin text-foreground-subtle"
                     />
                   ) : (
                     <span
-                      aria-label={intl.formatMessage({ id: "workspaceSidebar.orchestrationChildStatus" })}
+                      aria-label={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildStatus",
+                      })}
                       className={cn("size-1.5 shrink-0 rounded-full", statusDotClass(child.status))}
                     />
                   )}
@@ -136,7 +188,12 @@ const OrchestrationChildrenListComponent = ({
                   })}
                   className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
                   onClick={() => {
-                    onJumpToTask(child.workspacePath, child.taskId, child.workspaceIdentity, child.unreadAt);
+                    onJumpToTask(
+                      child.workspacePath,
+                      child.taskId,
+                      child.workspaceIdentity,
+                      child.unreadAt,
+                    );
                   }}
                 >
                   <ArrowUpRight aria-hidden="true" className="size-3" />
@@ -190,7 +247,10 @@ const OrchestrationChildrenListComponent = ({
                     toggleChildPinned(parentTaskId, child.taskId);
                   }}
                 >
-                  <Pin aria-hidden="true" className={cn("size-3", pinnedInDropdown && "fill-current")} />
+                  <Pin
+                    aria-hidden="true"
+                    className={cn("size-3", pinnedInDropdown && "fill-current")}
+                  />
                 </button>
               </div>
             </li>

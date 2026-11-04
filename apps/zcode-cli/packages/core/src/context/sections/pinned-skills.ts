@@ -9,8 +9,14 @@ import type { ResolvedPinnedSkill } from "../types.js";
 import type { ContextSection } from "../types.js";
 import { estimateTokens } from "../utils.js";
 
-/** 与 skills_listing 的 metadata 预算同数量级的总字符预算；超限降级为名字清单。 */
-const DEFAULT_PINNED_SKILLS_BUDGET = 20_000;
+/** 常驻 skill 全文注入的总字符预算（多 skill 共享，超限降级为名字清单）。
+ * 50k 依据（用户实测 2026-11-04）：真实 skill 的 SKILL.md 普遍 1.5~3 万字符
+ * （ai-novel-assistant 30.5k ≈ 1.6 万 token、workmate 14.8k ≈ 0.7 万 token），
+ * 旧的 20k 预算几乎必然降级——挂名 + "用 Skill 工具按需加载"的指示模型不会主动执行，
+ * 编排派发挂载的 skill 实际形同虚设。50k 可同时全文常驻两个真实 skill
+ * （约 2.2 万 token，request_prefix 通道 compact 不丢）；真正超大（>50k）的
+ * skill 仍走挂名降级，不无限吃上下文。 */
+const DEFAULT_PINNED_SKILLS_BUDGET = 50_000;
 
 interface PinnedSkillsSectionOptions {
   skills: readonly ResolvedPinnedSkill[];

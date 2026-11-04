@@ -19,6 +19,7 @@ import { resolveTaskFileTreeTargetFromTabs } from "@/lib/taskFileTreeTarget.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
 import { OrchestrationChildrenList, isChildRunning } from "@/OrchestrationChildrenList.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import { useOrchestrationPlans } from "@/hooks/useOrchestrationPlans.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
 import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
@@ -161,15 +162,15 @@ export function WorkspacePinnedTasksSection({
     );
   }, [remotePinnedItemsByWorkspaceKey, workspaceTabs]);
   const sortedItems = useMemo(() => {
-    return [...localItems, ...remoteItems]
-      // 置顶区按入口 tab 分流：编排 tab 只显示编排任务，普通 tab 排除编排任务。
-      // 置顶 membership 不区分 role（tasks-index 只有 pinned 列），过滤必须在视图层。
-      .filter((item) =>
-        orchestrationFilter === "only"
-          ? isOrchestrationTask(item)
-          : !isOrchestrationTask(item),
-      )
-      .sort((left, right) => compareZCodeTaskListItems(left, right, taskSortBy));
+    return (
+      [...localItems, ...remoteItems]
+        // 置顶区按入口 tab 分流：编排 tab 只显示编排任务，普通 tab 排除编排任务。
+        // 置顶 membership 不区分 role（tasks-index 只有 pinned 列），过滤必须在视图层。
+        .filter((item) =>
+          orchestrationFilter === "only" ? isOrchestrationTask(item) : !isOrchestrationTask(item),
+        )
+        .sort((left, right) => compareZCodeTaskListItems(left, right, taskSortBy))
+    );
   }, [localItems, orchestrationFilter, remoteItems, taskSortBy]);
   // 编排 tab 的置顶编排任务需要展示子任务：三桶并集索引（timeline + pinned + archived，
   // 各无 limit）——关联子任务可能已被置顶/归档/沉在深页，只用 timeline 条目建索引会
@@ -243,9 +244,10 @@ export function WorkspacePinnedTasksSection({
     .filter((item) => isOrchestrationTask(item))
     .map((item) => item.taskId)
     .join(",");
-  const [authoritativeLinksByParentId, setAuthoritativeLinksByParentId] = useState<
-    Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>> | null
-  >(null);
+  const [authoritativeLinksByParentId, setAuthoritativeLinksByParentId] = useState<Record<
+    string,
+    Array<{ childTaskId: string; kind: "derived" | "linked" }>
+  > | null>(null);
   useEffect(() => {
     if (orchestrationFilter !== "only" || orchestratorIdsKey.length === 0) {
       setAuthoritativeLinksByParentId(null);
@@ -274,8 +276,10 @@ export function WorkspacePinnedTasksSection({
         }
       }
       try {
-        const merged: Record<string, Array<{ childTaskId: string; kind: "derived" | "linked" }>> =
-          {};
+        const merged: Record<
+          string,
+          Array<{ childTaskId: string; kind: "derived" | "linked" }>
+        > = {};
         for (const group of orchestratorsByWorkspace.values()) {
           const services = group.workspaceIdentity
             ? getRemoteWorkspaceServicesForIdentity(group.workspaceIdentity)
@@ -299,6 +303,29 @@ export function WorkspacePinnedTasksSection({
   }, [baseServices, orchestrationFilter, orchestratorIdsKey, manualRefreshSerial, sortedItems]);
   // 子任务行执行指示的活流源（与编排分区同规则）：sessions-index meta phase 实时，
   // running 帧不落库，静态列表运行期间 status 停在 completed。
+  // 计划面板数据源（spec: orchestration-plan.md）：与 children-map 同款解析
+  // （本地 baseServices + 远端 identity 解析）。
+  const resolvePlanServices = useCallback(
+    (workspacePath: string, workspaceIdentity?: string) =>
+      (workspaceIdentity ? getRemoteWorkspaceServicesForIdentity(workspaceIdentity) : baseServices)
+        ?.zcodeTaskService,
+    [baseServices, getRemoteWorkspaceServicesForIdentity],
+  );
+  const { plansByParentId, createPlan, renamePlan, deletePlan } = useOrchestrationPlans({
+    enabled: orchestrationFilter === "only",
+    orchestrators: sortedItems,
+    resolvePlanServices,
+    refreshKey: manualRefreshSerial,
+  });
+  const [planActionTaskId, setPlanActionTaskId] = useState<string | null>(null);
+  const runPlanAction = useCallback(async (taskId: string, action: () => Promise<void>) => {
+    setPlanActionTaskId(taskId);
+    try {
+      await action();
+    } finally {
+      setPlanActionTaskId(null);
+    }
+  }, []);
   const { items: liveSessionItems } = useWorkspaceSessionsIndexItems(
     orchestrationFilter === "only"
       ? scopedWorkspaceTabs.map((tab) => ({
@@ -335,7 +362,8 @@ export function WorkspacePinnedTasksSection({
     for (const item of allItems) {
       const parentId = item.orchestrationParentTaskId?.trim();
       if (!parentId) continue;
-      const taskKey = buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) + ":" + item.taskId;
+      const taskKey =
+        buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) + ":" + item.taskId;
       if (seenTaskKeys.has(taskKey)) continue;
       seenTaskKeys.add(taskKey);
       const list = byParent.get(parentId);
@@ -354,8 +382,10 @@ export function WorkspacePinnedTasksSection({
     orchestrationFilter,
     orchestrationPinnedIndexItems,
   ]);
-  const { isCollapsed: isOrchestrationChildrenCollapsed, toggleCollapsed: toggleOrchestrationChildren } =
-    useOrchestrationChildrenCollapsed();
+  const {
+    isCollapsed: isOrchestrationChildrenCollapsed,
+    toggleCollapsed: toggleOrchestrationChildren,
+  } = useOrchestrationChildrenCollapsed();
   // 编排行的工作区显示名（tab.label）：置顶区同样跨 workspace 混排，与编排分区同规则；
   // 无 tab label 时退回 TaskListItem 默认末段名，悬停 title 始终是完整路径。
   const workspaceTabLabelByKey = useMemo(
@@ -829,7 +859,60 @@ export function WorkspacePinnedTasksSection({
                   {orchestrationChildrenByParentId && !orchestrationChildrenCollapsed ? (
                     <OrchestrationChildrenList
                       parentTaskId={item.taskId}
+                      parentWorkspacePath={item.workspacePath}
+                      {...(item.workspaceIdentity
+                        ? { parentWorkspaceIdentity: item.workspaceIdentity }
+                        : {})}
                       childTasks={orchestrationChildTasks}
+                      plansMap={plansByParentId?.[item.taskId] ?? null}
+                      planBusy={planActionTaskId === item.taskId}
+                      onCreatePlan={() => {
+                        void runPlanAction(item.taskId, () =>
+                          createPlan({
+                            orchestrationTaskId: item.taskId,
+
+                            workspacePath: item.workspacePath,
+
+                            ...(item.workspaceIdentity
+                              ? { workspaceIdentity: item.workspaceIdentity }
+                              : {}),
+
+                            title: intl.formatMessage({ id: "orchestration.plan.defaultNewTitle" }),
+                          }),
+                        );
+                      }}
+                      onRenamePlan={(planId, title) => {
+                        void runPlanAction(item.taskId, () =>
+                          renamePlan({
+                            orchestrationTaskId: item.taskId,
+
+                            workspacePath: item.workspacePath,
+
+                            ...(item.workspaceIdentity
+                              ? { workspaceIdentity: item.workspaceIdentity }
+                              : {}),
+
+                            planId,
+
+                            title,
+                          }),
+                        );
+                      }}
+                      onDeletePlan={(planId) => {
+                        void runPlanAction(item.taskId, () =>
+                          deletePlan({
+                            orchestrationTaskId: item.taskId,
+
+                            workspacePath: item.workspacePath,
+
+                            ...(item.workspaceIdentity
+                              ? { workspaceIdentity: item.workspaceIdentity }
+                              : {}),
+
+                            planId,
+                          }),
+                        );
+                      }}
                       onUnlinkTask={(childWorkspacePath, childTaskId, childWorkspaceIdentity) => {
                         unlinkOrchestrationChild({
                           orchestrationTaskId: item.taskId,

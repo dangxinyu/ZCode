@@ -57,7 +57,8 @@ export function useOrchestrationChildrenPinned(): {
   );
   void snapshot;
   const isChildPinned = useCallback(
-    (parentTaskId: string, childTaskId: string) => pinnedChildKeys.has(childKey(parentTaskId, childTaskId)),
+    (parentTaskId: string, childTaskId: string) =>
+      pinnedChildKeys.has(childKey(parentTaskId, childTaskId)),
     [],
   );
   const toggleChildPinned = useCallback((parentTaskId: string, childTaskId: string) => {

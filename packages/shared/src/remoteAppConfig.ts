@@ -75,4 +75,3 @@ export function getCommunityUrlFromConfigs(
   // 对应语言缺失时保持隐藏，避免中文和英文用户被导向错误渠道。
   return remoteUrls[locale] ?? localUrls[locale];
 }
-

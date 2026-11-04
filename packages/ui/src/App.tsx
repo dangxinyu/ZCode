@@ -6,6 +6,10 @@ import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
+import {
+  closeOrchestrationPlanPage,
+  registerOrchestrationTaskOpener,
+} from "@/lib/orchestrationPlanSync.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useGitRepository } from "@/hooks/useGitRepository.js";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard.js";
@@ -872,6 +876,21 @@ export function App({
     onNavigateToAutomations: handleNavigateToAutomationsMain,
     onNavigateToPluginStore: handleNavigateToPluginStoreMain,
   });
+  // 编排计划页的子任务跳转注册（计划页在 SessionPane 深处，经全局 opener 跳转）。
+  // 计划页随任务选中关闭（用户需求 2026-10-29：点左侧主任务名切回对话）。
+  const handleSelectTaskAndClosePlanPage = useCallback(
+    (selectWorkspacePath: string, selectTaskId: string, selectWorkspaceIdentity?: string) => {
+      closeOrchestrationPlanPage();
+      handleSelectTask(selectWorkspacePath, selectTaskId, selectWorkspaceIdentity);
+    },
+    [handleSelectTask],
+  );
+  // 编排计划页的子任务跳转注册（计划页在 SessionPane 深处，经全局 opener 跳转）。
+  useEffect(() => {
+    registerOrchestrationTaskOpener(handleSelectTaskAndClosePlanPage);
+    return () => registerOrchestrationTaskOpener(null);
+  }, [handleSelectTaskAndClosePlanPage]);
+
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
       // Workspace Marketplace 已收敛为全局入口。兼容旧事件中的 Workspace key，但返回
@@ -918,12 +937,12 @@ export function App({
           return;
         }
 
-        handleSelectTask(workspaceAbsPath, targetTaskId, workspaceIdentity);
+        handleSelectTaskAndClosePlanPage(workspaceAbsPath, targetTaskId, workspaceIdentity);
       });
     },
     [
       activeTaskId,
-      handleSelectTask,
+      handleSelectTaskAndClosePlanPage,
       runVisibleWorkspaceCommand,
       workspaceAbsPath,
       workspaceIdentity,
@@ -1113,7 +1132,7 @@ export function App({
         activeTaskChangeSummary={activeTaskChangeSummary}
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
-        onSelectTask={handleSelectTask}
+        onSelectTask={handleSelectTaskAndClosePlanPage}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />

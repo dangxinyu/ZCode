@@ -632,6 +632,5 @@ edges:
     to: runtime.pinned-skill-prefix-injection
     type: commits-via
     rank: must-inspect
-    condition:
-      Draft changes sync via the setPinnedSkills command or createSession.config; runtime
+    condition: Draft changes sync via the setPinnedSkills command or createSession.config; runtime
       resolves full SKILL.md content and injects it as a pinned_skill request-prefix attachment.

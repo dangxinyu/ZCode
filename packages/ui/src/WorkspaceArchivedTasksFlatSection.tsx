@@ -106,10 +106,7 @@ export function WorkspaceArchivedTasksFlatSection({
     }
     return items.filter((task) => !isOrchestrationTask(task));
   }, [items, orchestrationFilter]);
-  const visibleTotal = Math.max(
-    0,
-    total - (items.length - visibleItems.length),
-  );
+  const visibleTotal = Math.max(0, total - (items.length - visibleItems.length));
   const canToggleExpanded = visibleTotal > collapsedLimit;
 
   return (

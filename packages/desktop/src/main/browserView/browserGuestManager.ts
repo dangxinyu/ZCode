@@ -3180,9 +3180,7 @@ export class BrowserGuestManager {
     await this.sendGuestCdpCommandRaw(tab, guest, "Page.addScriptToEvaluateOnNewDocument", {
       source: buildUserScriptsBootstrap(entries),
     });
-    this.log?.(
-      `[browser-use] userscripts registered tabId=${tab.tabId} count=${entries.length}`,
-    );
+    this.log?.(`[browser-use] userscripts registered tabId=${tab.tabId} count=${entries.length}`);
   }
 
   /**

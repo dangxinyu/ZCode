@@ -132,6 +132,11 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { OrchestrationPlanPage } from "@/OrchestrationPlanPage.js";
+import {
+  closeOrchestrationPlanPage,
+  useOrchestrationPlanPageRequest,
+} from "@/lib/orchestrationPlanSync.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -1191,6 +1196,10 @@ export function SessionPane({
       store.getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource ===
       "orchestration",
   );
+  // 计划页视图（spec: orchestration-plan.md 用户需求点 3）：pageRequest 命中当前会话时
+  // 用计划页整体替换对话区（对话/计划来回切；关闭 = 回对话）。
+  const planPageRequest = useOrchestrationPlanPageRequest();
+  const showPlanPage = planPageRequest !== null && planPageRequest.sessionId === sessionId;
   const handleExternalTextInsertApplied = useCallback(
     (requestId: number) => {
       useZCodeSessionStore
@@ -2304,9 +2313,8 @@ export function SessionPane({
     // 编排任务入口的预热身份：draftCreateSource 在 startDraft 时写入 store，
     // 预热创建时读取（spec: orchestration-tasks.md）。
     resolveOrchestrationRole: () =>
-      useZCodeSessionStore
-        .getState()
-        .getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource === "orchestration"
+      useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+        .draftCreateSource === "orchestration"
         ? "orchestrator"
         : undefined,
   });
@@ -3424,7 +3432,10 @@ export function SessionPane({
           { skills: desiredPinned },
           { targetSessionId },
         );
-        if (!ack || !(ack.status === "accepted" || ack.status === "noop" || ack.status === "duplicate")) {
+        if (
+          !ack ||
+          !(ack.status === "accepted" || ack.status === "noop" || ack.status === "duplicate")
+        ) {
           logger.warn(
             `[v4-pane] setPinnedSkills 首发前未收敛: ${ack?.status ?? "missing-ack"} ${ack?.reasonCode ?? ""}`,
           );
@@ -3466,12 +3477,21 @@ export function SessionPane({
   // ── 常驻 skill：草稿名单 → runtime 同步（setPinnedSkills 命令，唯一 runtime 写路径）──
   // draft 是用户意图 owner；snapshot 投影是 runtime 回声。两者发散时按值补发一次命令，
   // 收敛（回声一致）后停止；会话内即时改选与 prewarm 首发前同步都走同一条路。
+  // 无意图护栏（bug 修复 2026-11-04，实测"派发注入 workmate 成功，21 秒后打开会话页
+  // 被本 effect 清成 cleared"）：composerDraft.pinnedSkills === undefined = 用户从未
+  // 表达过意图，不能拿"空 draft"当清除指令——否则编排派发注入的常驻名单会被
+  // "打开会话页"这个动作覆盖掉。无意图时以 runtime 回声为准，draft 由 useDraft
+  // ConfigControl 的 hydrate 补齐（chip 同步显示）；只有显式选择/清空才下发命令。
   const pinnedSkillsSyncRef = useRef<string | null>(null);
   const draftPinnedSkills = draftConfig.pinnedSkills ?? [];
   useEffect(() => {
     const targetSessionId = sessionId ?? prewarmSessionId;
     if (!targetSessionId) return;
     if (snapshotSessionId !== targetSessionId) return;
+    if (composerDraft.pinnedSkills === undefined) {
+      pinnedSkillsSyncRef.current = JSON.stringify(draftPinnedSkills);
+      return;
+    }
     const desiredKey = JSON.stringify(draftPinnedSkills);
     if (pinnedSkillsSyncRef.current === desiredKey) return;
     const projected = snapshotPinnedSkills ?? [];
@@ -3484,13 +3504,10 @@ export function SessionPane({
     }
     pinnedSkillsSyncRef.current = desiredKey;
     void configCommandBarrier.enqueue(() =>
-      dispatchConfigCas(
-        "setPinnedSkills",
-        { skills: draftPinnedSkills },
-        { targetSessionId },
-      ),
+      dispatchConfigCas("setPinnedSkills", { skills: draftPinnedSkills }, { targetSessionId }),
     );
   }, [
+    composerDraft.pinnedSkills,
     configCommandBarrier,
     dispatchConfigCas,
     draftPinnedSkills,
@@ -3499,7 +3516,6 @@ export function SessionPane({
     snapshotPinnedSkills,
     snapshotSessionId,
   ]);
-
 
   // Composer 选择表达“下一次提交”。点击只更新 renderer intent；Session Selection
   // 在 Submission 真正开跑（Guide 为下一次 model-step）时由 CLI/Core 更新。
@@ -4811,7 +4827,15 @@ export function SessionPane({
           </div>
         ) : null}
 
-        {errored ? (
+        {showPlanPage && sessionId ? (
+          <OrchestrationPlanPage
+            sessionId={sessionId}
+            workspacePath={workspacePath}
+            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+            focusPlanId={planPageRequest?.focusPlanId ?? null}
+            onBack={closeOrchestrationPlanPage}
+          />
+        ) : errored ? (
           <SessionSubscriptionErrorPanel
             error={state.lastError ?? intl.formatMessage({ id: "chat.error.connectionLost" })}
             sessionId={sessionId}

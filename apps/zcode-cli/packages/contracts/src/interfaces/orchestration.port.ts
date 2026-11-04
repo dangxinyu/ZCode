@@ -5,12 +5,18 @@
 // ============================================================
 
 import type {
+  BindPlanNodesInput,
+  BindPlanNodesOutput,
   LinkTaskInput,
   LinkTaskOutput,
   ListOrchestrationChildrenInput,
   ListOrchestrationChildrenOutput,
   ListWorkspaceTasksInput,
   ListWorkspaceTasksOutput,
+  MarkPlanNodesStaleInput,
+  MarkPlanNodesStaleOutput,
+  ProposeOrchestrationPlanInput,
+  ProposeOrchestrationPlanOutput,
   SendChildTaskPromptInput,
   SendChildTaskPromptOutput,
   SpawnSubTaskInput,
@@ -35,6 +41,18 @@ export interface OrchestrationPort {
     input: SendChildTaskPromptInput,
     context: OrchestrationTaskContext,
   ): Promise<SendChildTaskPromptOutput>;
+  /** 提交编排计划草案（spec: orchestration-plan.md）；active 计划修订或新建。 */
+  proposePlan(
+    input: ProposeOrchestrationPlanInput,
+    context: OrchestrationTaskContext,
+  ): Promise<ProposeOrchestrationPlanOutput>;
+  /** 微调变更传播：把修改节点的直接下游标 stale / 复核完成收敛（active 计划）。 */
+  markPlanNodesStale(
+    input: MarkPlanNodesStaleInput,
+    context: OrchestrationTaskContext,
+  ): Promise<MarkPlanNodesStaleOutput>;
+  /** 计划节点 ↔ 已关联子任务绑定/解绑（画布执行可见性的数据来源）。 */
+  bindPlanNodes(input: BindPlanNodesInput, context: OrchestrationTaskContext): Promise<BindPlanNodesOutput>;
   /** 列出当前编排任务的子任务及状态（含派生/关联 kind）。 */
   listChildren(
     input: ListOrchestrationChildrenInput,

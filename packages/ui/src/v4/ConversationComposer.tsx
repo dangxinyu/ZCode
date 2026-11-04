@@ -120,6 +120,7 @@ import {
 import { appendWorkspaceFileMentionToComposer } from "@/lib/workspaceFileComposer.js";
 import { resolveProviderBaseURL } from "@/lib/registryProviderView.js";
 import type { ModelSelectionView } from "@zcode/services";
+import { useOrchestrationPlanControl } from "@/hooks/useOrchestrationPlanControl.js";
 import type { ModelSelectionState } from "@/hooks/useModelSelectionView.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import {
@@ -154,7 +155,6 @@ import { useConversationSelectionReferences } from "@/v4/composer/useConversatio
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
 import { V4ComposerPinnedSkillEntry } from "@/v4/composer/V4ComposerPinnedSkillEntry.js";
-import { V4ComposerPinnedSkillChips } from "@/v4/composer/V4ComposerPinnedSkillChips.js";
 import { useSkills } from "@/hooks/useSkills.js";
 import {
   V4ComposerModeSwitch,
@@ -587,10 +587,6 @@ function ConversationComposerImpl({
     sessionId: skillCatalogSessionId,
     enabled: true,
   });
-  const pinnedAvailableSkillNames = useMemo(
-    () => new Set(pinnedCatalogSkills.map((skill) => skill.name)),
-    [pinnedCatalogSkills],
-  );
   const handleConfigPickerOpenChange = useCallback(
     (picker: V4ComposerConfigPicker, open: boolean) => {
       // composer 内容为导航 rail 恢复 pointer-events 后，三个 Radix modal
@@ -1725,29 +1721,18 @@ function ConversationComposerImpl({
       ),
     [composerAttachments],
   );
-  const composerPinnedSkills = draftConfig?.pinnedSkills ?? [];
   const topContentNode = useMemo(() => {
     if (
       composerAttachments.length === 0 &&
       codeCommentContexts.length === 0 &&
       webElementContexts.length === 0 &&
       pptxElementReferences.length === 0 &&
-      conversationSelectionReferences.length === 0 &&
-      composerPinnedSkills.length === 0
+      conversationSelectionReferences.length === 0
     ) {
       return null;
     }
     return (
       <div className="flex max-w-full flex-col items-start gap-2">
-        <V4ComposerPinnedSkillChips
-          pinnedSkills={composerPinnedSkills}
-          availableSkillNames={pinnedAvailableSkillNames}
-          disabled={disabled}
-          onRemoveSkill={(name) =>
-            handleSetPinnedSkills(composerPinnedSkills.filter((skill) => skill !== name))
-          }
-          onOpenPicker={() => handleConfigPickerOpenChange("pinnedSkill", true)}
-        />
         {composerAttachments.length > 0 ? (
           <Attachments
             variant="inline"
@@ -2063,11 +2048,6 @@ function ConversationComposerImpl({
     pptxElementReferences,
     onOpenCodeViewer,
     openPptxElementReference,
-    composerPinnedSkills,
-    pinnedAvailableSkillNames,
-    handleSetPinnedSkills,
-    handleConfigPickerOpenChange,
-    disabled,
   ]);
 
   // 发送/停止控制簇（对齐旧 ChatViewComposer.submitControlNode 结构：
@@ -2090,6 +2070,14 @@ function ConversationComposerImpl({
       }),
     [onSelectModel],
   );
+  // 编排主任务会话的工具栏计划开关（spec: orchestration-plan.md）；普通/子任务会话返回
+  // isOrchestrator=false，不渲染。
+  const orchestrationPlanControl = useOrchestrationPlanControl({
+    sessionId,
+    workspacePath,
+    ...(workspaceIdentity ? { workspaceIdentity } : {}),
+    draftOrchestration: draftMode && isOrchestrationDraft,
+  });
   const submitControlNode = useMemo(
     () => (
       <div className="flex min-w-0 items-center gap-1">
@@ -2116,6 +2104,7 @@ function ConversationComposerImpl({
             onSwitchMode={onSwitchMode}
             onRecoverCustomModelSelection={onRecoverCustomModelSelection}
             onSendCompressionCommand={onSendCompressionCommand}
+            orchestrationPlanControl={orchestrationPlanControl}
           />
         </span>
         {showStopControl ? (
@@ -2157,6 +2146,7 @@ function ConversationComposerImpl({
     ),
     [
       canSend,
+      orchestrationPlanControl,
       activeConfigPicker,
       composerPhase,
       composerUsage,
@@ -2207,6 +2197,9 @@ function ConversationComposerImpl({
           activeConfigPicker={activeConfigPicker}
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
+          // 编排主任务一律隐藏内置「计划模式」（用户需求 2026-10-30：与 CLI 结构性
+          // 不注册 EnterPlanMode 对齐——编排有自己的计划机制，开关状态无关）。
+          hidePlanMode={orchestrationPlanControl.isOrchestrator}
         />
         {/* 附件画廊重构曾整段覆盖 leadingActions，误删 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
@@ -2243,6 +2236,7 @@ function ConversationComposerImpl({
       backgroundWorkOpenTarget,
       onOpenRunningBackgroundWorks,
       onSwitchMode,
+      orchestrationPlanControl.isOrchestrator,
       provider,
       remoteSessionId,
       runningSubagentCount,
@@ -2271,7 +2265,7 @@ function ConversationComposerImpl({
       style={isBlockedByInteraction ? { display: "none" } : undefined}
       className={cn(
         "chat-composer-region z-20 w-full shrink-0 @container/composer",
-        centered && "max-w-2xl",
+        centered && "max-w-3xl",
       )}
     >
       {/* 旧 ChatViewComposer 同款隐藏 file input（web/无 native picker 平台回退）。 */}

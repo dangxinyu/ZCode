@@ -198,7 +198,10 @@ export class ContextBuilder {
     ) {
       const pinnedSkillsSection = buildPinnedSkillsSection({
         skills: this.config.pinnedSkills,
-        budget: this.config.skillMetadataBudget,
+        // 预算不传 = 用 section 自己的 DEFAULT_PINNED_SKILLS_BUDGET（50k，2026-11-04 实测
+        // 上调）。此前复用 skills.metadataBudget（listing 元数据截断预算，默认 20k）——
+        // 真实 skill 1.5~3 万字符必然降级挂名，编排派发挂载形同虚设；两者语义不同，
+        // 不该共用一个配置。
       });
       if (pinnedSkillsSection) {
         sections.push(pinnedSkillsSection);

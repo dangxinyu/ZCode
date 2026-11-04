@@ -84,6 +84,8 @@ export interface ZCodeTaskIndexTerminalEvent {
   target: ZCodeAgentSessionTarget;
   /** v4 phase 终态映射：completedSuccess/completedInterrupted → turn.completed；error → turn.failed。 */
   kind: "turn.completed" | "turn.failed";
+  /** 手动停止/中断的收口（phase=completedInterrupted）：编排节点按失败（红色）处理。 */
+  interrupted: boolean;
 }
 
 export interface ZCodeTaskIndexReadyEvent {
@@ -557,6 +559,8 @@ export function createZCodeTaskIndexSyncer(
     terminalEventEmitter.fire({
       target,
       kind: failed ? "turn.failed" : "turn.completed",
+      // 手动停止（用户需求 2026-11-04）：中断收口也是 completed，但不该被当成成功。
+      interrupted: phase === "completedInterrupted",
     });
     readyEventEmitter.fire({
       target,

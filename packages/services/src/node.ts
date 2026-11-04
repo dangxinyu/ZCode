@@ -349,6 +349,10 @@ import {
   createOrchestrationTaskService,
   type IOrchestrationTaskService,
 } from "./zcode-agent/orchestrationTaskService.js";
+import {
+  createOrchestrationPlanService,
+  type IOrchestrationPlanService,
+} from "./zcode-agent/orchestrationPlanService.js";
 import { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 import { createZCodeTaskIndexSyncer } from "./zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
@@ -2085,10 +2089,14 @@ export function createLocalServices(options: {
           resolveOffPeakClientConfig: () => codingPlanSubscriptionService.getOffPeakClientConfig(),
           resolveOffPeakTaskService: () => offPeakTaskServiceForAgent,
         };
+  const orchestrationPlanServiceHolder: { current: IOrchestrationPlanService | undefined } = {
+    current: undefined,
+  };
   // 编排任务在本地与 desktop-attached-remote Host 上都可用：关系落 tasks-index（host 本地），
   // 子任务创建走本 host 的 zcodeTaskService，与 workspace 远近无关。
   const orchestrationToolWiring = {
     resolveOrchestrationTaskService: () => orchestrationTaskServiceForAgent,
+    resolveOrchestrationPlanService: () => orchestrationPlanServiceHolder.current,
   };
   const zcodeAgentService = createZCodeAgentService({
     ...(agentAccountProviderConfigSource
@@ -2344,8 +2352,9 @@ export function createLocalServices(options: {
     taskIndexSyncer: zcodeTaskIndexSyncer,
     settingService,
     cuaProductMcpServerResolver,
-    // 编排服务晚于 adapter 创建，经前向 holder 晚期引用（取消关联透传用）。
+    // 编排服务晚于 adapter 创建，经前向 holder 晚期引用（取消关联/取消透传用）。
     resolveOrchestrationTaskService: () => orchestrationTaskServiceForAgent,
+    resolveOrchestrationPlanService: () => orchestrationPlanServiceHolder.current,
   });
   // 编排任务服务（spec: orchestration-tasks.md）：spawn/link 的关系写入路径唯一。
   // 在 zcodeAgentService 之后创建，经前向 holder 供 orchestration/* 反向请求 handler 使用。
@@ -2353,8 +2362,22 @@ export function createLocalServices(options: {
     taskService: zcodeTaskService,
     taskIndexRepo,
     zcodeAgentService,
+    // 计划门晚绑定（spec: orchestration-plan.md）：plan service 在本服务之后创建。
+    resolveOrchestrationPlanService: () => orchestrationPlanServiceHolder.current,
   });
   orchestrationTaskServiceForAgent = orchestrationTaskService;
+  // 编排计划服务（spec: orchestration-plan.md）：可选计划模式——提案/确认/开关的
+  // 事实所有者（tasks-index orchestration_plans）。agent 服务与 task adapter 的
+  // resolver 同样晚绑定（装配顺序解耦）。
+  const orchestrationPlanService = createOrchestrationPlanService({
+    taskIndexRepo,
+    zcodeAgentService,
+    // 注入选型的 registry 校验面（用户需求 2026-10-30：快照/meta 历史值可能整体失效）。
+    modelSelectionService: providerRuntime.modelSelection,
+    // 计划变更广播（画布/列表实时跟随 agent 侧变更）。
+    broadcastService,
+  });
+  orchestrationPlanServiceHolder.current = orchestrationPlanService;
   // 启动恢复（spec）：持久化的终态通知意图接管——停机期间到达的子任务终态补投、
   // 未终态的按原水位线重新武装。内部逐行兜错不抛出，不阻塞服务装配。
   void orchestrationTaskService.recoverPendingChildNotifications();

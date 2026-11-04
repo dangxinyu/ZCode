@@ -6,6 +6,7 @@ import type { ZCodeTaskMeta } from "@zcode/shared";
 import { isOrchestrationTask } from "@zcode/shared";
 import { OrchestrationChildrenList, isChildRunning } from "@/OrchestrationChildrenList.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import { useOrchestrationPlans } from "@/hooks/useOrchestrationPlans.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
 import { useOrchestrationWorkspaceGroupsCollapsed } from "@/lib/orchestrationWorkspaceGroupsCollapse.js";
 import { toast } from "@/components/ui/toast.js";
@@ -366,6 +367,34 @@ export function WorkspaceTimelineTasksSection({
   // 子任务行执行指示的活流源：sessions-index 聚合 meta（phase 实时、响应式）。
   // syncer 对 running 帧不落库不广播（processSummary 只处理终态/标题），静态列表
   // 在子任务运行期间 status 停在 completed——下拉的转圈必须以这里的活流 meta 为准。
+  // 计划面板数据源（spec: orchestration-plan.md）：与 children-map 同款分组拉取，
+  // 手动刷新串号驱动重拉；开关/确认后本地回填即时生效。
+  const resolvePlanServices = useCallback(
+    (workspacePath: string, workspaceIdentity?: string) =>
+      workspaceServiceLookup.get(buildTaskWorkspaceKey(workspacePath, workspaceIdentity))?.services
+        .zcodeTaskService,
+    [workspaceServiceLookup],
+  );
+  const { plansByParentId, createPlan, renamePlan, deletePlan } = useOrchestrationPlans({
+    enabled: orchestrationOnly,
+    orchestrators: sortedItems,
+    resolvePlanServices,
+    refreshKey: manualRefreshSerial,
+  });
+  const [planActionTaskId, setPlanActionTaskId] = useState<string | null>(null);
+  const runPlanAction = useCallback(async (taskId: string, action: () => Promise<void>) => {
+    setPlanActionTaskId(taskId);
+    try {
+      await action();
+    } catch (error) {
+      logger.warn("[WorkspaceTimelineTasksSection] plan action failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        taskId,
+      });
+    } finally {
+      setPlanActionTaskId(null);
+    }
+  }, []);
   const { items: liveSessionItems } = useWorkspaceSessionsIndexItems(
     orchestrationOnly
       ? scopedWorkspaceTabs.map((tab) => ({
@@ -1127,7 +1156,62 @@ export function WorkspaceTimelineTasksSection({
                             {orchestrationChildrenByParentId && !orchestrationChildrenCollapsed ? (
                               <OrchestrationChildrenList
                                 parentTaskId={item.taskId}
+                                parentWorkspacePath={item.workspacePath}
+                                {...(item.workspaceIdentity
+                                  ? { parentWorkspaceIdentity: item.workspaceIdentity }
+                                  : {})}
                                 childTasks={orchestrationChildTasks}
+                                plansMap={plansByParentId?.[item.taskId] ?? null}
+                                planBusy={planActionTaskId === item.taskId}
+                                onCreatePlan={() => {
+                                  void runPlanAction(item.taskId, () =>
+                                    createPlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      title: intl.formatMessage({
+                                        id: "orchestration.plan.defaultNewTitle",
+                                      }),
+                                    }),
+                                  );
+                                }}
+                                onRenamePlan={(planId, title) => {
+                                  void runPlanAction(item.taskId, () =>
+                                    renamePlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      planId,
+
+                                      title,
+                                    }),
+                                  );
+                                }}
+                                onDeletePlan={(planId) => {
+                                  void runPlanAction(item.taskId, () =>
+                                    deletePlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      planId,
+                                    }),
+                                  );
+                                }}
                                 onUnlinkTask={(
                                   childWorkspacePath,
                                   childTaskId,

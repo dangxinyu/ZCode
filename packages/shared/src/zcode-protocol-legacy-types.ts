@@ -14,11 +14,16 @@ const timestampMsSchema = z.number().int().nonnegative();
 export const zcodeDeliveryKindSchema = z.enum(["desktop-continuous", "web-remote-replayable"]);
 export const zcodeMessageVisibilitySchema = z.enum(["user-visible", "model-only"]);
 export const zcodeSyntheticUserMessageSourceSchema = z.enum([
+  // 前向兼容（bug 修复 2026-11-03）：子会话历史可能由更新版本 App 写入（同机共用 ~/.zcode），
+  // 词表缺少新值会让冷恢复 readSession/resume 整段校验失败、给该子任务的首发必败
+  // （实测 agent_listing_delta）。与安装版协议枚举对齐，contracts 词表同步。
+  "agent_listing_delta",
   "background_task",
   "fork",
   "goal_state_change",
   "goal-continuation",
   "plugin_reference",
+  "bot_topic_context",
   "rewind",
   "selection_side_chat",
   "subagent",
@@ -214,45 +219,43 @@ export const zcodeMessageSemanticsSchema = z
     transcriptVisibility: z.enum(["visible", "hidden"]),
   })
   .strict();
-export const zcodeUserMessageInfoSchema = z
-  .object({
-    messageId: nonEmptyString,
-    sessionId: nonEmptyString,
-    role: z.literal("user"),
-    time: messageTimeSchema,
-    agent: nonEmptyString,
-    // 旧消息或未绑定会话的合成消息可能没有请求来源；不借默认模型补写。
-    model: modelSelectionSchema.optional(),
-    system: z.string().optional(),
-    tools: z.record(z.string(), z.boolean()).optional(),
-    synthetic: z.boolean().optional(),
-    source: zcodeSyntheticUserMessageSourceSchema.optional(),
-    visibility: zcodeMessageVisibilitySchema.optional(),
-    semantics: zcodeMessageSemanticsSchema.optional(),
-    metadata: jsonObjectSchema.optional(),
-  });
-export const zcodeAssistantMessageInfoSchema = z
-  .object({
-    messageId: nonEmptyString,
-    sessionId: nonEmptyString,
-    role: z.literal("assistant"),
-    time: messageTimeSchema,
-    parentMessageId: nonEmptyString,
-    agent: nonEmptyString,
-    model: modelSelectionSchema.optional(),
-    path: z
-      .object({
-        cwd: nonEmptyString,
-        root: nonEmptyString,
-      })
-      .strict(),
-    cost: z.number().nonnegative(),
-    tokens: zcodeTokenUsageSchema,
-    finish: z.string().optional(),
-    error: jsonObjectSchema.optional(),
-    semantics: zcodeMessageSemanticsSchema.optional(),
-    structured: z.unknown().optional(),
-  });
+export const zcodeUserMessageInfoSchema = z.object({
+  messageId: nonEmptyString,
+  sessionId: nonEmptyString,
+  role: z.literal("user"),
+  time: messageTimeSchema,
+  agent: nonEmptyString,
+  // 旧消息或未绑定会话的合成消息可能没有请求来源；不借默认模型补写。
+  model: modelSelectionSchema.optional(),
+  system: z.string().optional(),
+  tools: z.record(z.string(), z.boolean()).optional(),
+  synthetic: z.boolean().optional(),
+  source: zcodeSyntheticUserMessageSourceSchema.optional(),
+  visibility: zcodeMessageVisibilitySchema.optional(),
+  semantics: zcodeMessageSemanticsSchema.optional(),
+  metadata: jsonObjectSchema.optional(),
+});
+export const zcodeAssistantMessageInfoSchema = z.object({
+  messageId: nonEmptyString,
+  sessionId: nonEmptyString,
+  role: z.literal("assistant"),
+  time: messageTimeSchema,
+  parentMessageId: nonEmptyString,
+  agent: nonEmptyString,
+  model: modelSelectionSchema.optional(),
+  path: z
+    .object({
+      cwd: nonEmptyString,
+      root: nonEmptyString,
+    })
+    .strict(),
+  cost: z.number().nonnegative(),
+  tokens: zcodeTokenUsageSchema,
+  finish: z.string().optional(),
+  error: jsonObjectSchema.optional(),
+  semantics: zcodeMessageSemanticsSchema.optional(),
+  structured: z.unknown().optional(),
+});
 export const zcodeMessageInfoSchema = z.discriminatedUnion("role", [
   zcodeUserMessageInfoSchema,
   zcodeAssistantMessageInfoSchema,
@@ -311,54 +314,48 @@ const zcodeTimelinePartTimeSchema = z
     end: timestampMsSchema.optional(),
   })
   .strict();
-export const zcodeTimelinePartSchema = partBaseSchema
-  .extend({
-    type: z.literal("timeline"),
-    timelineType: z.enum([
-      "context_compaction",
-      "goal_verification",
-      "session_fork",
-      "model_change",
-    ]),
-    display: z.enum(["separator", "worklog"]),
-    status: z.string().optional(),
-    anchorMessageId: nonEmptyString.optional(),
-    anchorTurnId: nonEmptyString.optional(),
-    time: zcodeTimelinePartTimeSchema.optional(),
-    operationId: z.string().optional(),
-    trigger: z.enum(["manual", "auto", "partial", "reactive", "session_memory"]).optional(),
-    phase: z.enum(["standalone_turn", "pre_request", "mid_turn", "reactive"]).optional(),
-    compactReason: z.string().optional(),
-    boundaryId: z.string().optional(),
-    summaryMessageId: nonEmptyString.optional(),
-    preCompactTokenCount: z.number().int().nonnegative().optional(),
-    postCompactTokenCount: z.number().int().nonnegative().optional(),
-    truePostCompactTokenCount: z.number().int().nonnegative().optional(),
-    attempt: z.number().int().nonnegative().optional(),
-    maxAttempts: z.number().int().nonnegative().optional(),
-    reason: z.string().optional(),
-    targetId: z.string().optional(),
-    verificationId: z.string().optional(),
-    goalIteration: z.number().int().nonnegative().optional(),
-    verification: z
-      .object({
-        passed: z.boolean(),
-        reason: z.string(),
-        nextAction: z.string().nullable().optional(),
-      })
-      .strict()
-      .optional(),
-    parentSessionId: nonEmptyString.optional(),
-    targetMessageId: nonEmptyString.optional(),
-    targetCheckpointId: z.string().optional(),
-    restoredFileCount: z.number().int().nonnegative().optional(),
-    fromModel: zcodeTimelineModelSelectionSchema.optional(),
-    toModel: zcodeTimelineModelSelectionSchema
-      .extend({
-        label: nonEmptyString,
-      })
-      .optional(),
-  });
+export const zcodeTimelinePartSchema = partBaseSchema.extend({
+  type: z.literal("timeline"),
+  timelineType: z.enum(["context_compaction", "goal_verification", "session_fork", "model_change"]),
+  display: z.enum(["separator", "worklog"]),
+  status: z.string().optional(),
+  anchorMessageId: nonEmptyString.optional(),
+  anchorTurnId: nonEmptyString.optional(),
+  time: zcodeTimelinePartTimeSchema.optional(),
+  operationId: z.string().optional(),
+  trigger: z.enum(["manual", "auto", "partial", "reactive", "session_memory"]).optional(),
+  phase: z.enum(["standalone_turn", "pre_request", "mid_turn", "reactive"]).optional(),
+  compactReason: z.string().optional(),
+  boundaryId: z.string().optional(),
+  summaryMessageId: nonEmptyString.optional(),
+  preCompactTokenCount: z.number().int().nonnegative().optional(),
+  postCompactTokenCount: z.number().int().nonnegative().optional(),
+  truePostCompactTokenCount: z.number().int().nonnegative().optional(),
+  attempt: z.number().int().nonnegative().optional(),
+  maxAttempts: z.number().int().nonnegative().optional(),
+  reason: z.string().optional(),
+  targetId: z.string().optional(),
+  verificationId: z.string().optional(),
+  goalIteration: z.number().int().nonnegative().optional(),
+  verification: z
+    .object({
+      passed: z.boolean(),
+      reason: z.string(),
+      nextAction: z.string().nullable().optional(),
+    })
+    .strict()
+    .optional(),
+  parentSessionId: nonEmptyString.optional(),
+  targetMessageId: nonEmptyString.optional(),
+  targetCheckpointId: z.string().optional(),
+  restoredFileCount: z.number().int().nonnegative().optional(),
+  fromModel: zcodeTimelineModelSelectionSchema.optional(),
+  toModel: zcodeTimelineModelSelectionSchema
+    .extend({
+      label: nonEmptyString,
+    })
+    .optional(),
+});
 // ---------------------------------------------------------------------------
 // 消息 part/info schema 的宽松化说明：这组 schema 只用于解析 CLI → host 的
 // 响应/事件负载（sessionRead 快照、sessionMessages、part_upserted 事件），

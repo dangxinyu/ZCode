@@ -24,7 +24,9 @@ export function resolveUserScriptsDir(): string {
 }
 
 /** 读取并解析 userscripts 目录；目录缺失/为空返回 undefined（功能未启用）。 */
-export async function loadUserScriptEntries(log?: (message: string) => void): Promise<UserScriptEntry[] | undefined> {
+export async function loadUserScriptEntries(
+  log?: (message: string) => void,
+): Promise<UserScriptEntry[] | undefined> {
   const dir = resolveUserScriptsDir();
   let files: string[];
   try {

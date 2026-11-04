@@ -1,19 +1,24 @@
 /**
- * 常驻 skill 输入框入口按钮 + 搜索选择菜单。
+ * 常驻 skill 输入框入口按钮 + 搜索选择菜单（单选）。
  *
- * 展示件：名单真值在 composer draft（draftConfig.pinnedSkills），菜单点击只改草稿意图；
- * 会话内改动由宿主（SessionPane）另发 setPinnedSkills 命令同步 runtime。名单失效
- * （skill 被删/改名/禁用）时按当前 catalog 派生展示态，不自动改写用户名单。
+ * 触发器直接显示当前选中的 skill 名（未选时显示「常驻 Skill」占位），不再有独立
+ * chips 行与计数。名单真值在 composer draft（draftConfig.pinnedSkills，0/1 个元素），
+ * 菜单点击只改草稿意图；会话内改动由宿主（SessionPane）另发 setPinnedSkills 命令
+ * 同步 runtime。选中的 skill 失效（被删/改名/禁用）时按当前 catalog 派生展示态，
+ * 不自动改写用户名单。
  */
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { CheckIcon, PinIcon } from "lucide-react";
-import {
-  TID_V4_COMPOSER_PINNED_SKILL_ENTRY,
-  TID_V4_COMPOSER_INPUT,
-  testId,
-} from "@zcode/shared";
+import { TID_V4_COMPOSER_PINNED_SKILL_ENTRY, TID_V4_COMPOSER_INPUT, testId } from "@zcode/shared";
 import type { ZCodeSkillReferenceCatalogEntry } from "@zcode/shared";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command.js";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command.js";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -52,33 +57,29 @@ function V4ComposerPinnedSkillEntryImpl({
   onSetPinnedSkills,
 }: V4ComposerPinnedSkillEntryProps) {
   const { intl } = useZCodeIntl();
-  const [query, setQuery] = useState("");
-  const pinned = draftConfig?.pinnedSkills ?? [];
+  // 单选语义：名单最多一个元素（协议仍为 array，UI 约束长度 ≤1，兼容旧多选草稿取第一个）。
+  const selected = draftConfig?.pinnedSkills?.[0];
+  const catalogNames = useMemo(() => new Set(skills.map((skill) => skill.name)), [skills]);
+  const selectedUnavailable = selected !== undefined && !catalogNames.has(selected);
   const isOpen = activeConfigPicker === "pinnedSkill";
-  const catalogNames = useMemo(
-    () => new Set(skills.map((skill) => skill.name)),
-    [skills],
-  );
-  // 名单内但 catalog 已没有的项：保留展示（可取消勾选），标注失效态。
-  const unavailablePinned = pinned.filter((name) => !catalogNames.has(name));
-  const label = intl.formatMessage({ id: "chat.toolbar.pinnedSkill.label" });
+  const placeholderLabel = intl.formatMessage({ id: "chat.toolbar.pinnedSkill.label" });
 
-  const togglePinned = (name: string, next: boolean) => {
-    onSetPinnedSkills(
-      next ? [...pinned, name] : pinned.filter((pinnedName) => pinnedName !== name),
-    );
+  const togglePinned = (name: string) => {
+    // 再点已选项 = 取消；点其他项 = 替换。
+    onSetPinnedSkills(selected === name ? [] : [name]);
   };
 
   return (
-    <Popover
-      open={isOpen}
-      onOpenChange={(open) => {
-        if (!open) setQuery("");
-        onConfigPickerOpenChange("pinnedSkill", open);
-      }}
-    >
+    <Popover open={isOpen} onOpenChange={(open) => onConfigPickerOpenChange("pinnedSkill", open)}>
       <ControlHintTooltip
-        title={intl.formatMessage({ id: "chat.toolbar.pinnedSkill.tooltip" })}
+        title={
+          selected !== undefined
+            ? intl.formatMessage(
+                { id: "chat.toolbar.pinnedSkill.tooltipSelected" },
+                { name: selected },
+              )
+            : intl.formatMessage({ id: "chat.toolbar.pinnedSkill.tooltip" })
+        }
         open={isOpen ? false : undefined}
       >
         <PopoverTrigger asChild>
@@ -89,19 +90,23 @@ function V4ComposerPinnedSkillEntryImpl({
             disabled={disabled}
             data-testid={TID_V4_COMPOSER_PINNED_SKILL_ENTRY}
             data-composer-collapse-priority="2"
-            data-pinned-count={pinned.length}
-            aria-label={label}
+            data-pinned-skill={selected ?? ""}
+            aria-label={selected ?? placeholderLabel}
             className={cn(
               "group/pinned size-7 gap-1 rounded-lg p-0 text-ui-base @xl/composer:w-auto @xl/composer:px-2 data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0",
-              pinned.length > 0 && "text-brand hover:text-brand",
+              selected !== undefined && !selectedUnavailable && "text-brand hover:text-brand",
+              selectedUnavailable && "text-warning hover:text-warning",
             )}
           >
             <PinIcon className="size-4 shrink-0" />
-            {/* 触发器必须带文字：仅图标无法表达「常驻 Skill」语义；有 pin 时追加数量。
-                不挂容器断点折叠——用户明确要求文字常显。 */}
-            <span className="max-w-40 truncate whitespace-nowrap">
-              {label}
-              {pinned.length > 0 ? ` · ${pinned.length}` : ""}
+            {/* 触发器显示当前选中 skill 名；未选时显示占位文案。不挂容器断点折叠。 */}
+            <span
+              className={cn(
+                "max-w-40 truncate whitespace-nowrap",
+                selectedUnavailable && "text-warning",
+              )}
+            >
+              {selected ?? placeholderLabel}
             </span>
           </Button>
         </PopoverTrigger>
@@ -120,18 +125,11 @@ function V4ComposerPinnedSkillEntryImpl({
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (isCoarseTouchDevice()) return;
-          document
-            .querySelector<HTMLElement>(`[data-testid="${TID_V4_COMPOSER_INPUT}"]`)
-            ?.focus();
+          document.querySelector<HTMLElement>(`[data-testid="${TID_V4_COMPOSER_INPUT}"]`)?.focus();
         }}
       >
-        <Command
-          className="bg-transparent p-0 text-foreground"
-          filter={pinnedSkillSearchFilter}
-        >
+        <Command className="bg-transparent p-0 text-foreground" filter={pinnedSkillSearchFilter}>
           <CommandInput
-            value={query}
-            onValueChange={setQuery}
             placeholder={intl.formatMessage({ id: "chat.toolbar.pinnedSkill.searchPlaceholder" })}
             className="h-8"
           />
@@ -143,7 +141,7 @@ function V4ComposerPinnedSkillEntryImpl({
             </CommandEmpty>
             <CommandGroup className="p-1">
               {skills.map((skill) => {
-                const checked = pinned.includes(skill.name);
+                const checked = selected === skill.name;
                 return (
                   <CommandItem
                     key={skill.id}
@@ -153,7 +151,7 @@ function V4ComposerPinnedSkillEntryImpl({
                     disabled={disabled}
                     data-testid={testId(TID_V4_COMPOSER_PINNED_SKILL_ENTRY, skill.name)}
                     className="items-start gap-2.5 rounded-lg px-2.5 py-2 text-ui-base"
-                    onSelect={() => togglePinned(skill.name, !checked)}
+                    onSelect={() => togglePinned(skill.name)}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-ui-base font-medium text-foreground">
@@ -176,27 +174,28 @@ function V4ComposerPinnedSkillEntryImpl({
                 );
               })}
             </CommandGroup>
-            {unavailablePinned.length > 0 && (
+            {selectedUnavailable && (
               <CommandGroup
                 heading={intl.formatMessage({ id: "chat.toolbar.pinnedSkill.unavailableGroup" })}
                 className="p-1 **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-1.5 **:[[cmdk-group-heading]]:text-ui-sm **:[[cmdk-group-heading]]:text-foreground-subtle"
               >
-                {unavailablePinned.map((name) => (
-                  <CommandItem
-                    key={`unavailable:${name}`}
-                    value={name}
-                    data-testid={testId(TID_V4_COMPOSER_PINNED_SKILL_ENTRY, `unavailable:${name}`)}
-                    className="items-start gap-2.5 rounded-lg px-2.5 py-2 text-ui-base"
-                    onSelect={() => togglePinned(name, false)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-ui-base font-medium text-warning">{name}</div>
-                      <div className="truncate pt-0.5 text-ui-sm text-foreground-subtle">
-                        {intl.formatMessage({ id: "chat.toolbar.pinnedSkill.unavailable" })}
-                      </div>
+                <CommandItem
+                  value={selected}
+                  data-testid={testId(
+                    TID_V4_COMPOSER_PINNED_SKILL_ENTRY,
+                    `unavailable:${selected}`,
+                  )}
+                  className="items-start gap-2.5 rounded-lg px-2.5 py-2 text-ui-base"
+                  onSelect={() => togglePinned(selected)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-ui-base font-medium text-warning">{selected}</div>
+                    <div className="truncate pt-0.5 text-ui-sm text-foreground-subtle">
+                      {intl.formatMessage({ id: "chat.toolbar.pinnedSkill.unavailable" })}
                     </div>
-                  </CommandItem>
-                ))}
+                  </div>
+                  <CheckIcon className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                </CommandItem>
               </CommandGroup>
             )}
           </CommandList>

@@ -8,16 +8,16 @@
 
 1. 约定目录 `{zcodeDataRoot}/userscripts/`（默认 `~/.zcode/userscripts/`，随 dataBaseDir 覆盖）下放置 `*.user.js` 文件即启用；目录不存在或为空 = 功能关闭，零开销。
 2. 解析 `==UserScript==` 元数据的 `@match` / `@include`（`/regex/flags` 字面量按正则，其余按 glob 转 正则）；`@run-at` 统一按 document-start 执行（本特性面向开发助手，绝大多数脚本声明就是 document-start）。
-3. 命中 URL 的脚本正文在页面上下文执行（`@grant none` 语义：无 GM_* API，v1 不提供 shim）。
+3. 命中 URL 的脚本正文在页面上下文执行（`@grant none` 语义：无 GM\_\* API，v1 不提供 shim）。
 4. 脚本读取发生在每次 guest CDP 会话建立时（初始 attach 与崩溃/换壳后的会话恢复），编辑脚本文件后无需重启应用——下一次新标签页/恢复即生效；已加载页需手动刷新。
 5. 单个脚本解析/执行失败只 warn 日志并跳过，不得影响 guest 与其他脚本。
 
 ## 状态所有者与事件顺序
 
-| 状态 | 所有者 | 说明 |
-| --- | --- | --- |
-| 脚本文件与元数据 | `{zcodeDataRoot}/userscripts/`（用户文件系统） | 唯一事实源，进程内不做缓存 |
-| 注入状态 | Chromium 的 CDP session（`Page.addScriptToEvaluateOnNewDocument`） | 会话级：guest 崩溃/换壳后随会话恢复流程重放 |
+| 状态             | 所有者                                                             | 说明                                        |
+| ---------------- | ------------------------------------------------------------------ | ------------------------------------------- |
+| 脚本文件与元数据 | `{zcodeDataRoot}/userscripts/`（用户文件系统）                     | 唯一事实源，进程内不做缓存                  |
+| 注入状态         | Chromium 的 CDP session（`Page.addScriptToEvaluateOnNewDocument`） | 会话级：guest 崩溃/换壳后随会话恢复流程重放 |
 
 ```
 guest attach（setupDialogTracking）
