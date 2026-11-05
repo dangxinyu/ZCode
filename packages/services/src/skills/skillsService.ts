@@ -586,6 +586,9 @@ async function writeSkillEnabledMap(next: Record<string, boolean>): Promise<void
 interface SkillRootDescriptor {
   scope: SkillScope;
   rootPath: string;
+  /** 目录来源（对齐 CLI contracts SkillSource）：同名解析只对 "agents" 来源生效，
+   * plugin 等其余来源不参与覆盖（spec: packages/services/specs/skills.md）。 */
+  source?: "zcode" | "agents";
   pluginName?: string;
   pluginId?: string;
 }
@@ -849,6 +852,7 @@ async function discoverSkills(params: {
   const roots: SkillRootDescriptor[] = workspaceRoots.map((rootPath) => ({
     scope: "workspace" as const,
     rootPath,
+    source: rootPath.endsWith(join(".agents", "skills")) ? ("agents" as const) : ("zcode" as const),
   }));
   if (params.includeUserSkills) {
     // 用户级技能是全局资源，`.zcode/skills` 里只要存在一个技能就截断
@@ -856,10 +860,12 @@ async function discoverSkills(params: {
     roots.push({
       scope: "user" as const,
       rootPath: getUserZcodeSkillRoot(),
+      source: "zcode" as const,
     });
     roots.push({
       scope: "user" as const,
       rootPath: getUserAgentsSkillRoot(),
+      source: "agents" as const,
     });
   }
   roots.push(...(await resolvePluginSkillRootDescriptors()));
@@ -867,6 +873,9 @@ async function discoverSkills(params: {
   const diagnostics: SkillDiagnostic[] = [];
   const skills: SkillSummary[] = [];
   const seenSkillPaths = new Set<string>();
+  // 同 scope 内已被 zcode 来源根收录的技能名 key（trim + 小写）：agents 来源的同名
+  // vendored 副本据此跳过（spec: packages/services/specs/skills.md）。
+  const zcodeNameKeysByScope = new Map<string, Set<string>>();
   const userZcodeSkillNameKeys = params.includeUserSkills
     ? await collectSkillNameKeysInRoot(getUserZcodeSkillRoot())
     : new Set<string>();
@@ -928,6 +937,26 @@ async function discoverSkills(params: {
           path: skillPath,
         });
         continue;
+      }
+
+      // 同名解析（用户需求 2026-11-05"skill 重复只要 .zcode 的"；spec: skills.md）：
+      // 同 scope 内同名已被 zcode 来源根收录时跳过 agents 来源副本（workspace 级补齐；
+      // 用户级此前已有前置快速检查 isUserAgentsSkillCoveredByZcode，语义相同）。只对
+      // agents 来源生效，插件根不参与覆盖；与 apps/zcode-cli adapters
+      // NodeSkillAdapter.discoverSkills 同规则（会话快照与目录/设置页口径一致）。
+      if (root.source === "agents") {
+        const covered = zcodeNameKeysByScope
+          .get(root.scope)
+          ?.has(normalizeSkillNameKey(resolvedName));
+        if (covered) {
+          continue;
+        }
+      }
+      if (root.source === "zcode") {
+        const nameKey = normalizeSkillNameKey(resolvedName);
+        const nameKeys = zcodeNameKeysByScope.get(root.scope) ?? new Set<string>();
+        nameKeys.add(nameKey);
+        zcodeNameKeysByScope.set(root.scope, nameKeys);
       }
 
       const description = parsed.hasFrontmatter ? parsed.description.trim() : "";
