@@ -4361,6 +4361,8 @@ const zhCN: Record<string, string> = {
   "chat.toolbar.pinnedSkill.tooltip":
     "常驻 Skill：选择后在任务开始自动加载全文，清理上下文后仍保持",
   "chat.toolbar.pinnedSkill.searchPlaceholder": "搜索 Skill…",
+  "chat.toolbar.pinnedSkill.loading": "正在加载 Skill…",
+  "chat.toolbar.pinnedSkill.loadFailed": "Skill 目录读取失败，请稍后重试",
   "chat.toolbar.pinnedSkill.noMatch": "没有匹配的 Skill",
   "chat.toolbar.pinnedSkill.empty": "当前没有可用的 Skill；可在设置中安装或在工作区创建",
   "chat.toolbar.pinnedSkill.unavailable": "该 Skill 已不可用（被删除或禁用），点击移除",

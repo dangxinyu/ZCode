@@ -36,8 +36,8 @@ Skill 工具加载，且以普通 tool result 进入历史——compact/清理�
 
 | 状态 | 所有者 | 说明 |
 | --- | --- | --- |
-| 常驻选择（用户意图，新任务屏） | UI composer draft（`V4ComposerDraft.pinnedSkills`，composerDraftStore） | 按 workspace scope 持久化；createSession 时随 config 携带 |
-| 常驻选择（会话真值） | core runtime `sessionPinnedSkills`（`setPinnedSkills` 唯一写入口） | create config 应用与会话中命令都落到这里 |
+| 常驻选择（用户意图，workspace 级） | `pinnedSkillPreference.ts`（localStorage，workspaceKey 作用域） | 2026-11-05 起从 per-session 草稿迁出——promote 建会话会清空根草稿，per-scope 存储导致每次新建任务/打开会话页选择丢失（用户实测"总自己清空"）；createSession 时随 config 携带 |
+| 常驻选择（会话真值） | core runtime `sessionPinnedSkills`（`setPinnedSkills` 唯一写入口） | create config 应用、首发前同步钩子与会话中命令都落到这里；workspace 偏好为空时对旧会话同样收敛为空 |
 | 常驻内容（全文） | runtime `pinnedSkillContents`：context 初始化与每次 set 后经 `skillPort.loadSkill` 解析 | 失效项记 diagnostic，注入占位行；不阻断 |
 | 持久化 | sessionStore entry `runtime/pinned_skills`（contracts `SESSION_ENTRY_PINNED_SKILLS`） | resume 读回；写失败仅 warn 不阻断（与 vision_delegate 同语义） |
 | 注入点 | `ContextBuilder` meta_user 附件 `source: "pinned_skill"`（`SYSTEM_REMINDER_PREFIX_SOURCES`） | 唯一注入通道；`countContextPrefixMessages` 同步识别，保证 compact 保留 |

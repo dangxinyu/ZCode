@@ -1261,6 +1261,7 @@ export function SessionPane({
     handleDraftSwitchMode,
     visionDelegateModel,
     handleDraftSelectVisionDelegate,
+    handleDraftSetPinnedSkills,
     promoteComposerDraft,
     captureAcceptedModelSelection,
     replaceComposerDraft,
@@ -3474,24 +3475,17 @@ export function SessionPane({
     snapshotRevision,
     snapshotSessionId,
   ]);
-  // ── 常驻 skill：草稿名单 → runtime 同步（setPinnedSkills 命令，唯一 runtime 写路径）──
-  // draft 是用户意图 owner；snapshot 投影是 runtime 回声。两者发散时按值补发一次命令，
-  // 收敛（回声一致）后停止；会话内即时改选与 prewarm 首发前同步都走同一条路。
-  // 无意图护栏（bug 修复 2026-11-04，实测"派发注入 workmate 成功，21 秒后打开会话页
-  // 被本 effect 清成 cleared"）：composerDraft.pinnedSkills === undefined = 用户从未
-  // 表达过意图，不能拿"空 draft"当清除指令——否则编排派发注入的常驻名单会被
-  // "打开会话页"这个动作覆盖掉。无意图时以 runtime 回声为准，draft 由 useDraft
-  // ConfigControl 的 hydrate 补齐（chip 同步显示）；只有显式选择/清空才下发命令。
+  // ── 常驻 skill：workspace 偏好 → runtime 同步（setPinnedSkills 命令，唯一 runtime 写路径）──
+  // 偏好（经 useDraftConfigControl 暴露在 draftConfig.pinnedSkills）是用户意图 owner；
+  // snapshot 投影是 runtime 回声。两者发散时按值补发一次命令，收敛（回声一致）后停止；
+  // 会话内即时改选与 prewarm 首发前同步都走同一条路。偏好为空 = workspace 级"无常驻"，
+  // 对旧会话同样收敛（常驻语义随 workspace 走，不再随会话草稿漂移）。
   const pinnedSkillsSyncRef = useRef<string | null>(null);
   const draftPinnedSkills = draftConfig.pinnedSkills ?? [];
   useEffect(() => {
     const targetSessionId = sessionId ?? prewarmSessionId;
     if (!targetSessionId) return;
     if (snapshotSessionId !== targetSessionId) return;
-    if (composerDraft.pinnedSkills === undefined) {
-      pinnedSkillsSyncRef.current = JSON.stringify(draftPinnedSkills);
-      return;
-    }
     const desiredKey = JSON.stringify(draftPinnedSkills);
     if (pinnedSkillsSyncRef.current === desiredKey) return;
     const projected = snapshotPinnedSkills ?? [];
@@ -3507,7 +3501,6 @@ export function SessionPane({
       dispatchConfigCas("setPinnedSkills", { skills: draftPinnedSkills }, { targetSessionId }),
     );
   }, [
-    composerDraft.pinnedSkills,
     configCommandBarrier,
     dispatchConfigCas,
     draftPinnedSkills,
@@ -4480,6 +4473,7 @@ export function SessionPane({
       // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
       skillCatalogSessionId={effectiveSessionId}
+      onSetPinnedSkills={handleDraftSetPinnedSkills}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}

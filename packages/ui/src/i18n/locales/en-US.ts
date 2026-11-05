@@ -4645,6 +4645,8 @@ const enUS: Record<string, string> = {
   "chat.toolbar.pinnedSkill.tooltip":
     "Pinned Skill: the selected skill loads automatically at task start and survives context clearing",
   "chat.toolbar.pinnedSkill.searchPlaceholder": "Search skills…",
+  "chat.toolbar.pinnedSkill.loading": "Loading skills…",
+  "chat.toolbar.pinnedSkill.loadFailed": "Failed to load skills; try again later",
   "chat.toolbar.pinnedSkill.noMatch": "No matching skills",
   "chat.toolbar.pinnedSkill.empty":
     "No skills available; install one in Settings or create one in the workspace",

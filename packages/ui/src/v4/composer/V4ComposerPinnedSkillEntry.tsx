@@ -31,6 +31,10 @@ import type { SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 export interface V4ComposerPinnedSkillEntryProps {
   /** Skill catalog（宿主统一拉取，与 $ 面板同源快照）。 */
   skills: readonly ZCodeSkillReferenceCatalogEntry[];
+  /** catalog 拉取中；为真且列表为空时显示加载态，不再误报「没有可用的 Skill」。 */
+  loading?: boolean;
+  /** catalog 拉取失败（重试耗尽）；为真且列表为空时显示失败态而非「没有可用的 Skill」。 */
+  error?: string | null;
   draftConfig?: Partial<SessionConfigState>;
   disabled?: boolean;
   activeConfigPicker: V4ComposerConfigPicker | null;
@@ -50,6 +54,8 @@ function pinnedSkillSearchFilter(value: string, search: string): number {
 
 function V4ComposerPinnedSkillEntryImpl({
   skills,
+  loading = false,
+  error = null,
   draftConfig,
   disabled = false,
   activeConfigPicker,
@@ -135,9 +141,13 @@ function V4ComposerPinnedSkillEntryImpl({
           />
           <CommandList className="max-h-72">
             <CommandEmpty className="px-3 py-4 text-ui-sm text-foreground-subtle">
-              {skills.length === 0
-                ? intl.formatMessage({ id: "chat.toolbar.pinnedSkill.empty" })
-                : intl.formatMessage({ id: "chat.toolbar.pinnedSkill.noMatch" })}
+              {skills.length > 0
+                ? intl.formatMessage({ id: "chat.toolbar.pinnedSkill.noMatch" })
+                : error
+                  ? intl.formatMessage({ id: "chat.toolbar.pinnedSkill.loadFailed" })
+                  : loading
+                    ? intl.formatMessage({ id: "chat.toolbar.pinnedSkill.loading" })
+                    : intl.formatMessage({ id: "chat.toolbar.pinnedSkill.empty" })}
             </CommandEmpty>
             <CommandGroup className="p-1">
               {skills.map((skill) => {

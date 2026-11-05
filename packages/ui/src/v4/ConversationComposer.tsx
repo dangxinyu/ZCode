@@ -581,7 +581,11 @@ function ConversationComposerImpl({
   const activeConfigPicker =
     configPickerState.scopeKey === configPickerScopeKey ? configPickerState.activePicker : null;
   // 常驻 skill catalog：工具条入口与 chips 共用一次拉取（与 $ 面板同源同 scope）。
-  const { skills: pinnedCatalogSkills } = useSkills({
+  const {
+    skills: pinnedCatalogSkills,
+    loading: pinnedCatalogLoading,
+    error: pinnedCatalogError,
+  } = useSkills({
     workspacePath,
     workspaceIdentity,
     sessionId: skillCatalogSessionId,
@@ -784,11 +788,11 @@ function ConversationComposerImpl({
 
   const handleSetPinnedSkills = useCallback(
     (skills: string[]) => {
-      // 草稿是显示事实的 owner；会话内 runtime 同步由宿主 onSetPinnedSkills 派发命令。
-      replaceComposerDraft({ ...ownerDraftRef.current.draft, pinnedSkills: skills });
+      // 常驻 skill 真值在 workspace 偏好（宿主 handleDraftSetPinnedSkills 持有）；
+      // composer 不再写 per-session 草稿，避免 promote/clear 草稿把选择清掉。
       onSetPinnedSkills?.(skills);
     },
-    [onSetPinnedSkills, replaceComposerDraft],
+    [onSetPinnedSkills],
   );
 
   const snapshotDraftOfEditor = useCallback((): {
@@ -2211,6 +2215,8 @@ function ConversationComposerImpl({
         />
         <V4ComposerPinnedSkillEntry
           skills={pinnedCatalogSkills}
+          loading={pinnedCatalogLoading}
+          error={pinnedCatalogError}
           draftConfig={draftConfig}
           disabled={disabled}
           activeConfigPicker={activeConfigPicker}

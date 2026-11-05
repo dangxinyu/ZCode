@@ -80,6 +80,7 @@ export function useSkills(options: UseSkillsOptions): ConversationSkillCatalogSt
     if (!options.enabled || !options.workspacePath || !rpcReady) return;
     const seq = ++requestSeqRef.current;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     setScopedState({
       scope: requestScope,
       value: { skills: [], authority: null, loading: true, error: null },
@@ -90,34 +91,49 @@ export function useSkills(options: UseSkillsOptions): ConversationSkillCatalogSt
       ...(remoteSessionId ? { remoteSessionId } : {}),
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     };
-    services.zcodeAgentService
-      .getSkillReferenceCatalog(params)
-      .then((result) => {
-        if (cancelled || seq !== requestSeqRef.current) return;
-        setScopedState({
-          scope: requestScope,
-          value: {
-            skills: result.skills,
-            authority: result.authority,
-            loading: false,
-            error: null,
-          },
+    // sessionId 查询的失败常见于「冷恢复尚未完成」：历史会话还不是进程内常驻记录时
+    // catalog RPC 会 fail closed。延迟重试而不是把瞬态失败固化成「没有可用的 Skill」；
+    // 重试期间保持 loading，scope/seq 双守卫丢弃一切过期结果。
+    const maxAttempts = options.sessionId ? 3 : 1;
+    const runAttempt = (attempt: number): void => {
+      services.zcodeAgentService
+        .getSkillReferenceCatalog(params)
+        .then((result) => {
+          if (cancelled || seq !== requestSeqRef.current) return;
+          setScopedState({
+            scope: requestScope,
+            value: {
+              skills: result.skills,
+              authority: result.authority,
+              loading: false,
+              error: null,
+            },
+          });
+        })
+        .catch((error: unknown) => {
+          if (cancelled || seq !== requestSeqRef.current) return;
+          if (attempt < maxAttempts) {
+            retryTimer = setTimeout(() => {
+              if (cancelled || seq !== requestSeqRef.current) return;
+              runAttempt(attempt + 1);
+            }, 1500);
+            return;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn("[useSkills] 拉取对话 Skill catalog 失败", {
+            error: message,
+            requestKey,
+          });
+          setScopedState({
+            scope: requestScope,
+            value: { skills: [], authority: null, loading: false, error: message },
+          });
         });
-      })
-      .catch((error: unknown) => {
-        if (cancelled || seq !== requestSeqRef.current) return;
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn("[useSkills] 拉取对话 Skill catalog 失败", {
-          error: message,
-          requestKey,
-        });
-        setScopedState({
-          scope: requestScope,
-          value: { skills: [], authority: null, loading: false, error: message },
-        });
-      });
+    };
+    runAttempt(0);
     return () => {
       cancelled = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
     };
   }, [
     options.enabled,
