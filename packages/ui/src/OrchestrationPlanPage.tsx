@@ -6,9 +6,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "@xyflow/react";
 import type { ZCodeOrchestrationPlansMap } from "@zcode/shared";
+import { zcodeProviderAccountAccessSchema } from "@zcode/shared";
 import { LoaderIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { shouldShowModelVisionBadge } from "@/lib/modelVisionBadge.js";
 import { Button } from "@/components/ui/button.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
@@ -30,6 +32,8 @@ import {
 } from "@/lib/orchestrationPlanSync.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useSkills } from "@/hooks/useSkills.js";
+import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
+import type { ModelSelection } from "@zcode/shared/model-selection";
 
 export interface OrchestrationPlanPageProps {
   sessionId: string;
@@ -148,6 +152,28 @@ export function OrchestrationPlanPage({
     for (const item of sessionIndexItems) map[item.taskId] = item.title;
     return map;
   }, [sessionIndexItems]);
+  // 子任务模型候选（用户需求 2026-11-05）：useModelSelectionView 目录；视觉标识走产品
+  // 统一规则 shouldShowModelVisionBadge——套餐 GLM-5.3 的图片输入是服务端桥接，不是
+  // 原生视觉，不标（与模型选择器/委托入口同一判定，避免"5.3 没有视觉却标了视觉"）。
+  const modelSelectionRead = useModelSelectionView(workspacePath, undefined, workspaceIdentity);
+  const modelCandidates = useMemo(() => {
+    if (modelSelectionRead.state.status !== "ready") return [];
+    return modelSelectionRead.state.view.providers.flatMap((provider) => {
+      const access = zcodeProviderAccountAccessSchema.safeParse(provider.config.access);
+      const accessData = access.success ? access.data : undefined;
+      return provider.models.map((model) => ({
+        providerId: provider.providerId,
+        modelId: model.modelId,
+        supportsImage: shouldShowModelVisionBadge(
+          model.modelId,
+          model.config.properties?.inputFormat?.supportsImage,
+          accessData,
+        ),
+        // 目录档位（values 按语义强度低→高）：节点级「思考档位」下拉的候选。
+        reasoningLevels: model.config.optionSpecs?.reasoningLevel?.values ?? [],
+      }));
+    });
+  }, [modelSelectionRead.state]);
 
   const editor = useOrchestrationPlanCanvasEditor({
     planNodesBase,
@@ -231,6 +257,8 @@ export function OrchestrationPlanPage({
         childTitle: selectedFlowNode.data.childTitle,
         childTaskLocked: selectedFlowNode.data.childLocked,
         pinnedSkills: selectedFlowNode.data.pinnedSkills,
+        model: selectedFlowNode.data.model ?? null,
+        thoughtLevel: selectedFlowNode.data.thoughtLevel ?? null,
       }
     : null;
 
@@ -339,6 +367,24 @@ export function OrchestrationPlanPage({
       }),
     );
   }, [editor.dirty, runPlansAction, scope, selectedPlanId, sessionId]);
+
+  // 计划级子任务默认模型（用户需求 2026-11-05）：即改即存（计划级配置不走编辑缓冲），
+  // 随当前编辑缓冲一并落库（显式用户动作，顺带保存未存编辑是可接受的）。
+  const onPickChildModelDefault = useCallback(
+    (model: ModelSelection | null) => {
+      if (!selectedPlanId) return;
+      void runPlansAction((taskService) =>
+        taskService.proposeOrchestrationPlanEdit({
+          orchestrationTaskId: sessionId,
+          ...scope,
+          planId: selectedPlanId,
+          nodes: editor.toSavePayload(),
+          childModelDefault: model,
+        }),
+      );
+    },
+    [editor, runPlansAction, scope, selectedPlanId, sessionId],
+  );
 
   // 节点卡片手动操作（用户需求 2026-11-02）：执行 = 向绑定子任务下发/派生新子任务并置
   // dispatched；手动完成 = 节点自己的完成口径（容错：回报丢失、线下完成）。都显式带
@@ -621,6 +667,9 @@ export function OrchestrationPlanPage({
           editor.addNode(position);
         }}
         onTidyLayout={editor.tidyLayout}
+        childModelDefault={plan?.childModelDefault ?? null}
+        modelCandidates={modelCandidates}
+        onPickChildModelDefault={onPickChildModelDefault}
         onSave={handleSave}
         onConfirm={confirmPlan}
         progress={progress}
@@ -709,6 +758,14 @@ export function OrchestrationPlanPage({
               }))}
             onPickPinnedSkill={(name) =>
               editor.updateNodeData(editNode.nodeId, { pinnedSkills: name ? [name] : [] })
+            }
+            childModel={editNode.model ?? null}
+            planChildModelDefault={plan?.childModelDefault ?? null}
+            modelCandidates={modelCandidates}
+            onPickChildModel={(model) => editor.updateNodeData(editNode.nodeId, { model })}
+            thoughtLevel={editNode.thoughtLevel ?? null}
+            onPickThoughtLevel={(level) =>
+              editor.updateNodeData(editNode.nodeId, { thoughtLevel: level })
             }
             onPatch={(partial) => editor.updateNodeData(editNode.nodeId, partial)}
           />

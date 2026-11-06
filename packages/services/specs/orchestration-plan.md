@@ -302,13 +302,15 @@ v1 单计划模型升级为**多计划**（用户需求 2026-10-28）：同一�
     开始节点带**总控滑块**（点一下全部非起始节点开、再点一下全关；勾选态 = 全部已开）。host 侧
     自动派发引擎（orchestrationPlanAutoDispatch.autoDispatchReadyNodes）：节点满足以下全部条件时
     host 自动派发（与手动执行同一条 dispatchPlanNodeOnce 通道，计划门照常）。
-    **极性（用户需求 2026-11-04 翻转）**：开关挂在"释放方"上游上——X.autoExecute=true =
-    X 完成后自动执行 X 的下游；节点 Y 可自动派发 =
+    **极性（用户需求 2026-11-04 翻转；2026-11-05 收敛）**：开关挂在"释放方"上游上——
+    X.autoExecute=true = X 完成后自动执行 X 的下游；节点 Y 可自动派发 =
     ① status ∈ pending/stale；② 依赖全部 terminal（start 视为满足）；
-    ③ **所有非起始直接上游的 autoExecute=true**（Y 自身的开关只决定它完成后是否释放它的下游）。
+    ③ **所有非起始直接上游的 autoExecute=true**；
+    ④ **Y 自身的 autoExecute=true**（2026-11-05 新增：没开自动的下游是人工停留点，
+    引擎不拉起——即便上游全部完成且全开）。
     手动闸门级联断流：任一上游关自动，它完成时就不释放下游，链路在该下游之前停住——"不自动的
-    场景断得掉"；沿途全开则波次推进不断流（用户实测语义：任务1 开、任务2 关 → 任务2 会自动跑、
-    任务3 之前停住）。
+    场景断得掉"；沿途全开则波次推进不断流（用户实测语义 2026-11-05 修订：任务1 开、任务2 关 →
+    任务2 **不会**自动跑（人工停留点），任务3 之前也停住）。
     - **autoExecute 是画布可编辑配置**（用户需求 2026-11-03 改版："新增时就把配置确定好"）：
       开关进画布编辑缓冲（updateNodeData/总控 setAllAutoExecute），随「保存计划」经
       proposeOrchestrationPlanEdit 落库（保存通道节点携带 autoExecute，提案值优先、缺省保留
@@ -333,12 +335,41 @@ v1 单计划模型升级为**多计划**（用户需求 2026-10-28）：同一�
     - 失败即停不重试：自动派发失败的节点按既有回滚规则恢复原状并保留错误可见性，**不自动重试**，
       等人工/agent 处置；同一波的其他兄弟节点不受牵连，各自独立派发。失败节点未 terminal，其
       下游自然停住。
-    - 与 agent 的分工（极性翻转后收敛，用户需求 2026-11-04）：已确认计划里，上游开关全开的
-      就绪节点由 host 即时自动派发（agent 收到终态回报后正常汇报即可）；上游开关没全开的
-      节点是断流点，agent 自主派发会被闸门拒绝——它应向用户转告暂停位置，而不是重试。
-      用户在对话里显式点名派发某节点时，闸门放行（上游全开）或给出暂停原因（有关着的上游）；
-      要绕开断流就点节点上的「执行」按钮（人类显式动作，带 bypass）。CLI 计划模式引导同步
-      此分工。
+    - 与 agent 的分工（极性翻转后收敛，用户需求 2026-11-04；**2026-11-05 派发主权收敛**）：
+      已确认计划里，**自动链路的所有派发都归 host 引擎**；agent 收到终态回报后只向用户汇报，
+      **不再承担任何波次派发职责**（计划模式引导已撤销"对非自动节点套用波次派发"的旧分工）。
+      agent 自主派发（spawn/send 带 planNodeId、无 bypass）被闸门三查拒绝：① 节点自身
+      autoExecute≠true（人工停留点）；② 任一非起始上游未 terminal（等齐才推）；
+      ③ 任一非起始上游 autoExecute≠true（上游断流）。收到闸门错误只向用户转告暂停位置，
+      不重试。用户在对话里显式点名派发某节点时，闸门放行（四条件全满足）或给出暂停原因；
+      要绕开就点节点上的「执行」按钮（人类显式动作，带 bypass）。范围：仅计划模式 + active
+      计划——非计划模式/无计划不受闸门与引擎管理（用户需求 2026-11-05 明确）。CLI 计划
+      模式引导同步此分工。
+    - **子任务模型**（用户需求 2026-11-05"主动选/跟随主任务/视觉模型"）：非起始节点带
+      `model` 字段（ModelSelection | null）——null/缺字段 = **跟随主任务**（派发时读主任务
+      tasks-index 当前选型复合串，经 buildColdResumeModelHint 归一后拆成规范选型）；对象 =
+      **指定选型**（模型目录里 supportsImage 的带"视觉"标识，截图类任务按节点指定视觉模型）。
+      派发解析在 orchestrationTaskService.resolveChildModelSelection：spawn 经 createTask
+      modelSelection（子会话初始化即用该选型，不再恒落全局默认）；send 经 sendPrompt 单条
+      输入选型（不动子会话会话级设置）。UI：节点编辑器「子任务模型」下拉（跟随主任务/
+      目录模型列表，视觉模型带标），卡片显式指定时渲染模型行；编辑缓冲随保存落库
+      （save 通道逐节点携带 model，null 可表达改回跟随）。子会话模型此前与主任务完全无关
+      （spawn 不传 model → 恒落全局默认），本条目即改此行为。
+    - **思考档位**（用户需求 2026-11-05"档位也可以像模型一样加个选择"）：非起始节点带
+      `thoughtLevel`（string | null）——null/缺字段 = **跟随主任务当前档位**；字符串 =
+      指定档位。派发档位解析链 = 节点指定 → 主任务当前档位 → 目录首档兜底（registry
+      校验缺档位即拒 "Reasoning level is required"，模型目录 optionSpecs.reasoningLevel
+      .values 按语义强度低→高、首项为最低公开档位）。UI：节点编辑器「思考档位」下拉
+      （候选 = 当前生效模型的目录档位；换模型后旧档位不在新模型档位内自动回落跟随），
+      编辑缓冲随保存落库（语义同 model）。host 兜底经注入的 modelSelectionService.getView
+      读目录。
+    - **计划级子任务默认模型**（用户需求 2026-11-05 追加"5.3 没有视觉"：跟随主任务的缺省
+      对截图任务不成立——主任务模型无视觉，子任务跟着也无视觉）：计划带
+      `childModelDefault`（ModelSelection | null，存 plan_json 免迁移）。解析链 = **节点
+      指定 > 计划默认 > 跟随主任务 > 全局默认**——计划默认设一次视觉模型，全计划未显式
+      指定的节点统一生效（截图类任务不必逐节点指定）。UI：工具栏「默认模型」下拉（editable
+      时显示），即改即存（计划级配置不走编辑缓冲，随当前缓冲一并落库是显式动作可接受）；
+      writePlanRow 公共通道缺省沿用存量（终态/占位/绑定等任何状态写入不得抹掉用户设置）。
     - **未保存节点禁用服务端操作**（bug 修复 2026-11-03，实测"Unknown plan node"）：执行按钮、
       手动完成滑块走服务端翻转，画布上未保存的本地新节点（编辑缓冲 id）禁用，hover 提示
       "先保存计划"。自动开关不在此列（改版后它是本地编辑配置，未保存节点随时可拨）。
@@ -435,4 +466,27 @@ v1 单计划模型升级为**多计划**（用户需求 2026-10-28）：同一�
     计算——存量"部分节点有坐标"的混合计划，缺坐标节点落在合理位置而非压盖已保存节点；
     兜底不落库（保存时才写），旧 `autoPosition`（定义顺序堆叠）删除。
   - 算法确定性：同输入同输出；只算 x/y，宽高（w/h）不触碰。
+- 派发竞态修复（用户需求 2026-11-05"点执行冒出 New session 且报 already dispatched、不执行"）：
+  原"adapter 旧快照查重 → 创建子任务 → 落库绑定"的顺序里，绑定（唯一序列化点）在最后——
+  并发派发（host 引擎扫描 vs 用户点击/双击同一节点）输家在绑定才失败，孤儿子任务已落地
+  （New session，无绑定无指令不执行）。改为**占位先行**：
+  - `reservePlanNodeForSpawn`：带 planNodeId 的派发在 createTask **之前**原子地把
+    pending/stale → dispatched（childTaskId 留空）——并发在此写上序列化，落空者在创建
+    子任务前收到 "already dispatched"，不再产生孤儿。
+  - `bindPlanNodeForSpawn` 降级为占位接续：只给 dispatched-无绑定节点挂 childTaskId，
+    未占位/已绑定抛编程性错误。
+  - `releasePlanNodeReservation`：占位后、挂接前失败（createTask/link 抛错）时回滚
+    pending（仅 dispatched 且无 childTaskId 才回，已接续不碰；stale 标记回滚中丢失可接受，
+    stale 本就经 MarkPlanNodesStale 复核）——无绑定的 dispatched 会让画布假执行中且等不到
+    终态，绝不能留。
+  - sendChildTaskPrompt（已绑定下发）路径自带的 markPlanNodeDispatched + 回滚语义不变。
+  - **僵尸自愈**（用户需求 2026-11-05 实测追加：节点解链后卡 dispatched，点执行被
+    "already dispatched" 拒、终态永远等不到）：dispatched 且无 childTaskId（且未锁定）的
+    节点是死状态——没有任何子任务会回报终态。reserve 与 adapter 前置快查都放行重新派发
+    （点「执行」= 自愈）；dispatched **有** childTaskId 才是真在跑，照旧拒绝。引擎扫描
+    保持只认 pending/stale（僵尸不自动重跑，走人工「执行」恢复）。
+    **failed 同口径**（用户需求 2026-11-05 二次实测：解链后 failed 节点点执行仍被拒）：
+    failed 是人工停留点，用户点「执行」= 显式重跑指令——无绑定子任务的 failed 节点
+    reserve 放行重派（failed → dispatched）；有绑定的 failed 走 sendChildTaskPrompt 复用
+    原子任务。引擎扫描同样不含 failed（人工恢复）。
 

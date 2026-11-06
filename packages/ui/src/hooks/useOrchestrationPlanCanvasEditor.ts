@@ -85,6 +85,10 @@ function buildFlowNodes(
       autoExecute: node.autoExecute ?? false,
       // 常驻 skill（用户需求 2026-11-04）：派发时写入子会话；画布可编辑配置随保存落库。
       pinnedSkills: node.pinnedSkills ?? [],
+      // 子任务模型（用户需求 2026-11-05）：null = 跟随主任务；对象 = 指定选型。
+      model: node.model ?? null,
+      // 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。
+      thoughtLevel: node.thoughtLevel ?? null,
       w: node.layout?.w,
       h: node.layout?.h,
       editingName: editable && inlineEditNodeId === node.nodeId,
@@ -424,6 +428,8 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
           | "childTitle"
           | "childLocked"
           | "pinnedSkills"
+          | "model"
+          | "thoughtLevel"
         >
       >,
     ) => {
@@ -704,6 +710,9 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
                 childTaskId: node.data.childTaskId,
                 childLocked: node.data.childLocked,
                 pinnedSkills: node.data.pinnedSkills,
+                // 子任务模型/档位逐节点携带（null = 跟随主任务，JSON 保留 null 可表达改回）。
+                model: node.data.model ?? null,
+                thoughtLevel: node.data.thoughtLevel ?? null,
               }),
           ...(node.data.isStart ? { isStart: true } : {}),
           layout: {

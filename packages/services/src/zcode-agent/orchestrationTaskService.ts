@@ -13,7 +13,9 @@ import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
 import type { IZCodeAgentService } from "./zcodeAgent.js";
-import { prepareChildSessionForDispatch } from "./orchestrationColdResume.js";
+import { buildColdResumeModelHint, prepareChildSessionForDispatch } from "./orchestrationColdResume.js";
+import type { ModelSelection } from "@zcode/shared/model-selection";
+import type { ModelSelectionView } from "../model-provider/providerFacadeServices.js";
 import { createOrchestrationNotifyRelay } from "./orchestrationNotifyRelay.js";
 import { createAutoDispatchTrigger } from "./orchestrationPlanAutoDispatch.js";
 import type { IOrchestrationPlanService } from "./orchestrationPlanService.js";
@@ -108,6 +110,9 @@ export function createOrchestrationTaskService(options: {
    * 经 resolver 晚绑定（plan service 与本服务都只依赖 repo+agent 通道，装配顺序无关）。
    */
   resolveOrchestrationPlanService?: () => IOrchestrationPlanService | undefined;
+  /** 选型视图（用户需求 2026-11-05 子任务模型档位）：声明思考档位的模型派发时缺档位，
+   * 从目录兜底首档（registry 校验缺档位即拒 "Reasoning level is required"）。 */
+  modelSelectionService?: { getView(): Promise<ModelSelectionView> };
 }): IOrchestrationTaskService {
   const { taskService, taskIndexRepo, zcodeAgentService } = options;
   // 终态通知 relay（spec: orchestration-tasks.md）：持久水位线 + busy/冷会话重试 +
@@ -203,9 +208,10 @@ export function createOrchestrationTaskService(options: {
     );
   }
 
-  // 自动执行闸门（用户需求 2026-11-03"断流"语义）：autoExecute=false 的节点是人工
-  // 停留点，agent 自主派发不得越过（host 自动派发引擎自身已按开关过滤，UI「执行」
-  // 按钮传 bypassAutoGate 表示人类显式动作）。检查读 active 计划的节点开关。
+  // 自动执行闸门（用户需求 2026-11-03"断流"语义；2026-11-05 三查收敛）：agent 自主派发
+  // 不得越过人工停留点（host 自动派发引擎自身已按开关过滤，UI「执行」按钮传 bypassAutoGate
+  // 表示人类显式动作）。范围仅计划模式 + active 计划：plan 为空（非计划模式/无 active）
+  // 直接放行（用户需求 2026-11-05 明确"非计划模式或没有计划就不用管"）。
   async function assertAutoGate(
     params: WorkspaceScope & { orchestrationTaskId: string; planNodeId?: string; bypassAutoGate?: boolean },
   ): Promise<void> {
@@ -222,18 +228,117 @@ export function createOrchestrationTaskService(options: {
     const node = plan?.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
     if (!plan || !node || node.isStart) return;
     if (node.status !== "pending" && node.status !== "stale") return;
-    // 极性（用户需求 2026-11-04 翻转）：开关挂上游——任一非起始直接上游未开
-    // 「完成后自动执行下游」，它完成时就不会释放本节点，链路在本节点前暂停。
-    const gatedUpstream = (node.dependsOn ?? [])
+    // 查一：节点自身开关（用户需求 2026-11-05"主任务不要擅自调动"）。autoExecute=false
+    // 的节点是人工停留点——即便上游全部完成且全开，agent 也不得拉起，等用户画布开
+    // 开关或点「执行」。
+    if (node.autoExecute !== true) {
+      throw new Error(
+        `自动执行闸门：「${node.name}」未开启「完成后自动执行下游」，属人工停留点，主任务不得自主派发。` +
+          "请用户在画布开启该节点开关（开始节点上有总控），或点本节点的「执行」按钮手动推进；" +
+          "不要尝试重试派发。",
+      );
+    }
+    const directUpstreams = (node.dependsOn ?? [])
       .filter((dep) => dep !== "start")
       .map((dep) => plan.nodes.find((candidate) => candidate.nodeId === dep))
-      .find((upstream) => upstream && upstream.autoExecute !== true);
+      .filter((upstream): upstream is NonNullable<typeof upstream> => Boolean(upstream));
+    // 查二：上游未全部完成（用户需求 2026-11-05）。下游还有执行中/未完成的其他上游时
+    // 派发条件未齐，等上游到齐后由 host 引擎推进，agent 不抢跑。
+    const pendingUpstream = directUpstreams.find((upstream) => upstream.status !== "terminal");
+    if (pendingUpstream) {
+      throw new Error(
+        `自动执行闸门：上游「${pendingUpstream.name}」尚未完成（${pendingUpstream.status}），「${node.name}」的派发条件未齐。` +
+          "等上游完成后由 host 引擎自动推进；不要尝试重试派发。",
+      );
+    }
+    // 查三（既有断流语义，用户需求 2026-11-04 极性）：任一非起始直接上游未开
+    // 「完成后自动执行下游」，它完成时就不会释放本节点，链路在本节点前暂停。
+    const gatedUpstream = directUpstreams.find((upstream) => upstream.autoExecute !== true);
     if (!gatedUpstream) return;
     throw new Error(
       `自动执行闸门：上游「${gatedUpstream.name}」未开启「完成后自动执行下游」，链路在「${node.name}」前暂停。` +
         "请在画布开启它的自动开关（开始节点上有总控），或点本节点的「执行」按钮手动推进；" +
         "不要尝试重试派发。",
     );
+  }
+
+  // 子任务模型解析（用户需求 2026-11-05"主动选/跟随主任务/视觉模型"）：解析链 = 节点
+  // 显式指定 → 计划级默认 → 跟随主任务（读主任务 tasks-index 当前选型复合串，
+  // buildColdResumeModelHint 归一旧身份/档位形态）→ 全局默认。指定视觉模型的场景：
+  // 计划默认设一次视觉模型，全计划截图类子任务统一生效。send 路径对已绑定子任务按
+  // 单条输入选型生效（sendPrompt 原生支持 modelSelection，口径同终态通知通道）。
+  async function resolveChildModelSelection(
+    params: WorkspaceScope & { orchestrationTaskId: string; planNodeId?: string },
+  ): Promise<ModelSelection | undefined> {
+    if (!params.planNodeId) return undefined;
+    let nodeModel: ModelSelection | null | undefined;
+    let planDefault: ModelSelection | null | undefined;
+    let nodeThoughtLevel: string | null | undefined;
+    const planService = options.resolveOrchestrationPlanService?.();
+    if (planService) {
+      const map = await planService
+        .getPlansMap({
+          orchestrationTaskIds: [params.orchestrationTaskId],
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        })
+        .catch(() => undefined);
+      const plansMap = map?.[params.orchestrationTaskId];
+      const plan = plansMap?.plans.find((candidate) => candidate.planId === plansMap.activePlanId);
+      const node = plan?.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
+      nodeModel = node?.model;
+      nodeThoughtLevel = node?.thoughtLevel;
+      planDefault = plan?.childModelDefault;
+    }
+    // 跟随主任务（缺省）：tasks-index 复合串 → 规范选型（身份/模型名/$档位 拆解）。
+    const meta = await taskIndexRepo
+      .getTaskMeta({
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      })
+      .catch(() => null);
+    const hint = buildColdResumeModelHint({
+      provider: meta?.provider ?? null,
+      model: meta?.model ?? null,
+      thoughtLevel: meta?.thoughtLevel ?? null,
+    });
+    // 模型解析链：节点指定 → 计划默认 → 跟随主任务 → 全局默认。
+    const model = nodeModel ?? planDefault ?? undefined;
+    // 档位解析链（用户需求 2026-11-05"档位也可以加个选择"）：节点指定 → 跟随主任务
+    // 当前档位 → 目录首档兜底（registry 校验缺档位即拒 "Reasoning level is required"，
+    // values 按语义强度从低到高，首项 = 最低公开档位）。
+    let reasoningLevel: string | undefined =
+      nodeThoughtLevel ?? hint?.thoughtLevel ?? undefined;
+    if (!reasoningLevel && model && options.modelSelectionService) {
+      const view = await options.modelSelectionService.getView().catch(() => undefined);
+      const levels = view?.providers
+        .find((provider) => provider.providerId === model.providerId)
+        ?.models.find((candidate) => candidate.modelId === model.modelId)?.config.optionSpecs
+        ?.reasoningLevel?.values;
+      reasoningLevel = levels?.[0];
+    }
+    if (!model) {
+      // 跟随主任务：无主任务选型 hint = 全局默认（undefined）。
+      if (!hint) return undefined;
+      const slashAt = hint.model.modelId.indexOf("/");
+      return slashAt > 0
+        ? {
+            providerId: hint.model.modelId.slice(0, slashAt),
+            modelId: hint.model.modelId.slice(slashAt + 1),
+            ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
+          }
+        : {
+            providerId: hint.model.providerId,
+            modelId: hint.model.modelId,
+            ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
+          };
+    }
+    return {
+      providerId: model.providerId,
+      modelId: model.modelId,
+      ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
+    };
   }
 
   const service: IOrchestrationTaskService = {
@@ -243,32 +348,68 @@ export function createOrchestrationTaskService(options: {
       await assertAutoGate(params);
       // 专名兜底收口：schema 已保证非空，这里只防超长标题污染列表布局。
       const childTaskName = params.name.trim().slice(0, 60) || "子任务";
+      // 子任务模型解析（用户需求 2026-11-05）：节点指定 → 用之；缺省跟随主任务当前选型。
+      const childModelSelection = await resolveChildModelSelection(params);
+      // 占位先行（用户需求 2026-11-05 派发竞态修复）：带 planNodeId 的派发在创建子任务
+      // **之前**原子占位节点（pending/stale → dispatched，childTaskId 留空）——host 引擎
+      // 扫描与用户点击/双击的并发派发在此写上序列化，抢不到占位的直接收到
+      // "already dispatched" 错误，不再出现"子任务已创建、绑定才失败"的孤儿会话
+      // （实测：点「执行」冒出 New session 且报 already dispatched、不执行）。
+      if (params.planNodeId) {
+        await options.resolveOrchestrationPlanService?.()?.reservePlanNodeForSpawn({
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          planNodeId: params.planNodeId,
+        });
+      }
       // workspace 以 handler 注入的 CLI 连接 workspace 为准（与编排会话一致），
       // 不从可能尚未 sync 的 parent meta 行取。
-      const child = await taskService.createTask({
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        // child 会话级身份：taskType=orchestration_child（结构性禁用编排工具）+
-        // tasks-index child 标记，全部由 createTask 的 orchestrationParentTaskId 分支落。
-        orchestrationParentTaskId: params.orchestrationTaskId,
-        deferPersistenceUntilFirstPrompt: true,
-      });
-      // 先落关系再发指令：sendPrompt 失败时关系与任务仍在，错误抛回编排会话即可重试。
-      await taskIndexRepo.linkOrchestrationChild({
-        orchestration: {
+      let child;
+      try {
+        child = await taskService.createTask({
           workspacePath: params.workspacePath,
           ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-          taskId: params.orchestrationTaskId,
-        },
-        child: {
-          workspacePath: params.workspacePath,
-          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-          taskId: child.taskId,
-        },
-        kind: "derived",
-      });
-      // 计划节点绑定（spec: orchestration-plan.md）：计划确认后按节点派生，
-      // host 记下 childTaskId 供计划视图显示进度；未带 planNodeId 的计划外派生不绑定。
+          // child 会话级身份：taskType=orchestration_child（结构性禁用编排工具）+
+          // tasks-index child 标记，全部由 createTask 的 orchestrationParentTaskId 分支落。
+          orchestrationParentTaskId: params.orchestrationTaskId,
+          deferPersistenceUntilFirstPrompt: true,
+          // 子任务模型（用户需求 2026-11-05）：节点指定/跟随主任务的解析结果；undefined =
+          // 全局默认（与既有行为一致）。
+          ...(childModelSelection ? { modelSelection: childModelSelection } : {}),
+        });
+        // 先落关系再发指令：sendPrompt 失败时关系与任务仍在，错误抛回编排会话即可重试。
+        await taskIndexRepo.linkOrchestrationChild({
+          orchestration: {
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+            taskId: params.orchestrationTaskId,
+          },
+          child: {
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+            taskId: child.taskId,
+          },
+          kind: "derived",
+        });
+      } catch (error) {
+        // 占位回滚：子任务/关系没落地，节点不能卡在"无绑定的 dispatched"——那会让画布
+        // 看起来执行中却永远等不到终态回报（释放 = 仅 dispatched 且无 childTaskId 才回 pending）。
+        if (params.planNodeId) {
+          await options.resolveOrchestrationPlanService
+            ?.()
+            ?.releasePlanNodeReservation({
+              orchestrationTaskId: params.orchestrationTaskId,
+              workspacePath: params.workspacePath,
+              ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+              planNodeId: params.planNodeId,
+            })
+            .catch(() => {});
+        }
+        throw error;
+      }
+      // 计划节点绑定接续（spec: orchestration-plan.md）：占位已把节点置 dispatched，
+      // 这里只挂 childTaskId；未带 planNodeId 的计划外派生不绑定。
       if (params.planNodeId) {
         await options.resolveOrchestrationPlanService?.()?.bindPlanNodeForSpawn({
           orchestrationTaskId: params.orchestrationTaskId,
@@ -534,6 +675,9 @@ export function createOrchestrationTaskService(options: {
         params.childTaskId,
         childTaskName,
       );
+      // 子任务模型解析（用户需求 2026-11-05）：已绑定子任务按节点配置/跟随主任务，
+      // 以单条输入选型生效（sendPrompt 原生支持；不动子会话的会话级模型设置）。
+      const childModelSelection = await resolveChildModelSelection(params);
       // 下发走 v1 sendPrompt（与终态通知同通道）：目标多为关联进来的旧任务，
       // runtime 可能早已回收，v4 sendText 对冷会话直接 proto.sessionNotFound
       // （实测命中：向「6、生单」下发被拒）。v1 通道对冷会话的兜底是先
@@ -548,6 +692,7 @@ export function createOrchestrationTaskService(options: {
           // 常驻保证，不靠每条消息带后缀；linked 会话亦不再例外。
           content: params.prompt,
           clientMode: "desktop-continuous",
+          ...(childModelSelection ? { modelSelection: childModelSelection } : {}),
         });
       try {
         // 下发前把子会话准备到可执行（探测/冷恢复/补模型，细节与踩坑见

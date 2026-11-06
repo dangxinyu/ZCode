@@ -144,7 +144,13 @@ export function WorkspaceTimelineTasksSection({
   // timeline 不应沿用 10 条首屏限制，和其它 sidebar 列表的 20 条基准保持一致。
   // 这里把首屏和每次“显示更多”的阶梯统一成 20，避免用户误以为列表只加载到 10/20 就结束。
   const collapsedLimit = 20;
-  const [visibleTaskLimit, setVisibleTaskLimit] = useState(collapsedLimit);
+  // 编排分区（用户确认 2026-10-23）：主任务默认展示 5 个、每次「显示更多」+5。
+  // 展示条数是过滤后的 orchestrator 计数，与查询 limit 解耦——分区拉全量 timeline
+  // 后本地分页，否则 +5 未过滤任务在编排稀疏的 workspace 里可能一条主任务都不多。
+  const orchestrationPageSize = 5;
+  const [visibleTaskLimit, setVisibleTaskLimit] = useState(
+    orchestrationOnly ? orchestrationPageSize : collapsedLimit,
+  );
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const pendingArchiveItemKeyRef = useRef<string | null>(pendingArchiveItemKey);
   const renamingItemKeyRef = useRef<string | null>(renamingItemKey);
@@ -187,8 +193,10 @@ export function WorkspaceTimelineTasksSection({
     workspaceTabs: scopedWorkspaceTabs,
     sortBy: taskSortBy,
     searchQuery: "",
-    expanded: false,
-    collapsedLimit: visibleTaskLimit,
+    // 编排分区拉全量（expanded → 无 limit）后本地分页，保证「显示更多」每次稳定
+    // 多出 5 个主任务；普通时间线保持 20 条阶梯的限量分页。
+    expanded: orchestrationOnly,
+    collapsedLimit: orchestrationOnly ? 0 : visibleTaskLimit,
   });
   const remoteTimelineItemsByWorkspaceKey = useRemoteTimelineTaskStore(
     (state) => state.itemsByWorkspaceKey,
@@ -610,15 +618,21 @@ export function WorkspaceTimelineTasksSection({
     }
     return keys.size;
   }, [localItems, remoteItems]);
-  const currentLimitFilled =
-    (clientFiltered ? unfilteredLoadedCount : sortedItems.length) >= visibleTaskLimit;
-  // 远端/本地 hasMore 偶尔会在下一轮请求完成前保持旧值。
-  // 如果当前已加载数量没有填满 limit，说明这轮已经到底了，不能继续显示 show more。
-  const canLoadMore = loading ? hasKnownMore : currentLimitFilled && hasKnownMore;
+  // 编排分区拉全量后本地分页（用户确认 2026-10-23）：还有未展示的主任务才显示按钮。
+  // 不依赖 loading/hasMore——activity 帧重查翻转 loading 不再造成按钮闪烁，
+  // 全量已加载时过滤后计数就是权威的"是否还有更多"。
+  // 普通分区维持限量分页：loading 中放宽为 hasKnownMore（hasMore 偶发陈旧时
+  // 由页填满判定兜底：没填满说明这轮已到底，不显示按钮）。
+  const canLoadMore = orchestrationOnly
+    ? sortedItems.length > visibleTaskLimit
+    : loading
+      ? hasKnownMore
+      : (clientFiltered ? unfilteredLoadedCount : sortedItems.length) >= visibleTaskLimit &&
+        hasKnownMore;
 
   useEffect(() => {
-    setVisibleTaskLimit(collapsedLimit);
-  }, [taskSortBy, workspaceTabsSignature]);
+    setVisibleTaskLimit(orchestrationOnly ? orchestrationPageSize : collapsedLimit);
+  }, [orchestrationOnly, taskSortBy, workspaceTabsSignature]);
 
   useEffect(() => {
     // 这条日志会随着远端 timeline 同步和 tab 恢复多次触发。
@@ -1424,9 +1438,12 @@ export function WorkspaceTimelineTasksSection({
           <span
             className="text-ui-base text-foreground-subtlest hover:text-foreground-subtle"
             onClick={() => {
-              // timeline 目标是单向分页，每次点击只增加一个 20 条阶梯。
-              // 不再复用“显示更少”的旧展开/收起方案，避免按钮状态和真实分页语义冲突。
-              setVisibleTaskLimit((current) => current + collapsedLimit);
+              // timeline 目标是单向分页：普通分区每次 +20 条阶梯；编排分区（拉全量
+              // 后本地分页）每次 +5 主任务。不复用"显示更少"的旧展开/收起方案，
+              // 避免按钮状态和真实分页语义冲突。
+              setVisibleTaskLimit((current) =>
+                current + (orchestrationOnly ? orchestrationPageSize : collapsedLimit),
+              );
             }}
           >
             {intl.formatMessage({

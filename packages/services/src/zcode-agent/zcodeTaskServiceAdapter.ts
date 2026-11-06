@@ -3111,6 +3111,10 @@ export function createZCodeTaskServiceAdapter(
         // UI 编辑显式定位正在查看的计划（用户需求 2026-10-30：看哪个存哪个，
         // 与 active 执行口径解耦）；缺省 = agent 通道，修订/新建 active 计划。
         ...(params.planId ? { planId: params.planId } : {}),
+        // 计划级子任务默认模型（用户需求 2026-11-05）：null = 跟随主任务，需保留传递。
+        ...(params.childModelDefault !== undefined
+          ? { childModelDefault: params.childModelDefault }
+          : {}),
         nodes: params.nodes,
       });
       // 保存**不触发执行**（用户需求 2026-11-04：实测保存后就绪的自动节点被立即派发，
@@ -3160,7 +3164,10 @@ export function createZCodeTaskServiceAdapter(
       const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
       if (!node) throw new Error(`Unknown plan node "${params.planNodeId}".`);
       if (node.isStart) throw new Error("The start node cannot be executed.");
-      if (node.status === "dispatched") {
+      // 真在跑 = dispatched 且挂着子任务（有终态回报来源）。dispatched 但无 childTaskId
+      // 是解链/历史竞态留下的僵尸态（没有子任务会回报终态，永远卡住）——放行重新派发
+      // 自愈（reserve 同规则，用户需求 2026-11-05 实测：解链后点执行被 already dispatched 拒）。
+      if (node.status === "dispatched" && node.childTaskId) {
         throw new Error("This node is already executing; wait for its outcome first.");
       }
       // 空目标不可执行（用户需求 2026-11-04）：提示词会退化成节点名，等于盲发。

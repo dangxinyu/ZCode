@@ -23,6 +23,7 @@ import {
   deriveStatus,
   revisePlanNodes,
   rowToPlan,
+  parsePlanJson,
   validatePlanGraph,
   wireRootsToStart,
   withStartNode,
@@ -99,6 +100,35 @@ export function createOrchestrationPlanService(options: {
     return rows.find((row) => row.isActive) ?? null;
   }
 
+  // spawn 占位/绑定的公共前置：active 行 → confirmed 计划 → 节点定位 → 结构/锁定检查。
+  // 无 active 计划返回 null（调用方静默跳过，与 bind 的宽容语义一致）。
+  async function readSpawnTargetNode(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planNodeId: string;
+  }): Promise<{ plan: OrchestrationPlan; node: OrchestrationPlanNode } | null> {
+    const activeRow = await readActiveRow(params);
+    if (!activeRow) return null;
+    const plan = rowToPlan(activeRow);
+    if (plan.status !== "confirmed") {
+      throw new Error("Plan is not confirmed yet. Wait for the 【编排计划·确认】 message.");
+    }
+    const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
+    if (!node) throw new Error(`Unknown plan node "${params.planNodeId}".`);
+    if (node.isStart) {
+      throw new Error("The start node is a structural marker and cannot be dispatched.");
+    }
+    // 用户手动确定的绑定不可被主任务改派（用户需求 2026-10-30）：向既定子任务下发
+    // 指令，而不是派生新任务。childTaskId 与 List 工具结果同源，模型侧可用。
+    if (node.childTaskLocked && node.childTaskId) {
+      throw new Error(
+        `Plan node "${params.planNodeId}" already has a child task chosen by the user (${node.childTaskId}). Send instructions to that existing child task instead of spawning a new one.`,
+      );
+    }
+    return { plan, node };
+  }
+
   /** 计划事实变更后广播（fire-and-forget）：UI 订阅频道重拉 plansMap，画布/列表即时跟随。 */
   function publishPlansChanged(params: WorkspaceScope & { orchestrationTaskId: string }): void {
     void broadcastService
@@ -127,6 +157,8 @@ export function createOrchestrationPlanService(options: {
     createdAt: number;
     /** 新建时指定来源；缺省 = 已有行沿用（修订不改来源）。 */
     origin?: "agent" | "manual";
+    /** 计划级子任务默认模型（用户需求 2026-11-05）；缺省沿用存量（任何状态写入不得抹掉）。 */
+    childModelDefault?: ModelSelection | null;
   }): Promise<void> {
     const existing = (await taskIndexRepo.listOrchestrationPlanRows(params)).find(
       (row) => row.planId === params.planId,
@@ -135,6 +167,14 @@ export function createOrchestrationPlanService(options: {
     // `params.origin ?? "agent"`，手动计划（origin=manual）一经修订即被翻成
     // agent，与参数注释承诺矛盾——以变量为准。
     const origin = params.origin ?? (existing ? parseOrigin(existing.planJson) : "agent");
+    // 计划级子任务默认模型（用户需求 2026-11-05）：缺省沿用存量——writePlanRow 是所有
+    // 状态写入（终态/占位/绑定等）的公共通道，任何一条都不许把用户设的默认模型抹掉。
+    const childModelDefault =
+      params.childModelDefault !== undefined
+        ? params.childModelDefault
+        : existing
+          ? parsePlanJson(existing.planJson).childModelDefault ?? null
+          : null;
     await taskIndexRepo.upsertOrchestrationPlanRow({
       workspacePath: params.workspacePath,
       ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
@@ -147,6 +187,7 @@ export function createOrchestrationPlanService(options: {
         version: params.version,
         nodes: params.nodes,
         origin,
+        ...(childModelDefault !== undefined ? { childModelDefault } : {}),
       }),
       isActive: params.isActive,
       createdAt: existing?.createdAt ?? params.createdAt,
@@ -350,6 +391,16 @@ export function createOrchestrationPlanService(options: {
             ...(node.isStart || node.pinnedSkills === undefined
               ? {}
               : { pinnedSkills: node.pinnedSkills }),
+            // 子任务模型透传（用户需求 2026-11-05）：UI 保存逐节点携带（null = 跟随主任务
+            // 的显式表达，undefined = agent 提案按存量语义）；丢了会让用户改回跟随主任务
+            // 的操作存不上。
+            ...(node.isStart || node.model === undefined
+              ? {}
+              : { model: node.model }),
+            // 思考档位同口径透传（用户需求 2026-11-05）。
+            ...(node.isStart || node.thoughtLevel === undefined
+              ? {}
+              : { thoughtLevel: node.thoughtLevel }),
             // 布局必须透传：UI 画布保存（拖动/缩放）走的就是本通道，丢了 layout
             // 修订 diff 会保留旧位置，用户改动的位置和尺寸永远存不上（用户实测）。
             ...(node.layout ? { layout: node.layout } : {}),
@@ -447,6 +498,10 @@ export function createOrchestrationPlanService(options: {
           // 保留目标行自身的选中标志：upsert 不维护唯一 active，按 planId 修订一个
           // 非 active 计划时写 true 会凭空造出第二个 active 行。
           isActive: targetRow.isActive,
+          // 计划级子任务默认模型（用户需求 2026-11-05）：UI 编辑显式携带，缺省沿用存量。
+          ...(params.childModelDefault !== undefined
+            ? { childModelDefault: params.childModelDefault }
+            : {}),
           createdAt: current.createdAt,
         });
         logger.info("Orchestration plan revised", {
@@ -486,6 +541,10 @@ export function createOrchestrationPlanService(options: {
         status: "draft",
         nodes,
         version: 1,
+        // 计划级子任务默认模型（用户需求 2026-11-05）：agent 提案不带 → null（跟随主任务）。
+        ...(params.childModelDefault !== undefined
+          ? { childModelDefault: params.childModelDefault }
+          : {}),
         isActive: true,
         createdAt: now,
       });
@@ -562,31 +621,97 @@ export function createOrchestrationPlanService(options: {
       publishPlansChanged(params);
       return { ...plan, status: "confirmed" };
     },
-    async bindPlanNodeForSpawn(params) {
-      const activeRow = await readActiveRow(params);
-      if (!activeRow) return;
-      const plan = rowToPlan(activeRow);
-      if (plan.status !== "confirmed") {
-        throw new Error("Plan is not confirmed yet. Wait for the 【编排计划·确认】 message.");
+    /** spawn 占位（用户需求 2026-11-05 派发竞态修复）：pending/stale → dispatched
+     * （childTaskId 留空）是并发派发的序列化点——host 引擎扫描与用户点击在此决出胜负，
+     * 落空者在创建子任务**之前**收到错误，孤儿会话不再产生。无 active 计划静默跳过
+     * （与 bind 的宽容语义一致，计划门已在任务服务拦截）。
+     * **僵尸自愈**（用户需求 2026-11-05 实测：解链后节点卡 dispatched 点执行被拒）：
+     * dispatched 且无 childTaskId 的节点没有任何子任务会回报终态，是解链/历史竞态留下的
+     * 死状态——点「执行」视为可重新派发（保持 dispatched 直接放行，由 bind 挂上新子任务），
+     * 不再拒。dispatched **有** childTaskId 才是真在跑，照旧拒绝。
+     * **failed 同口径**（用户需求 2026-11-05 实测：解链后 failed 节点点执行被拒）：failed
+     * 是人工停留点（红色），用户点「执行」= 显式重跑指令——无绑定子任务的 failed 节点
+     * 放行重派（failed → dispatched）；有绑定的 failed 走 sendChildTaskPrompt 复用原子
+     * 任务（不经本函数）。 */
+    async reservePlanNodeForSpawn(params) {
+      const target = await readSpawnTargetNode(params);
+      if (!target) return;
+      const { plan, node } = target;
+      // 僵尸/失败自愈：dispatched 或 failed 且无绑定子任务（未锁定）= 没有任何子任务会
+      // 回报终态或已明确失败待重跑，点「执行」都是显式重跑指令，放行。
+      const manualRetry =
+        (node.status === "dispatched" || node.status === "failed") &&
+        !node.childTaskId &&
+        !node.childTaskLocked;
+      if (node.status !== "pending" && node.status !== "stale" && !manualRetry) {
+        throw new Error(`Plan node "${params.planNodeId}" is already dispatched.`);
       }
-      const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
-      if (!node) throw new Error(`Unknown plan node "${params.planNodeId}".`);
-      if (node.isStart) {
-        throw new Error("The start node is a structural marker and cannot be dispatched.");
-      }
-      // 用户手动确定的绑定不可被主任务改派（用户需求 2026-10-30）：向既定子任务下发
-      // 指令，而不是派生新任务。childTaskId 与 List 工具结果同源，模型侧可用。
-      if (node.childTaskLocked && node.childTaskId) {
-        throw new Error(
-          `Plan node "${params.planNodeId}" already has a child task chosen by the user (${node.childTaskId}). Send instructions to that existing child task instead of spawning a new one.`,
-        );
-      }
-      if (node.status !== "pending" || node.childTaskId) {
+      if (node.childTaskId) {
         throw new Error(`Plan node "${params.planNodeId}" is already dispatched.`);
       }
       const nodes = plan.nodes.map((candidate) =>
         candidate.nodeId === params.planNodeId
-          ? { ...candidate, status: "dispatched" as const, childTaskId: params.childTaskId }
+          ? { ...candidate, status: "dispatched" as const }
+          : candidate,
+      );
+      await writePlanRow({
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        orchestrationTaskId: params.orchestrationTaskId,
+        planId: plan.planId,
+        title: plan.title,
+        status: "confirmed",
+        nodes,
+        version: plan.version,
+        isActive: true,
+        createdAt: plan.createdAt,
+      });
+      publishPlansChanged(params);
+    },
+    /** 占位接续：把已创建的子任务挂到已占位（dispatched 且无 childTaskId）的节点上。
+     * 未占位/已有绑定属编程性错误，抛错暴露而不是静默。无 active 计划静默跳过。 */
+    async bindPlanNodeForSpawn(params) {
+      const activeRow = await readActiveRow(params);
+      if (!activeRow) return;
+      const plan = rowToPlan(activeRow);
+      const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
+      if (!node) throw new Error(`Unknown plan node "${params.planNodeId}".`);
+      if (node.status !== "dispatched" || node.childTaskId) {
+        throw new Error(
+          `Plan node "${params.planNodeId}" was not reserved for spawn (status=${node.status}, childTaskId=${node.childTaskId ?? "null"}).`,
+        );
+      }
+      const nodes = plan.nodes.map((candidate) =>
+        candidate.nodeId === params.planNodeId
+          ? { ...candidate, childTaskId: params.childTaskId }
+          : candidate,
+      );
+      await writePlanRow({
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        orchestrationTaskId: params.orchestrationTaskId,
+        planId: plan.planId,
+        title: plan.title,
+        status: "confirmed",
+        nodes,
+        version: plan.version,
+        isActive: true,
+        createdAt: plan.createdAt,
+      });
+      publishPlansChanged(params);
+    },
+    /** 占位回滚：仅当节点仍处于 dispatched 且无 childTaskId（占位未被接续）才回 pending；
+     * 已接续的节点由 sendPrompt 失败路径的既有语义处理，这里不碰。stale 标记在回滚中
+     * 丢失（回 pending）可接受：stale 本就要经 MarkPlanNodesStale 复核。 */
+    async releasePlanNodeReservation(params) {
+      const activeRow = await readActiveRow(params);
+      if (!activeRow) return;
+      const plan = rowToPlan(activeRow);
+      const node = plan.nodes.find((candidate) => candidate.nodeId === params.planNodeId);
+      if (!node || node.status !== "dispatched" || node.childTaskId) return;
+      const nodes = plan.nodes.map((candidate) =>
+        candidate.nodeId === params.planNodeId
+          ? { ...candidate, status: "pending" as const }
           : candidate,
       );
       await writePlanRow({

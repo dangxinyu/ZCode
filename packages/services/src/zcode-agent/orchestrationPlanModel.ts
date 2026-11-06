@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- 服务 API 类型与纯函数模型同文件是既有约定（拆类型文件反而
+ * 让 spec 对照变难）；派发占位三操作（reserve/bind/release）的语义注释撑过了 400 行。 */
 // 编排计划的纯函数模型层（spec: packages/services/specs/orchestration-plan.md）。
 // 从 orchestrationPlanService 拆出：行↔计划映射、DAG 校验、完成推导、微调修订 diff、
 // 确认消息文案。无 IO，便于单测与复用。
@@ -6,6 +8,7 @@ import type {
   ZCodeOrchestrationPlanProtocol,
   ZCodeOrchestrationPlansMapProtocol,
 } from "@zcode/shared";
+import type { ModelSelection } from "@zcode/shared/model-selection";
 
 export type OrchestrationPlanNode = ZCodeOrchestrationPlanNodeProtocol;
 export type OrchestrationPlan = ZCodeOrchestrationPlanProtocol;
@@ -28,6 +31,12 @@ export interface ProposedPlanNode {
   autoExecute?: boolean;
   /** 派发时写入子会话的常驻 skill（用户需求 2026-11-04）：提案值优先，缺省保留存量。 */
   pinnedSkills?: string[];
+  /** 子任务模型（用户需求 2026-11-05）：null/缺省 = 跟随主任务；对象 = 指定选型。
+   * agent 提案缺省不带（保留用户配置）；UI 保存逐节点携带（null = 改回跟随主任务）。 */
+  model?: ModelSelection | null;
+  /** 思考档位（用户需求 2026-11-05）：null/缺省 = 跟随主任务；字符串 = 指定档位。
+   * 语义同 model：agent 提案缺省保留存量；UI 保存逐节点携带。 */
+  thoughtLevel?: string | null;
   /** 手动绑定的子任务（用户需求 2026-11-03 画布可编辑配置）：UI 保存随节点携带
    * （null = 显式解绑）；缺省（agent 提案）按存量语义处理，仅 pending 节点生效。 */
   childTaskId?: string | null;
@@ -106,18 +115,25 @@ export function parsePlanJson(raw: string): {
   version: number;
   nodes: OrchestrationPlanNode[];
   origin: "agent" | "manual";
+  /** 计划级子任务默认模型（用户需求 2026-11-05）：undefined/null = 跟随主任务；
+   * 对象 = 未显式指定模型的节点统一用它（视觉模型一次设定全计划生效）。 */
+  childModelDefault?: ModelSelection | null;
 } {
   try {
     const parsed = JSON.parse(raw) as {
       version?: unknown;
       nodes?: unknown;
       origin?: unknown;
+      childModelDefault?: unknown;
     };
     if (typeof parsed.version === "number" && Array.isArray(parsed.nodes)) {
       return {
         version: parsed.version,
         nodes: parsed.nodes as OrchestrationPlanNode[],
         origin: parsed.origin === "manual" ? "manual" : "agent",
+        ...(parsed.childModelDefault !== undefined
+          ? { childModelDefault: (parsed.childModelDefault ?? null) as ModelSelection | null }
+          : {}),
       };
     }
   } catch {
@@ -130,7 +146,7 @@ export function parsePlanJson(raw: string): {
  * 中途关会话、终态写丢都不会让显示漂移（实测：绑定后 12/12 全 terminal 但行仍 confirmed，
  * 侧栏转圈不停）。库列退化为缓存，写入侧照常回写推导值保持一致。 */
 export function rowToPlan(row: PlanRowLike): OrchestrationPlan {
-  const { version, nodes, origin } = parsePlanJson(row.planJson);
+  const { version, nodes, origin, childModelDefault } = parsePlanJson(row.planJson);
   const stored =
     row.status === "draft" || row.status === "confirmed" || row.status === "completed"
       ? row.status
@@ -142,6 +158,7 @@ export function rowToPlan(row: PlanRowLike): OrchestrationPlan {
     status: deriveStatus(nodes, stored),
     version,
     nodes,
+    ...(childModelDefault !== undefined ? { childModelDefault } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -295,6 +312,19 @@ export function revisePlanNodes(
         ...(node.isStart
           ? {}
           : { pinnedSkills: node.pinnedSkills ?? bound.pinnedSkills ?? [] }),
+        // 子任务模型随保存落库（用户需求 2026-11-05）：UI 保存逐节点携带（null = 改回
+        // 跟随主任务，null 经 JSON 保留可表达）；agent 提案缺省 → 沿用存量（无存量 =
+        // 跟随主任务，undefined 与 null 同义）。
+        ...(node.isStart
+          ? {}
+          : { model: node.model !== undefined ? node.model : (bound.model ?? null) }),
+        // 思考档位同口径（用户需求 2026-11-05）：UI 优先，agent 缺省沿用存量。
+        ...(node.isStart
+          ? {}
+          : {
+              thoughtLevel:
+                node.thoughtLevel !== undefined ? node.thoughtLevel : (bound.thoughtLevel ?? null),
+            }),
         status: "pending",
         // 绑定随保存落库（用户需求 2026-11-03 改版）：提案携带的用户绑定优先；
         // 未携带（agent 修订提案）→ 沿用旧绑定（不再清空只留微调提示）。
@@ -318,6 +348,9 @@ export function revisePlanNodes(
       ...(node.isStart ? { isStart: true } : {}),
       ...(node.isStart ? {} : { autoExecute: node.autoExecute ?? defaultAuto }),
       ...(node.isStart ? {} : { pinnedSkills: node.pinnedSkills ?? [] }),
+      // 全新节点：提案携带则用（agent 不带 → null = 跟随主任务）。
+      ...(node.isStart ? {} : { model: node.model ?? null }),
+      ...(node.isStart ? {} : { thoughtLevel: node.thoughtLevel ?? null }),
       status: "pending",
       // 全新节点：提案携带的用户绑定直接生效（用户需求 2026-11-03 改版）。
       childTaskId: node.isStart ? null : (node.childTaskId ?? null),
@@ -384,6 +417,9 @@ export interface OrchestrationPlanServiceApi {
     createNew?: boolean;
     /** 修订目标计划（UI 编辑通道）；缺省 = active 计划。指定但不存在 → 报错。 */
     planId?: string;
+    /** 计划级子任务默认模型（用户需求 2026-11-05）：未显式指定 model 的节点统一用它；
+     * null/缺省 = 跟随主任务。缺省（undefined）= 修订沿用存量。 */
+    childModelDefault?: ModelSelection | null;
   }) => Promise<{ planId: string; version: number; status: "draft"; nodeCount: number }>;
   /**
    * 用户确认：目标 draft → confirmed，注入确认消息（节点清单；执行规则是常驻引导）；确认的计划同时
@@ -392,13 +428,38 @@ export interface OrchestrationPlanServiceApi {
   confirmPlan: (
     params: WorkspaceScope & { orchestrationTaskId: string; planId?: string },
   ) => Promise<OrchestrationPlan>;
-  /** spawn 绑定：active 计划须 confirmed 且节点 pending；失败抛错。 */
+  /**
+   * spawn 占位（用户需求 2026-11-05 派发竞态修复）：在创建子任务**之前**原子地把
+   * pending/stale 节点置 dispatched（childTaskId 留空）。两个并发派发（host 引擎扫描
+   * 与用户点击/双击）在此写上序列化：抢到占位者继续创建子任务，落空者直接收到
+   * "already dispatched" 错误——不再出现"子任务已创建、绑定才失败"的孤儿会话。
+   * active 计划须 confirmed 且节点无绑定子任务；失败抛错。
+   */
+  reservePlanNodeForSpawn: (params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planNodeId: string;
+  }) => Promise<void>;
+  /** spawn 绑定：把已创建的子任务挂到**已占位**（dispatched 且无 childTaskId）的节点上；
+   * 节点未占位或已有绑定时抛错。 */
   bindPlanNodeForSpawn: (params: {
     orchestrationTaskId: string;
     workspacePath: string;
     workspaceIdentity?: string;
     planNodeId: string;
     childTaskId: string;
+  }) => Promise<void>;
+  /**
+   * 占位回滚（占位后、子任务挂接前失败时调用）：仅当节点仍处于 dispatched 且无
+   * childTaskId（= 占位未被接续）才回 pending，接续成功的不碰。stale 语义在此丢失
+   * （回 pending）——可接受：stale 本就要经 MarkPlanNodesStale 复核。
+   */
+  releasePlanNodeReservation: (params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planNodeId: string;
   }) => Promise<void>;
   /**
    * 显式绑定（BindOrchestrationPlanNodes 工具，用户需求 2026-10-30）：把已关联

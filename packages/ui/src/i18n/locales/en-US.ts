@@ -1365,6 +1365,18 @@ const enUS: Record<string, string> = {
   "orchestration.plan.pinnedSkillNone": "None",
   "orchestration.plan.pinnedSkillHint":
     "Write the selected skill into the child session's resident skills when dispatching this node; none leaves the child session unchanged.",
+  "orchestration.plan.childModelField": "Child model",
+  "orchestration.plan.childModelFollow": "Follow orchestrator",
+  "orchestration.plan.childModelPlanDefaultBadge": "plan default",
+  "orchestration.plan.childModelVisionBadge": "vision",
+  "orchestration.plan.childModelHint":
+    "Model used by the dispatched child task; defaults to the orchestrator's current model. Pick a vision-badged model for screenshot-heavy tasks.",
+  "orchestration.plan.childModelDefaultField": "Default model",
+  "orchestration.plan.childModelDefaultHint":
+    "Nodes without an explicit model use this one; setting a vision model once covers the whole plan. Switching to Follow orchestrator makes children use the orchestrator's current model.",
+  "orchestration.plan.thoughtLevelField": "Reasoning level",
+  "orchestration.plan.thoughtLevelHint":
+    "Reasoning level used by the dispatched child task; defaults to the orchestrator's current level. Models declaring levels fall back to their lowest level when unset.",
   "orchestration.plan.childFrozenHint":
     "Bindings of running/finished nodes are execution facts and cannot be changed; adjust after it completes.",
   "orchestration.plan.autoAll": "Auto all",

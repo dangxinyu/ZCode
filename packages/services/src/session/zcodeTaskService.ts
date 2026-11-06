@@ -724,6 +724,9 @@ export interface IZCodeTaskService {
     /** 目标计划（用户需求 2026-10-30：看哪个存哪个，与 active 解耦）；缺省 = active。 */
     planId?: string;
     title?: string;
+    /** 计划级子任务默认模型（用户需求 2026-11-05）：null = 跟随主任务；对象 = 指定。
+     * 工具栏选择后随保存落库；缺省沿用存量。 */
+    childModelDefault?: ModelSelection | null;
     nodes: Array<{
       nodeId: string;
       name: string;
@@ -739,6 +742,11 @@ export interface IZCodeTaskService {
       childLocked?: boolean;
       /** 派发时写入子会话的常驻 skill（catalog name 列表；缺省保留存量）。 */
       pinnedSkills?: string[];
+      /** 子任务模型（用户需求 2026-11-05）：null = 跟随主任务；对象 = 指定选型；
+       * 编辑缓冲逐节点携带，缺省保留存量。 */
+      model?: ModelSelection | null;
+      /** 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。 */
+      thoughtLevel?: string | null;
       layout?: { x: number; y: number; w?: number; h?: number };
     }>;
   }): Promise<ZCodeOrchestrationPlansMap>;

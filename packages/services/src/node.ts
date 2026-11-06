@@ -2364,6 +2364,8 @@ export function createLocalServices(options: {
     zcodeAgentService,
     // 计划门晚绑定（spec: orchestration-plan.md）：plan service 在本服务之后创建。
     resolveOrchestrationPlanService: () => orchestrationPlanServiceHolder.current,
+    // 子任务模型档位兜底（用户需求 2026-11-05）：声明档位的模型派发缺档位时从目录补首档。
+    modelSelectionService: providerRuntime.modelSelection,
   });
   orchestrationTaskServiceForAgent = orchestrationTaskService;
   // 编排计划服务（spec: orchestration-plan.md）：可选计划模式——提案/确认/开关的

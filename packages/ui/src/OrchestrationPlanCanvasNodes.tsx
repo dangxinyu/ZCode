@@ -5,6 +5,7 @@ import { Handle, NodeResizer, Position } from "@xyflow/react";
 import { createContext, useContext } from "react";
 import type { Node as FlowNode, NodeProps, NodeTypes } from "@xyflow/react";
 import type { ZCodeOrchestrationPlanNode } from "@zcode/shared";
+import type { ModelSelection } from "@zcode/shared/model-selection";
 import { CircleCheck, CircleDashed, CircleX, LoaderIcon, Lock, PlayIcon, TriangleAlert } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
@@ -70,6 +71,11 @@ export type CardData = {
   autoExecute: boolean;
   /** 派发时写入子会话的常驻 skill（用户需求 2026-11-04）；编辑缓冲随保存落库。 */
   pinnedSkills: string[];
+  /** 子任务模型（用户需求 2026-11-05）：null = 跟随主任务；对象 = 指定选型
+   * （视觉模型在目录里带 supportsImage 标识）。编辑缓冲随保存落库。 */
+  model?: ModelSelection | null;
+  /** 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。 */
+  thoughtLevel?: string | null;
   w?: number;
   h?: number;
   /** 双击节点进入内联改名（用户需求 2026-10-29：模块内可编辑文字）。 */
@@ -282,6 +288,24 @@ function PlanNodeCard({ id, data, selected }: NodeProps<FlowNode<CardData>>) {
           </div>
           <div className="truncate text-ui-xs font-medium text-foreground">
             {data.pinnedSkills.join("、")}
+          </div>
+        </div>
+      ) : null}
+      {/* 子任务模型区块（用户需求 2026-11-05）：仅在显式指定时渲染——null（跟随主任务）
+       * 是缺省态，块会凭空高一行。null 不显示即"跟随主任务"的视觉表达。 */}
+      {!data.isStart && data.model ? (
+        <div
+          className="mt-1.5 shrink-0 rounded-md border border-border-subtle bg-background/85 px-1.5 py-1"
+          title={intl.formatMessage({ id: "orchestration.plan.childModelHint" })}
+        >
+          <div className="flex items-center gap-1 text-ui-2xs uppercase tracking-wide text-foreground-subtlest">
+            <span aria-hidden="true">🤖</span>
+            <span className="min-w-0 flex-1 truncate">
+              {intl.formatMessage({ id: "orchestration.plan.childModelField" })}
+            </span>
+          </div>
+          <div className="truncate text-ui-xs font-medium text-foreground">
+            {data.model.modelId}
           </div>
         </div>
       ) : null}

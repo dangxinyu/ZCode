@@ -3672,6 +3672,13 @@ export const zcodeOrchestrationPlanNodeSchema = z
     /** 派发时写入子会话的常驻 skill（用户需求 2026-11-04，catalog name 全量替换语义）；
      * 空数组/缺省 = 不动子会话现有常驻配置。 */
     pinnedSkills: z.array(z.string()).optional(),
+    /** 子任务模型（用户需求 2026-11-05"主动选/跟随主任务/视觉模型"）：两态——
+     * null/缺字段 = 跟随主任务（派发时读主任务 tasks-index 当前选型）；
+     * 对象 = 指定选型（视觉模型在目录里带 supportsImage 标识，截图类任务按节点指定）。 */
+    model: modelSelectionSchema.nullable().optional(),
+    /** 思考档位（用户需求 2026-11-05）：null/缺字段 = 跟随主任务当前档位；字符串 =
+     * 指定档位（须在该模型目录 optionSpecs.reasoningLevel.values 内）。 */
+    thoughtLevel: z.string().nullable().optional(),
     /** 微调重执行的原原子任务引用（pending + reuse = 确认后优先下发原子任务）。 */
     reuseChildTaskId: z.string().nullable().optional(),
     /** 画布布局（用户拖动/缩放的自由布局持久化；缺省 = 自动分层布局）。 */
@@ -3694,6 +3701,9 @@ export const zcodeOrchestrationPlanSchema = z
     /** 每次提案自增；确认注入消息携带版本，模型与用户对齐"确认的是哪一版"。 */
     version: z.number().int().nonnegative(),
     nodes: z.array(zcodeOrchestrationPlanNodeSchema),
+    /** 计划级子任务默认模型（用户需求 2026-11-05）：未显式指定 model 的节点统一用它
+     * （视觉模型一次设定全计划生效）；null/缺省 = 跟随主任务。 */
+    childModelDefault: modelSelectionSchema.nullable().optional(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
   })

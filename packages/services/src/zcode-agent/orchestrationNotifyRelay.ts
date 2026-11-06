@@ -327,8 +327,15 @@ export function createOrchestrationNotifyRelay(options: {
         pollTimer = null;
       }
     };
-    const pollAttempts = 10;
-    const pollIntervalMs = 3_000;
+    // 轮询窗口（用户需求 2026-11-05 实测修订；spec: orchestration-tasks.md 终态通知可靠性）：
+    // 原 10×3s=30s 只兜得住秒级完成的子任务——订阅通道的 running→terminal 迁移帧被
+    // sessions-index conflation 吞掉时（running 帧到达时 previous 仍 undefined），长任务
+    // （实测 8.5 分钟）完成后无人观察：节点永远执行中、通知永不投递。改为长尾轮询：
+    // 前 10 次 3s 抓秒级完成，其后每 30s 一次至约 2 小时；超长任务由重启恢复扫描兜底。
+    const fastPollAttempts = 10;
+    const fastPollIntervalMs = 3_000;
+    const slowPollIntervalMs = 30_000;
+    const maxPollAttempts = 250;
     // 快照 error 需连续两次轮询命中才认定（spec 失败可见）：send ACK 到执行轮真正开始之间
     // 可能有一瞬 status 仍是上一轮的 error 而 updatedAt 已被新消息顶新，单次命中会误报。
     let snapshotErrorStreak = 0;
@@ -406,14 +413,15 @@ export function createOrchestrationNotifyRelay(options: {
       return false;
     };
     const schedulePoll = (attempt: number) => {
-      if (pollStopped || attempt > pollAttempts) return;
+      if (pollStopped || attempt > maxPollAttempts) return;
+      const delay = attempt <= fastPollAttempts ? fastPollIntervalMs : slowPollIntervalMs;
       pollTimer = setTimeout(() => {
         pollTimer = null;
         if (pollStopped) return;
         void pollOnce().then((captured) => {
           if (!captured) schedulePoll(attempt + 1);
         });
-      }, pollIntervalMs);
+      }, delay);
     };
     schedulePoll(1);
   }
@@ -466,18 +474,45 @@ export function createOrchestrationNotifyRelay(options: {
           .catch(() => null);
         // tasks 行暂不可读（启动竞态）：保留行，下次启动再试，不做错误推断。
         if (!childMeta) continue;
+        // 节点终态回写（用户需求 2026-11-05 修复"节点卡执行中"）：恢复路径此前只补投
+        // 通知、不调 markPlanNodeTerminal——节点永远 dispatched（画布假执行中）。两分支
+        // 都先回写节点终态，再用 markedNodeIds 触发一次就绪扫描（链式推进与 relay
+        // 常规路径同一触发，下一波自动节点照常解锁）。
+        const reconcilePlanNode = async (outcome: "succeeded" | "failed") => {
+          const marked = await resolveOrchestrationPlanService?.()?.markPlanNodeTerminal({
+            orchestrationTaskId: scope.orchestrationTaskId,
+            workspacePath: scope.workspacePath,
+            ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
+            childTaskId: row.childTaskId,
+            outcome,
+          });
+          const triggerNodeIds = marked?.markedNodeIds ?? [];
+          const autoDispatcher = resolveAutoDispatcher?.();
+          if (triggerNodeIds.length > 0 && autoDispatcher) {
+            void autoDispatcher(scope, triggerNodeIds).catch((error: unknown) => {
+              logger.warn("Orchestration auto-dispatch after recovery failed", {
+                childTaskId: row.childTaskId,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                event: "orchestration.pending_notify.auto_dispatch_failed",
+                orchestrationTaskId: scope.orchestrationTaskId,
+              });
+            });
+          }
+        };
         if (
           (childMeta.status === "completed" || childMeta.status === "error") &&
           childMeta.updatedAt > row.armedAt
         ) {
-          // 停机期间到达的终态（晚于武装时刻 = 下发轮已完成）：补投，成功后删行——
-          // 一轮下发至多一条通知，手动轮不续报。
+          // 停机期间到达的新鲜终态（晚于武装时刻 = 下发轮已完成）：回写节点 + 补投 +
+          // 清行——一轮下发至多一条通知，手动轮不续报。
+          const outcome = childMeta.status === "error" ? ("failed" as const) : ("succeeded" as const);
+          await reconcilePlanNode(outcome);
           await deliverChildTerminalNotice(
             { taskIndexRepo, zcodeAgentService },
             scope,
             row.childTaskId,
             childMeta.title,
-            childMeta.status === "error" ? "failed" : "succeeded",
+            outcome,
           );
           await taskIndexRepo.clearOrchestrationPendingNotify({
             orchestration: row.orchestration,
@@ -489,58 +524,29 @@ export function createOrchestrationNotifyRelay(options: {
             orchestrationTaskId: scope.orchestrationTaskId,
           });
         } else {
-          // 未终态，或终态早于武装时刻（上一轮的陈旧终态 = 下发轮仍在排队/执行）。
-          // 二分（用户需求 2026-11-04"崩了呢"）：
-          // - 子会话已不在此运行时（runtime 死亡/回收带走了未完成轮次）→ 这一轮永远
-          //   不会有终态了，按失败（interrupted）补投红色通知并清行——修复"运行时崩了
-          //   节点永远执行中"的盲区；
-          // - 子会话仍活跃 → 按原武装时刻重新武装，等待下发轮自己的终态。
-          let childActive = true;
-          try {
-            await zcodeAgentService.readSession({
-              sessionId: row.childTaskId,
-              workspacePath: scope.workspacePath,
-              ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
-              messageLimit: 1,
-            });
-          } catch (probeError: unknown) {
-            const probeMessage =
-              probeError instanceof Error ? probeError.message : String(probeError);
-            if (/not active|sessionnotfound|unavailable/i.test(probeMessage)) {
-              childActive = false;
-            } else {
-              // 探测本身失败（非冷会话原因）：保留行，下次启动再试，不做失败推断。
-              logger.warn("Orchestration pending notify child probe failed", {
-                childTaskId: row.childTaskId,
-                event: "orchestration.pending_notify.child_probe_failed",
-                errorMessage: probeMessage,
-                orchestrationTaskId: scope.orchestrationTaskId,
-              });
-              continue;
-            }
-          }
-          if (!childActive) {
-            await deliverChildTerminalNotice(
-              { taskIndexRepo, zcodeAgentService },
-              scope,
-              row.childTaskId,
-              childMeta.title,
-              "failed",
-            );
-            await taskIndexRepo.clearOrchestrationPendingNotify({
-              orchestration: row.orchestration,
-              childTaskId: row.childTaskId,
-            });
-            logger.info("Recovered orchestration child lost with runtime (interrupted)", {
-              childTaskId: row.childTaskId,
-              event: "orchestration.pending_notify.recovered_interrupted",
-              orchestrationTaskId: scope.orchestrationTaskId,
-            });
-          } else {
-            armChildTerminalRelay(scope, row.childTaskId, childMeta.title, {
-              recoveredArmedAt: row.armedAt,
-            });
-          }
+          // 死轮确定性判定（用户需求 2026-11-05 实测：aggregate 卡执行中的死法）：恢复
+          // 扫描只在 host 启动时运行，重启后上一进程的子任务运行时必然全部死亡——tasks
+          // 行非新鲜终态的 pending 轮次都是被中断的，按 failed 回写 + 补投 + 清行。
+          // 不再用 readSession 探测判活：冷会话从持久层可读成功，误判"还活着"会让 relay
+          // 重新武装后按固定窗口轮询死会话（窗口过后永久失明）。
+          await reconcilePlanNode("failed");
+          await deliverChildTerminalNotice(
+            { taskIndexRepo, zcodeAgentService },
+            scope,
+            row.childTaskId,
+            childMeta.title,
+            "failed",
+            "host 重启中断了子任务运行时，本轮未能完成；请在计划节点上重新执行",
+          );
+          await taskIndexRepo.clearOrchestrationPendingNotify({
+            orchestration: row.orchestration,
+            childTaskId: row.childTaskId,
+          });
+          logger.info("Recovered orchestration child lost with runtime (interrupted)", {
+            childTaskId: row.childTaskId,
+            event: "orchestration.pending_notify.recovered_interrupted",
+            orchestrationTaskId: scope.orchestrationTaskId,
+          });
         }
       } catch (error: unknown) {
         // 补投失败（含冷会话 resume 后仍不可达）：行保留，下次启动重试。

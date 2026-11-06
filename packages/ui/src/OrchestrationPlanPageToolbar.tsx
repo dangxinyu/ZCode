@@ -11,6 +11,7 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { ModelSelection } from "@zcode/shared/model-selection";
 import { Button } from "@/components/ui/button.js";
 
 export interface OrchestrationPlanPageToolbarProps {
@@ -41,6 +42,13 @@ export interface OrchestrationPlanPageToolbarProps {
   onAddNode: () => void;
   /** 整理布局（用户需求 2026-11-04）：编辑缓冲全量重排（入撤销栈），随保存落库不自动存。 */
   onTidyLayout: () => void;
+  /** 计划级子任务默认模型（用户需求 2026-11-05）：null = 跟随主任务；对象 = 计划内
+   * 未显式指定模型的节点统一用它（视觉模型设一次全计划生效）。 */
+  childModelDefault: ModelSelection | null;
+  /** 模型候选（useModelSelectionView 目录；supportsImage 的带视觉标识）。 */
+  modelCandidates: Array<{ providerId: string; modelId: string; supportsImage: boolean }>;
+  /** 改计划默认模型（null = 跟随主任务）：即存即落库（计划级配置，不走编辑缓冲）。 */
+  onPickChildModelDefault: (model: ModelSelection | null) => void;
   onSave: () => void;
   onConfirm: () => void;
 }
@@ -63,6 +71,9 @@ export function OrchestrationPlanPageToolbar({
   onBack,
   onAddNode,
   onTidyLayout,
+  childModelDefault,
+  modelCandidates,
+  onPickChildModelDefault,
   onSave,
   onConfirm,
 }: OrchestrationPlanPageToolbarProps) {
@@ -117,6 +128,56 @@ export function OrchestrationPlanPageToolbar({
           <WorkflowIcon aria-hidden="true" className="size-3.5" />
           {intl.formatMessage({ id: "orchestration.plan.tidyLayout" })}
         </Button>
+      ) : null}
+      {/* 计划级子任务默认模型（用户需求 2026-11-05"5.3 没有视觉"）：设一次视觉模型，
+       * 全计划未显式指定模型的节点统一生效；即存即落库（计划级配置，不走编辑缓冲）。 */}
+      {editable ? (
+        <label
+          className="flex items-center gap-1 text-ui-xs text-foreground-subtle"
+          title={intl.formatMessage({ id: "orchestration.plan.childModelDefaultHint" })}
+        >
+          <span className="shrink-0">{intl.formatMessage({ id: "orchestration.plan.childModelDefaultField" })}</span>
+          <select
+            value={
+              childModelDefault ? `${childModelDefault.providerId}::${childModelDefault.modelId}` : ""
+            }
+            disabled={busy}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (!value) {
+                onPickChildModelDefault(null);
+                return;
+              }
+              const separator = value.indexOf("::");
+              onPickChildModelDefault({
+                providerId: value.slice(0, separator),
+                modelId: value.slice(separator + 2),
+              });
+            }}
+            className="h-7 rounded-md border border-border-subtle bg-background px-1.5 text-ui-xs text-foreground"
+          >
+            <option value="">{intl.formatMessage({ id: "orchestration.plan.childModelFollow" })}</option>
+            {childModelDefault && !modelCandidates.some(
+              (candidate) =>
+                candidate.providerId === childModelDefault.providerId &&
+                candidate.modelId === childModelDefault.modelId,
+            ) ? (
+              <option value={`${childModelDefault.providerId}::${childModelDefault.modelId}`}>
+                {childModelDefault.modelId}
+              </option>
+            ) : null}
+            {modelCandidates.map((candidate) => (
+              <option
+                key={`${candidate.providerId}::${candidate.modelId}`}
+                value={`${candidate.providerId}::${candidate.modelId}`}
+              >
+                {candidate.supportsImage
+                  ? `${candidate.modelId}（${intl.formatMessage({ id: "orchestration.plan.childModelVisionBadge" })}）`
+                  : candidate.modelId}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
       {/* 保存按钮：有修改就常驻（用户需求点 6）；图不合法时点击只强调原因，不保存 */}
       {editable && dirty ? (

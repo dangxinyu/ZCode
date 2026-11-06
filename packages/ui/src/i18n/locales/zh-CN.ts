@@ -1273,6 +1273,18 @@ const zhCN: Record<string, string> = {
   "orchestration.plan.pinnedSkillNone": "不指定",
   "orchestration.plan.pinnedSkillHint":
     "派发该节点时自动把选中的 skill 写入子会话的常驻 Skill；不指定则不动子会话现有配置。",
+  "orchestration.plan.childModelField": "子任务模型",
+  "orchestration.plan.childModelFollow": "跟随主任务",
+  "orchestration.plan.childModelPlanDefaultBadge": "计划默认",
+  "orchestration.plan.childModelVisionBadge": "视觉",
+  "orchestration.plan.childModelHint":
+    "派发子任务使用的模型。未指定时按解析链生效：计划默认 → 跟随主任务；指定后该节点固定用所选模型。",
+  "orchestration.plan.childModelDefaultField": "默认模型",
+  "orchestration.plan.childModelDefaultHint":
+    "计划内未显式指定模型的节点统一用该模型；视觉模型设一次全计划生效。改「跟随主任务」则子任务用主任务当前模型。",
+  "orchestration.plan.thoughtLevelField": "思考档位",
+  "orchestration.plan.thoughtLevelHint":
+    "派发子任务使用的思考档位；缺省跟随主任务当前档位，声明档位的模型未选时会用目录最低档兜底。",
   "orchestration.plan.childFrozenHint":
     "执行中/已完成的节点绑定不可修改（执行事实）；等它完成或终态后再调整。",
   "orchestration.plan.autoAll": "全部自动",
