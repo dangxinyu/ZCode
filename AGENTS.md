@@ -18,11 +18,18 @@
 | 格式检查         | `pnpm fmt:check`                          |
 | 桌面开发         | `pnpm dev:desktop`                        |
 | Web 开发         | `pnpm dev:web`                            |
+| **桌面打包**     | `scripts/package-desktop.sh`（用户说"打包"即指此命令） |
 | 提交前检查       | `pnpm verify:pre-push`（Lint 与架构检查） |
 | 架构检查         | `pnpm architecture:check --changed`       |
 | 模块阅读包       | `pnpm architecture:context <module-id>`   |
 | 未使用依赖与导出 | `pnpm knip`                               |
 | 导出引用查询     | `pnpm dep:refs --list-exports <file>`     |
+
+**桌面打包须知（用户说"打包"时的标准动作）**：后台执行 `scripts/package-desktop.sh`（已内置
+Node ≥24 探测与 `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` 兜底，参数透传 `pnpm bundle:desktop`，
+默认 mac/arm64，全程约 10 分钟）。**不要用管道包裹该命令**（会洗掉退出码，实测拿旧 dmg
+当新包交过差）。完成后验证 `packages/desktop/dist/` 最新 `*.dmg` 时间戳晚于打包启动时刻、
+日志含体积审计通过（Size ≤ Limit），再向用户报产物路径。
 
 测试入口以目标包当前的 `package.json` 和实际测试文件为准，不假定存在统一的单测或 E2E 命令。
 
