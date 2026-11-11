@@ -8,7 +8,7 @@
 // 分区过滤读 sessions-index 的 summary.orchestrationRole（taskType 投影），不依赖本标记。
 
 import { createUuid } from "@zcode/shared";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta, ZCodeTaskMode } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
@@ -341,6 +341,41 @@ export function createOrchestrationTaskService(options: {
     };
   }
 
+  // 子任务权限模式解析（用户需求 2026-11-05"三种模式加第四种默认跟随主任务"）：节点
+  // 显式指定（build/edit/yolo）→ 用之；缺省跟随主任务当前模式（读主任务会话快照
+  // settings.mode；冷会话读不到 = 工作区默认）。仅 spawn 新子会话生效——已存在的子会话
+  // 沿用自身模式。
+  async function resolveChildMode(
+    params: WorkspaceScope & { orchestrationTaskId: string; planNodeId?: string },
+  ): Promise<ZCodeTaskMode | undefined> {
+    if (!params.planNodeId) return undefined;
+    let nodeMode: "build" | "edit" | "yolo" | null | undefined;
+    const planService = options.resolveOrchestrationPlanService?.();
+    if (planService) {
+      const map = await planService
+        .getPlansMap({
+          orchestrationTaskIds: [params.orchestrationTaskId],
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        })
+        .catch(() => undefined);
+      const plansMap = map?.[params.orchestrationTaskId];
+      const plan = plansMap?.plans.find((candidate) => candidate.planId === plansMap.activePlanId);
+      nodeMode = plan?.nodes.find((candidate) => candidate.nodeId === params.planNodeId)?.mode;
+    }
+    if (nodeMode) return nodeMode;
+    const snapshot = await zcodeAgentService
+      .readSession({
+        sessionId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        messageLimit: 1,
+      })
+      .catch(() => null);
+    const mode = snapshot?.settings.mode?.current;
+    return mode === "build" || mode === "edit" || mode === "yolo" ? mode : undefined;
+  }
+
   const service: IOrchestrationTaskService = {
     async spawnSubTask(params) {
       await ensureOrchestratorMeta(taskIndexRepo, params);
@@ -350,6 +385,8 @@ export function createOrchestrationTaskService(options: {
       const childTaskName = params.name.trim().slice(0, 60) || "子任务";
       // 子任务模型解析（用户需求 2026-11-05）：节点指定 → 用之；缺省跟随主任务当前选型。
       const childModelSelection = await resolveChildModelSelection(params);
+      // 子任务权限模式解析（用户需求 2026-11-05）：节点指定/跟随主任务；undefined = 工作区默认。
+      const childMode = await resolveChildMode(params);
       // 占位先行（用户需求 2026-11-05 派发竞态修复）：带 planNodeId 的派发在创建子任务
       // **之前**原子占位节点（pending/stale → dispatched，childTaskId 留空）——host 引擎
       // 扫描与用户点击/双击的并发派发在此写上序列化，抢不到占位的直接收到
@@ -377,6 +414,8 @@ export function createOrchestrationTaskService(options: {
           // 子任务模型（用户需求 2026-11-05）：节点指定/跟随主任务的解析结果；undefined =
           // 全局默认（与既有行为一致）。
           ...(childModelSelection ? { modelSelection: childModelSelection } : {}),
+          // 子任务权限模式（用户需求 2026-11-05）：节点指定/跟随主任务；undefined = 工作区默认。
+          ...(childMode ? { mode: childMode } : {}),
         });
         // 先落关系再发指令：sendPrompt 失败时关系与任务仍在，错误抛回编排会话即可重试。
         await taskIndexRepo.linkOrchestrationChild({

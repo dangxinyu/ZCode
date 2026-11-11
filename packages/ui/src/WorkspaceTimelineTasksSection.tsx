@@ -296,6 +296,73 @@ export function WorkspaceTimelineTasksSection({
     },
     [intl, workspaceServiceLookup],
   );
+  // 行尾归档按钮（用户确认 2026-10-23，spec: orchestration-tasks.md）：解链 + 归档
+  // 一体动作——归档不参与统筹是硬性规定，挂在编排名下的任务必须先解除关系才能归档，
+  // 合并成一次确认一次调用。解链失败即中止（保持"归档的一定不在册"）；关系已不在册
+  // （unlinked=false，曾解链/未关联）也继续归档。
+  const archiveOrchestrationChild = useCallback(
+    (params: {
+      orchestrationTaskId: string;
+      childWorkspacePath: string;
+      childTaskId: string;
+      childWorkspaceIdentity?: string;
+    }) => {
+      const workspaceServices = workspaceServiceLookup.get(
+        buildTaskWorkspaceKey(params.childWorkspacePath, params.childWorkspaceIdentity),
+      );
+      if (!workspaceServices) {
+        return;
+      }
+      const childScope = {
+        workspacePath: params.childWorkspacePath,
+        ...(params.childWorkspaceIdentity
+          ? { workspaceIdentity: params.childWorkspaceIdentity }
+          : {}),
+      };
+      void workspaceServices.services.zcodeTaskService
+        .unlinkOrchestrationChild({
+          orchestrationTaskId: params.orchestrationTaskId,
+          ...childScope,
+          childTaskId: params.childTaskId,
+        })
+        .then(() =>
+          workspaceServices.services.zcodeTaskService.archiveTask({
+            taskId: params.childTaskId,
+            ...childScope,
+          }),
+        )
+        .then(() => {
+          removeTaskStateRef.current(
+            params.childWorkspacePath,
+            params.childTaskId,
+            params.childWorkspaceIdentity,
+          );
+          if (params.childWorkspaceIdentity) {
+            useRemoteTimelineTaskStore
+              .getState()
+              .removeTask(
+                params.childWorkspacePath,
+                params.childTaskId,
+                params.childWorkspaceIdentity,
+              );
+            useRemotePinnedTaskStore
+              .getState()
+              .removeTask(
+                params.childWorkspacePath,
+                params.childTaskId,
+                params.childWorkspaceIdentity,
+              );
+          }
+          // 解链与归档跨分区生效（编排下拉、归档区、普通时间线、其他窗口）：
+          // bump 全局刷新串号统一重拉——局部 refresh 只覆盖本组件实例，会漏。
+          bumpTaskListManualRefresh();
+        })
+        .catch(() => {
+          toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildArchiveFailed" }));
+        });
+    },
+    [intl, workspaceServiceLookup],
+  );
   // 权威子关系（links）按编排拉取：多编排跟踪下 tasks 行的 parent 列只记首个父，
   // 第二父的下拉/计数必须查 links。触达面：编排分区可见的 orchestrator 行
   // （数量级小）；手动刷新串号变化时重拉。
@@ -1238,6 +1305,18 @@ export function WorkspaceTimelineTasksSection({
                                     childWorkspaceIdentity,
                                   });
                                 }}
+                                onArchiveTask={(
+                                  childWorkspacePath,
+                                  childTaskId,
+                                  childWorkspaceIdentity,
+                                ) => {
+                                  archiveOrchestrationChild({
+                                    orchestrationTaskId: item.taskId,
+                                    childWorkspacePath,
+                                    childTaskId,
+                                    childWorkspaceIdentity,
+                                  });
+                                }}
                                 isActiveTaskId={(child) =>
                                   child.taskId === activeTaskId &&
                                   buildTaskWorkspaceKey(
@@ -1441,8 +1520,8 @@ export function WorkspaceTimelineTasksSection({
               // timeline 目标是单向分页：普通分区每次 +20 条阶梯；编排分区（拉全量
               // 后本地分页）每次 +5 主任务。不复用"显示更少"的旧展开/收起方案，
               // 避免按钮状态和真实分页语义冲突。
-              setVisibleTaskLimit((current) =>
-                current + (orchestrationOnly ? orchestrationPageSize : collapsedLimit),
+              setVisibleTaskLimit(
+                (current) => current + (orchestrationOnly ? orchestrationPageSize : collapsedLimit),
               );
             }}
           >

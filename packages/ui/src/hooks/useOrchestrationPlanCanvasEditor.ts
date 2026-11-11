@@ -89,6 +89,8 @@ function buildFlowNodes(
       model: node.model ?? null,
       // 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。
       thoughtLevel: node.thoughtLevel ?? null,
+      // 权限模式（用户需求 2026-11-05）：null = 跟随主任务；build/edit/yolo = 指定。
+      mode: node.mode ?? null,
       w: node.layout?.w,
       h: node.layout?.h,
       editingName: editable && inlineEditNodeId === node.nodeId,
@@ -430,6 +432,7 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
           | "pinnedSkills"
           | "model"
           | "thoughtLevel"
+          | "mode"
         >
       >,
     ) => {
@@ -713,6 +716,7 @@ export function useOrchestrationPlanCanvasEditor(params: OrchestrationPlanCanvas
                 // 子任务模型/档位逐节点携带（null = 跟随主任务，JSON 保留 null 可表达改回）。
                 model: node.data.model ?? null,
                 thoughtLevel: node.data.thoughtLevel ?? null,
+                mode: node.data.mode ?? null,
               }),
           ...(node.data.isStart ? { isStart: true } : {}),
           layout: {

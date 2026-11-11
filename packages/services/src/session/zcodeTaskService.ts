@@ -747,6 +747,8 @@ export interface IZCodeTaskService {
       model?: ModelSelection | null;
       /** 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。 */
       thoughtLevel?: string | null;
+      /** 子任务权限模式（用户需求 2026-11-05）：build/edit/yolo；null = 跟随主任务。 */
+      mode?: "build" | "edit" | "yolo" | null;
       layout?: { x: number; y: number; w?: number; h?: number };
     }>;
   }): Promise<ZCodeOrchestrationPlansMap>;

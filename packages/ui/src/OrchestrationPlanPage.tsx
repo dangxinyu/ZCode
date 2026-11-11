@@ -152,6 +152,28 @@ export function OrchestrationPlanPage({
     for (const item of sessionIndexItems) map[item.taskId] = item.title;
     return map;
   }, [sessionIndexItems]);
+  // 主任务当前选型（用户需求 2026-11-05）：节点「跟随主任务」链路的生效模型展示与档位
+  // 候选都依赖它（getTaskModelSelection 读绑定会话的最新实际选型，非目录反推）。
+  const [orchestratorModel, setOrchestratorModel] = useState<ModelSelection | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const taskService = taskServiceRef.current;
+    if (!taskService || !sessionId) {
+      setOrchestratorModel(null);
+      return;
+    }
+    void taskService
+      .getTaskModelSelection({ taskId: sessionId })
+      .then((selection) => {
+        if (!cancelled) setOrchestratorModel(selection);
+      })
+      .catch(() => {
+        if (!cancelled) setOrchestratorModel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
   // 子任务模型候选（用户需求 2026-11-05）：useModelSelectionView 目录；视觉标识走产品
   // 统一规则 shouldShowModelVisionBadge——套餐 GLM-5.3 的图片输入是服务端桥接，不是
   // 原生视觉，不标（与模型选择器/委托入口同一判定，避免"5.3 没有视觉却标了视觉"）。
@@ -259,6 +281,7 @@ export function OrchestrationPlanPage({
         pinnedSkills: selectedFlowNode.data.pinnedSkills,
         model: selectedFlowNode.data.model ?? null,
         thoughtLevel: selectedFlowNode.data.thoughtLevel ?? null,
+        mode: selectedFlowNode.data.mode ?? null,
       }
     : null;
 
@@ -761,12 +784,15 @@ export function OrchestrationPlanPage({
             }
             childModel={editNode.model ?? null}
             planChildModelDefault={plan?.childModelDefault ?? null}
+            orchestratorModel={orchestratorModel}
             modelCandidates={modelCandidates}
             onPickChildModel={(model) => editor.updateNodeData(editNode.nodeId, { model })}
             thoughtLevel={editNode.thoughtLevel ?? null}
             onPickThoughtLevel={(level) =>
               editor.updateNodeData(editNode.nodeId, { thoughtLevel: level })
             }
+            childMode={editNode.mode ?? null}
+            onPickChildMode={(mode) => editor.updateNodeData(editNode.nodeId, { mode })}
             onPatch={(partial) => editor.updateNodeData(editNode.nodeId, partial)}
           />
         ) : null}

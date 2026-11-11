@@ -401,6 +401,10 @@ export function createOrchestrationPlanService(options: {
             ...(node.isStart || node.thoughtLevel === undefined
               ? {}
               : { thoughtLevel: node.thoughtLevel }),
+            // 权限模式同口径透传（用户需求 2026-11-05）。
+            ...(node.isStart || node.mode === undefined
+              ? {}
+              : { mode: node.mode }),
             // 布局必须透传：UI 画布保存（拖动/缩放）走的就是本通道，丢了 layout
             // 修订 diff 会保留旧位置，用户改动的位置和尺寸永远存不上（用户实测）。
             ...(node.layout ? { layout: node.layout } : {}),

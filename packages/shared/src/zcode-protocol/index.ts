@@ -3679,6 +3679,10 @@ export const zcodeOrchestrationPlanNodeSchema = z
     /** 思考档位（用户需求 2026-11-05）：null/缺字段 = 跟随主任务当前档位；字符串 =
      * 指定档位（须在该模型目录 optionSpecs.reasoningLevel.values 内）。 */
     thoughtLevel: z.string().nullable().optional(),
+    /** 子任务权限模式（用户需求 2026-11-05"三种模式加第四种默认跟随主任务"）：
+     * build = 变更前确认 / edit = 自动编辑 / yolo = 完全访问；null/缺字段 = 跟随主任务
+     * 当前模式。仅对 spawn 新派生的子会话生效（已存在的子会话沿用自身模式）。 */
+    mode: z.enum(["build", "edit", "yolo"]).nullable().optional(),
     /** 微调重执行的原原子任务引用（pending + reuse = 确认后优先下发原子任务）。 */
     reuseChildTaskId: z.string().nullable().optional(),
     /** 画布布局（用户拖动/缩放的自由布局持久化；缺省 = 自动分层布局）。 */

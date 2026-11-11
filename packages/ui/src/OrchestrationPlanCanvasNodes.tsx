@@ -76,6 +76,8 @@ export type CardData = {
   model?: ModelSelection | null;
   /** 思考档位（用户需求 2026-11-05）：null = 跟随主任务；字符串 = 指定档位。 */
   thoughtLevel?: string | null;
+  /** 子任务权限模式（用户需求 2026-11-05）：build/edit/yolo；null = 跟随主任务。 */
+  mode?: "build" | "edit" | "yolo" | null;
   w?: number;
   h?: number;
   /** 双击节点进入内联改名（用户需求 2026-10-29：模块内可编辑文字）。 */

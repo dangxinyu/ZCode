@@ -37,6 +37,9 @@ export interface ProposedPlanNode {
   /** 思考档位（用户需求 2026-11-05）：null/缺省 = 跟随主任务；字符串 = 指定档位。
    * 语义同 model：agent 提案缺省保留存量；UI 保存逐节点携带。 */
   thoughtLevel?: string | null;
+  /** 子任务权限模式（用户需求 2026-11-05）：build=变更前确认 / edit=自动编辑 /
+   * yolo=完全访问；null/缺省 = 跟随主任务当前模式。仅 spawn 新子会话生效。 */
+  mode?: "build" | "edit" | "yolo" | null;
   /** 手动绑定的子任务（用户需求 2026-11-03 画布可编辑配置）：UI 保存随节点携带
    * （null = 显式解绑）；缺省（agent 提案）按存量语义处理，仅 pending 节点生效。 */
   childTaskId?: string | null;
@@ -288,9 +291,21 @@ export function revisePlanNodes(
   const nodes: OrchestrationPlanNode[] = proposed.map((node) => {
     const bound = frozen.get(node.nodeId);
     if (bound && !modifiedIds.has(node.nodeId)) {
-      // 冻结节点保留执行事实（status/childTaskId），但布局是纯展示（用户需求
-      // 2026-10-30：确认后画布可编辑，拖动/缩放保存后不能弹回旧位置）。
-      return node.layout ? { ...bound, layout: node.layout } : bound;
+      // 冻结节点（dispatched/terminal）保留**执行事实**（status/childTaskId/锁定/复用
+      // 引用——这些是运行中与历史的权威记录，画布改了也会被 host 拒），但**可编辑配置**
+      // （autoExecute/pinnedSkills/model/thoughtLevel/mode）与布局（纯展示）接受提案值
+      // （用户需求 2026-11-05 实测：运行中节点调「完成后自动执行下游」保存后被弹回——
+      // 该开关控制它完成时是否释放下游，对执行中节点恰是最有用的调节项）。提案缺省
+      // 字段沿用存量，与下方修改节点的合并规则一致。
+      return {
+        ...bound,
+        autoExecute: node.autoExecute ?? bound.autoExecute ?? defaultAuto,
+        pinnedSkills: node.pinnedSkills ?? bound.pinnedSkills ?? [],
+        model: node.model !== undefined ? node.model : (bound.model ?? null),
+        thoughtLevel: node.thoughtLevel !== undefined ? node.thoughtLevel : (bound.thoughtLevel ?? null),
+        mode: node.mode !== undefined ? node.mode : (bound.mode ?? null),
+        ...(node.layout ? { layout: node.layout } : {}),
+      };
     }
     if (bound) {
       return {
@@ -325,6 +340,10 @@ export function revisePlanNodes(
               thoughtLevel:
                 node.thoughtLevel !== undefined ? node.thoughtLevel : (bound.thoughtLevel ?? null),
             }),
+        // 权限模式同口径（用户需求 2026-11-05）：UI 优先，agent 缺省沿用存量。
+        ...(node.isStart
+          ? {}
+          : { mode: node.mode !== undefined ? node.mode : (bound.mode ?? null) }),
         status: "pending",
         // 绑定随保存落库（用户需求 2026-11-03 改版）：提案携带的用户绑定优先；
         // 未携带（agent 修订提案）→ 沿用旧绑定（不再清空只留微调提示）。
@@ -351,6 +370,7 @@ export function revisePlanNodes(
       // 全新节点：提案携带则用（agent 不带 → null = 跟随主任务）。
       ...(node.isStart ? {} : { model: node.model ?? null }),
       ...(node.isStart ? {} : { thoughtLevel: node.thoughtLevel ?? null }),
+      ...(node.isStart ? {} : { mode: node.mode ?? null }),
       status: "pending",
       // 全新节点：提案携带的用户绑定直接生效（用户需求 2026-11-03 改版）。
       childTaskId: node.isStart ? null : (node.childTaskId ?? null),

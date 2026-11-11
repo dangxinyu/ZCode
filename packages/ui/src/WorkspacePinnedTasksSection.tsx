@@ -237,6 +237,56 @@ export function WorkspacePinnedTasksSection({
     },
     [baseServices, intl],
   );
+  // 行尾归档按钮（用户确认 2026-10-23，与编排分区同规则）：解链 + 归档一体——
+  // 归档不参与统筹是硬性规定，挂在编排名下的任务必须先解除关系才能归档。
+  // 关系已不在册（unlinked=false）也继续归档；解链失败中止并提示。
+  const archiveOrchestrationChild = useCallback(
+    (params: {
+      orchestrationTaskId: string;
+      childWorkspacePath: string;
+      childTaskId: string;
+      childWorkspaceIdentity?: string;
+    }) => {
+      const services = params.childWorkspaceIdentity
+        ? getRemoteWorkspaceServicesForIdentity(params.childWorkspaceIdentity)
+        : baseServices;
+      if (!services) {
+        return;
+      }
+      const childScope = {
+        workspacePath: params.childWorkspacePath,
+        ...(params.childWorkspaceIdentity
+          ? { workspaceIdentity: params.childWorkspaceIdentity }
+          : {}),
+      };
+      void services.zcodeTaskService
+        .unlinkOrchestrationChild({
+          orchestrationTaskId: params.orchestrationTaskId,
+          ...childScope,
+          childTaskId: params.childTaskId,
+        })
+        .then(() =>
+          services.zcodeTaskService.archiveTask({
+            taskId: params.childTaskId,
+            ...childScope,
+          }),
+        )
+        .then(() => {
+          removeTaskStateRef.current(
+            params.childWorkspacePath,
+            params.childTaskId,
+            params.childWorkspaceIdentity,
+          );
+          // 跨分区生效（编排下拉、归档区、普通时间线、其他窗口）：bump 全局
+          // 刷新串号统一重拉——局部 refresh 只覆盖本组件实例，会漏。
+          bumpTaskListManualRefresh();
+        })
+        .catch(() => {
+          toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildArchiveFailed" }));
+        });
+    },
+    [baseServices, intl],
+  );
   // 权威子关系（links）按编排拉取（与编排分区同规则）：多编排跟踪下 parent 列
   // 只记首个父，第二父的下拉/计数必须查 links。
   const manualRefreshSerial = useTaskListManualRefreshSerial();
@@ -915,6 +965,14 @@ export function WorkspacePinnedTasksSection({
                       }}
                       onUnlinkTask={(childWorkspacePath, childTaskId, childWorkspaceIdentity) => {
                         unlinkOrchestrationChild({
+                          orchestrationTaskId: item.taskId,
+                          childWorkspacePath,
+                          childTaskId,
+                          childWorkspaceIdentity,
+                        });
+                      }}
+                      onArchiveTask={(childWorkspacePath, childTaskId, childWorkspaceIdentity) => {
+                        archiveOrchestrationChild({
                           orchestrationTaskId: item.taskId,
                           childWorkspacePath,
                           childTaskId,

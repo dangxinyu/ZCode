@@ -1228,6 +1228,11 @@ const zhCN: Record<string, string> = {
   "confirmDialog.orchestrationChildUnlinkDescription":
     "取消后「{title}」将回归普通任务，编排不再接收它的完成通知，也不会再自动把它关联回来。需要时可重新关联。",
   "workspaceSidebar.orchestrationChildUnlinkFailed": "取消关联失败，请重试",
+  "workspaceSidebar.orchestrationChildArchive": "断开关联并归档（移入归档区，不再收下发与终态）",
+  "confirmDialog.orchestrationChildArchiveTitle": "断开关联并归档该子任务？",
+  "confirmDialog.orchestrationChildArchiveDescription":
+    "「{title}」将与主任务解除关联并移入归档区：不再接受编排下发，编排也不再接收它的终态通知。需要时可在归档区恢复。",
+  "workspaceSidebar.orchestrationChildArchiveFailed": "归档失败，请重试",
   "orchestration.plan.modeToggle": "计划模式",
   "orchestration.plan.modeToggleHint":
     "开启后：编排收到需求先提交计划草案，你在界面确认后才派生子任务",
@@ -1283,13 +1288,16 @@ const zhCN: Record<string, string> = {
   "orchestration.plan.childModelDefaultHint":
     "计划内未显式指定模型的节点统一用该模型；视觉模型设一次全计划生效。改「跟随主任务」则子任务用主任务当前模型。",
   "orchestration.plan.thoughtLevelField": "思考档位",
+  "orchestration.plan.childModeField": "子任务权限模式",
+  "orchestration.plan.childModeFollow": "跟随主任务",
+  "orchestration.plan.childModeHint":
+    "派生子任务使用的权限模式；缺省跟随主任务当前模式。仅对派生的新子任务生效，已存在的子任务沿用自身模式。",
   "orchestration.plan.thoughtLevelHint":
     "派发子任务使用的思考档位；缺省跟随主任务当前档位，声明档位的模型未选时会用目录最低档兜底。",
   "orchestration.plan.childFrozenHint":
     "执行中/已完成的节点绑定不可修改（执行事实）；等它完成或终态后再调整。",
   "orchestration.plan.autoAll": "全部自动",
-  "orchestration.plan.autoAllHint":
-    "总控开关：点一下开启全部节点的自动执行，再点一下全部关闭。",
+  "orchestration.plan.autoAllHint": "总控开关：点一下开启全部节点的自动执行，再点一下全部关闭。",
   "orchestration.plan.actionFailed": "操作失败：{message}",
   "orchestration.plan.startBadge": "开始",
   "orchestration.plan.deleteNodeConfirmTitle": "删除节点「{name}」？",

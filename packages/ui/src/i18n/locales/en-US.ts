@@ -1319,6 +1319,12 @@ const enUS: Record<string, string> = {
   "confirmDialog.orchestrationChildUnlinkDescription":
     'Once unlinked, "{title}" returns to a normal task; the orchestration stops receiving its terminal notifications and will not relink it automatically. You can link it again anytime.',
   "workspaceSidebar.orchestrationChildUnlinkFailed": "Failed to unlink, please retry",
+  "workspaceSidebar.orchestrationChildArchive":
+    "Unlink and archive (moves to archived; stops dispatches and terminal notifications)",
+  "confirmDialog.orchestrationChildArchiveTitle": "Unlink and archive this child task?",
+  "confirmDialog.orchestrationChildArchiveDescription":
+    '"{title}" will be unlinked from the orchestration and moved to the archived list: it no longer receives dispatches, and the orchestration stops receiving its terminal notifications. You can restore it from the archived list.',
+  "workspaceSidebar.orchestrationChildArchiveFailed": "Failed to archive, please retry",
   "orchestration.plan.modeToggle": "Plan mode",
   "orchestration.plan.modeToggleHint":
     "When on: the orchestration proposes a plan draft first; child tasks spawn only after you confirm it here",
@@ -1375,6 +1381,10 @@ const enUS: Record<string, string> = {
   "orchestration.plan.childModelDefaultHint":
     "Nodes without an explicit model use this one; setting a vision model once covers the whole plan. Switching to Follow orchestrator makes children use the orchestrator's current model.",
   "orchestration.plan.thoughtLevelField": "Reasoning level",
+  "orchestration.plan.childModeField": "Child permission mode",
+  "orchestration.plan.childModeFollow": "Follow orchestrator",
+  "orchestration.plan.childModeHint":
+    "Permission mode for spawned child tasks; defaults to the orchestrator's current mode. Applies to newly spawned children only.",
   "orchestration.plan.thoughtLevelHint":
     "Reasoning level used by the dispatched child task; defaults to the orchestrator's current level. Models declaring levels fall back to their lowest level when unset.",
   "orchestration.plan.childFrozenHint":

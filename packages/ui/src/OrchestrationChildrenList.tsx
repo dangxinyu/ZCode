@@ -8,7 +8,7 @@
 // 解除后编排不再收该任务的终态，误触代价高，必须弹窗二次确认。
 import { memo } from "react";
 import type { ZCodeTaskMeta, ZCodeOrchestrationPlansMap } from "@zcode/shared";
-import { ArrowUpRight, CornerDownRight, LoaderIcon, Pin, Unlink } from "lucide-react";
+import { Archive, ArrowUpRight, CornerDownRight, LoaderIcon, Pin, Unlink } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { cn } from "@/components/lib/utils.js";
@@ -50,6 +50,15 @@ interface OrchestrationChildrenListProps {
     taskId: string,
     targetWorkspaceIdentity?: string,
   ) => void;
+  /**
+   * 行尾归档按钮（用户确认 2026-10-23）：解链 + 归档一体（二次确认通过后调用）。
+   * 归档不参与统筹（spec 硬性规定），挂在编排名下的任务归档前必须先解除关系。
+   */
+  onArchiveTask: (
+    targetWorkspacePath: string,
+    taskId: string,
+    targetWorkspaceIdentity?: string,
+  ) => void;
 }
 
 /** 确认弹窗承担二次确认（useConfirmDialog），组件内不再有武装态。 */
@@ -78,6 +87,7 @@ const OrchestrationChildrenListComponent = ({
   onOpenTask,
   onJumpToTask,
   onUnlinkTask,
+  onArchiveTask,
   plansMap,
   onCreatePlan,
   onRenamePlan,
@@ -228,6 +238,38 @@ const OrchestrationChildrenListComponent = ({
                   }}
                 >
                   <Unlink aria-hidden="true" className="size-3" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={intl.formatMessage({
+                    id: "workspaceSidebar.orchestrationChildArchive",
+                  })}
+                  title={intl.formatMessage({
+                    id: "workspaceSidebar.orchestrationChildArchive",
+                  })}
+                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
+                  onClick={() => {
+                    // 归档 = 解链 + 移入归档区（spec 硬性规定：归档不参与统筹，
+                    // 挂在编排名下必须先解除关系）。误触代价高于解链，同样二次确认。
+                    void (async () => {
+                      const confirmed = await confirmDialog({
+                        title: intl.formatMessage({
+                          id: "confirmDialog.orchestrationChildArchiveTitle",
+                        }),
+                        description: intl.formatMessage(
+                          { id: "confirmDialog.orchestrationChildArchiveDescription" },
+                          { title: child.title || child.taskId },
+                        ),
+                        confirmLabel: intl.formatMessage({ id: "common.confirm" }),
+                      });
+                      if (!confirmed) {
+                        return;
+                      }
+                      onArchiveTask(child.workspacePath, child.taskId, child.workspaceIdentity);
+                    })();
+                  }}
+                >
+                  <Archive aria-hidden="true" className="size-3" />
                 </button>
                 <button
                   type="button"

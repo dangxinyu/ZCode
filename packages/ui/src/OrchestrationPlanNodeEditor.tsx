@@ -42,6 +42,8 @@ export interface PlanNodeEditorProps {
   childModel: ModelSelection | null;
   /** 计划级子任务默认模型：未显式指定的节点显示它的生效值（工具栏改这里，节点跟着动）。 */
   planChildModelDefault: ModelSelection | null;
+  /** 主任务当前选型（getTaskModelSelection）：跟随主任务链路的生效模型与档位候选来源。 */
+  orchestratorModel: ModelSelection | null;
   /** 模型候选（useModelSelectionView 目录；supportsImage 的带视觉标识）。 */
   modelCandidates: Array<{
     providerId: string;
@@ -55,6 +57,10 @@ export interface PlanNodeEditorProps {
   thoughtLevel: string | null;
   /** 选思考档位（null = 跟随主任务）。 */
   onPickThoughtLevel: (level: string | null) => void;
+  /** 子任务权限模式（用户需求 2026-11-05）：null = 跟随主任务；build/edit/yolo = 指定。 */
+  childMode: "build" | "edit" | "yolo" | null;
+  /** 选权限模式（null = 跟随主任务）。 */
+  onPickChildMode: (mode: "build" | "edit" | "yolo" | null) => void;
   /** 字段编辑统一入口（flow 节点 data 直写）。 */
   onPatch: (partial: { name?: string; goal?: string; needsUpstreamResult?: boolean }) => void;
 }
@@ -69,10 +75,13 @@ export function PlanNodeEditor({
   onPickPinnedSkill,
   childModel,
   planChildModelDefault,
+  orchestratorModel,
   modelCandidates,
   onPickChildModel,
   thoughtLevel,
   onPickThoughtLevel,
+  childMode,
+  onPickChildMode,
   onPatch,
 }: PlanNodeEditorProps) {
   const { intl } = useZCodeIntl();
@@ -83,7 +92,13 @@ export function PlanNodeEditor({
   // 生效模型（用户需求 2026-11-05"修改上边下边要跟着动"）：节点未显式指定（null）时
   // 实际生效的是计划默认 → 主任务链，展示直接读解析结果而不是裸的显式配置——工具栏
   // 改计划默认，未指定节点的下拉显示立即跟随。
-  const effectiveChildModel = childModel ?? planChildModelDefault;
+  const effectiveChildModel = childModel ?? planChildModelDefault ?? orchestratorModel;
+  // 未指定项文案：计划默认设了显示它（带标），否则显示主任务当前模型（跟随语义）。
+  const followOptionLabel = planChildModelDefault
+    ? `${planChildModelDefault.modelId}（${intl.formatMessage({ id: "orchestration.plan.childModelPlanDefaultBadge" })}）`
+    : orchestratorModel
+      ? `${orchestratorModel.modelId}（${intl.formatMessage({ id: "orchestration.plan.childModelFollow" })}）`
+      : intl.formatMessage({ id: "orchestration.plan.childModelFollow" });
   // 目标编辑 IME 安全（用户需求 2026-11-03）：合成期间本地镜像、compositionEnd 提交。
   // 必须在 isStart 提前 return 之前调用——hooks 顺序不能随分支变化（React 强制）。
   const { fieldProps: goalField } = useImeSafeText<HTMLTextAreaElement>(
@@ -259,15 +274,9 @@ export function PlanNodeEditor({
           }}
           className="h-7 rounded-md border border-border-subtle bg-background px-1.5 text-ui-xs text-foreground"
         >
-          {/* 未指定项的文案 = 当前生效来源：设了计划默认显示它（带计划默认标），否则跟随主任务。
+          {/* 未指定项的文案 = 当前生效来源：计划默认（带标）或主任务当前模型（跟随语义）。
               选它 = 清除显式指定（回到解析链）。 */}
-          <option
-            value=""
-          >
-            {planChildModelDefault
-              ? `${planChildModelDefault.modelId}（${intl.formatMessage({ id: "orchestration.plan.childModelPlanDefaultBadge" })}）`
-              : intl.formatMessage({ id: "orchestration.plan.childModelFollow" })}
-          </option>
+          <option value="">{followOptionLabel}</option>
           {/* 当前生效模型必须是选项：目录没加载/不含它时下拉才不会回落成跟随主任务。 */}
           {effectiveChildModel && !modelCandidates.some(
             (candidate) =>
@@ -318,6 +327,35 @@ export function PlanNodeEditor({
         </select>
         <p className="text-foreground-subtlest">
           {intl.formatMessage({ id: "orchestration.plan.thoughtLevelHint" })}
+        </p>
+      </div>
+      {/* 子任务权限模式（用户需求 2026-11-05"三种模式加第四种默认跟随主任务"）：
+       * build=变更前确认 / edit=自动编辑 / yolo=完全访问；仅 spawn 新子会话生效。 */}
+      <div className="flex shrink-0 flex-col gap-1 text-ui-xs text-foreground-subtle">
+        <div className="flex items-center gap-1">
+          {intl.formatMessage({ id: "orchestration.plan.childModeField" })}
+        </div>
+        <select
+          value={childMode ?? ""}
+          disabled={busy}
+          onChange={(event) =>
+            onPickChildMode(
+              event.target.value === "build" || event.target.value === "edit" || event.target.value === "yolo"
+                ? (event.target.value as "build" | "edit" | "yolo")
+                : null,
+            )
+          }
+          className="h-7 rounded-md border border-border-subtle bg-background px-1.5 text-ui-xs text-foreground"
+        >
+          <option value="">{intl.formatMessage({ id: "orchestration.plan.childModeFollow" })}</option>
+          <option value="build">{intl.formatMessage({ id: "mode.label.glm.build" })}</option>
+          <option value="edit">{intl.formatMessage({ id: "mode.label.glm.edit" })}</option>
+          <option value="yolo">{intl.formatMessage({ id: "mode.label.glm.yolo" })}</option>
+        </select>
+        <p className="text-foreground-subtlest">
+          {childMode
+            ? intl.formatMessage({ id: `mode.description.glm.${childMode}` })
+            : intl.formatMessage({ id: "orchestration.plan.childModeHint" })}
         </p>
       </div>
     </aside>
