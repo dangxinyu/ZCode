@@ -81,6 +81,46 @@ const ORCHESTRATION_PENDING_NOTIFIES_SCHEMA = `
   );
 `;
 
+// 0008：编排计划行（spec: packages/services/specs/orchestration-plan.md）。
+// 每编排任务一行：plan_mode 开关 + 计划状态 + 节点 JSON（host 是计划事实的唯一所有者）。
+const ORCHESTRATION_PLANS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS orchestration_plans (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    plan_mode INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'none',
+    plan_json TEXT NOT NULL DEFAULT '{}',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id)
+  );
+`;
+
+// 0009：编排计划 v2 —— 多计划（spec: packages/services/specs/orchestration-plan.md）。
+// 每编排任务多行计划（plan_id PK 部分 + is_active 选中态 + 标题）；0008 旧单行表数据
+// 迁入（生成 plan_id，保留 plan_mode/is_active 语义）。status 增加 completed 推导态。
+const ORCHESTRATION_PLANS_V2_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS orchestration_plans (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    plan_mode INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'none',
+    plan_json TEXT NOT NULL DEFAULT '{}',
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id, plan_id)
+  );
+  CREATE TABLE IF NOT EXISTS orchestration_plan_mode (
+    workspace_key TEXT NOT NULL,
+    orchestration_task_id TEXT NOT NULL,
+    plan_mode INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, orchestration_task_id)
+  );
+`;
+
 // 与 Agent 同样是库级串行事务，但不跨域依赖其具体 adapter。TS 转换使用冻结语义版本，
 // 禁用 function.toString 哈希：Electron/SEA 打包会改变函数文本而非迁移语义。
 const definitions = [
@@ -127,6 +167,21 @@ const definitions = [
     // 没有该定义），为避免与并行版本撞号取 0007。
     id: "0007_orchestration_pending_notify",
     checksumInput: [ORCHESTRATION_PENDING_NOTIFIES_SCHEMA],
+  },
+  {
+    // 0008：编排计划（spec: orchestration-plan.md）——可选计划模式 + 计划草案/确认/节点进度。
+    id: "0008_orchestration_plan",
+    checksumInput: [ORCHESTRATION_PLANS_SCHEMA],
+  },
+  {
+    // 0009：编排计划 v2 多计划（spec: orchestration-plan.md）。
+    id: "0009_orchestration_plans_v2",
+    checksumInput: ["orchestration-plans-v2-multi-plan-v1"],
+  },
+  {
+    // 0010：「另起新计划」等待态列（spec: orchestration-plan.md）。
+    id: "0010_orchestration_new_plan_pending",
+    checksumInput: ["orchestration-new-plan-pending-v1"],
   },
 ] as const;
 
@@ -181,6 +236,10 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0005_orchestration_unlink") applyOrchestrationUnlinkSchema(db);
       else if (migration.id === "0007_orchestration_pending_notify")
         db.exec(ORCHESTRATION_PENDING_NOTIFIES_SCHEMA);
+      else if (migration.id === "0008_orchestration_plan") db.exec(ORCHESTRATION_PLANS_SCHEMA);
+      else if (migration.id === "0009_orchestration_plans_v2") applyOrchestrationPlansV2(db);
+      else if (migration.id === "0010_orchestration_new_plan_pending")
+        applyOrchestrationNewPlanPending(db);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
@@ -254,6 +313,42 @@ function applyOrchestrationUnlinkSchema(db: DatabaseSync): void {
           AND l.unlinked_at IS NULL
       );
   `);
+}
+
+/** 0009：多计划表。旧 0008 表（同名 orchestration_plans）改名 → 建 v2 表 → 迁行（生成
+ * plan_id、置 is_active=1）→ 删旧表。全新库（无 0008 表）直接建表。库级事务内，失败回滚。 */
+function applyOrchestrationPlansV2(db: DatabaseSync): void {
+  const hadOldTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='orchestration_plans'")
+    .get();
+  if (hadOldTable) {
+    db.exec("ALTER TABLE orchestration_plans RENAME TO orchestration_plans_0008");
+  }
+  db.exec(ORCHESTRATION_PLANS_V2_SCHEMA);
+  if (hadOldTable) {
+    db.exec(`
+      INSERT INTO orchestration_plans
+        (workspace_key, orchestration_task_id, plan_id, title, plan_mode, status,
+         plan_json, is_active, created_at, updated_at)
+      SELECT workspace_key, orchestration_task_id,
+        'plan-' || lower(hex(randomblob(8))),
+        '', plan_mode, status, plan_json, 1, updated_at, updated_at
+      FROM orchestration_plans_0008;
+    `);
+    db.exec("DROP TABLE orchestration_plans_0008");
+  }
+}
+
+/** 0010：「另起新计划」等待态列（spec: orchestration-plan.md；用户需求 2026-10-29：
+ * 选中下拉入口只挂状态不发消息，起不起由后续对话决定）。挂在 orchestration_plan_mode
+ * 行上（per-orchestration 事实，零计划也可存）。PRAGMA 探测防重复加列。 */
+function applyOrchestrationNewPlanPending(db: DatabaseSync): void {
+  const existing = db.prepare("PRAGMA table_info(orchestration_plan_mode)").all();
+  if (!existing.some((entry) => entry.name === "pending_new_plan")) {
+    db.exec(
+      "ALTER TABLE orchestration_plan_mode ADD COLUMN pending_new_plan INTEGER NOT NULL DEFAULT 0",
+    );
+  }
 }
 
 /** 交接只复用已完成初始化；每个新连接仍按冻结账本确认，替换/清空文件不能假 ready。 */

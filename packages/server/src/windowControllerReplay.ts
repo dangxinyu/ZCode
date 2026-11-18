@@ -135,10 +135,10 @@ export function createWindowControllerReplayService(
     return { items: visible, total: items.length, hasMore: items.length > visible.length };
   }
 
-  function scopeParamsOf(address: {
+  function scopeParamsOf(address: { workspacePath: string; workspaceIdentity?: string }): {
     workspacePath: string;
     workspaceIdentity?: string;
-  }): { workspacePath: string; workspaceIdentity?: string } {
+  } {
     return {
       workspacePath: address.workspacePath,
       ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
@@ -207,8 +207,14 @@ export function createWindowControllerReplayService(
       liveStatus: liveStatusFromMeta(meta.status),
     };
     return [
-      { op: "task.upserted", task: { ...task, membership: { pinned: true, archived: false, active: true } } },
-      { op: "task.upserted", task: { ...task, membership: { pinned: false, archived: false, active: true } } },
+      {
+        op: "task.upserted",
+        task: { ...task, membership: { pinned: true, archived: false, active: true } },
+      },
+      {
+        op: "task.upserted",
+        task: { ...task, membership: { pinned: false, archived: false, active: true } },
+      },
     ];
   }
 

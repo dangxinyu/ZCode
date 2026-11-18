@@ -132,6 +132,11 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { OrchestrationPlanPage } from "@/OrchestrationPlanPage.js";
+import {
+  closeOrchestrationPlanPage,
+  useOrchestrationPlanPageRequest,
+} from "@/lib/orchestrationPlanSync.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -1191,6 +1196,10 @@ export function SessionPane({
       store.getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource ===
       "orchestration",
   );
+  // 计划页视图（spec: orchestration-plan.md 用户需求点 3）：pageRequest 命中当前会话时
+  // 用计划页整体替换对话区（对话/计划来回切；关闭 = 回对话）。
+  const planPageRequest = useOrchestrationPlanPageRequest();
+  const showPlanPage = planPageRequest !== null && planPageRequest.sessionId === sessionId;
   const handleExternalTextInsertApplied = useCallback(
     (requestId: number) => {
       useZCodeSessionStore
@@ -1250,8 +1259,7 @@ export function SessionPane({
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
-    visionDelegateModel,
-    handleDraftSelectVisionDelegate,
+    handleDraftSetPinnedSkills,
     promoteComposerDraft,
     captureAcceptedModelSelection,
     replaceComposerDraft,
@@ -1378,6 +1386,7 @@ export function SessionPane({
   const toolGroupingChangesEnabled = sharedSettings?.toolGroupingChangesEnabled ?? false;
   const snapshotSessionId = snapshot?.sessionId ?? null;
   const snapshotFollowupMode = snapshot?.config.followupMode ?? null;
+  const snapshotPinnedSkills = snapshot?.config.pinnedSkills ?? null;
   const snapshotRevision = snapshot?.revision ?? null;
 
   // 注入模式对齐 PermissionDialog：theme/codePreviewSettings 在宿主取 store，
@@ -2303,9 +2312,8 @@ export function SessionPane({
     // 编排任务入口的预热身份：draftCreateSource 在 startDraft 时写入 store，
     // 预热创建时读取（spec: orchestration-tasks.md）。
     resolveOrchestrationRole: () =>
-      useZCodeSessionStore
-        .getState()
-        .getWorkspaceState(workspacePath, workspaceIdentity).draftCreateSource === "orchestration"
+      useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+        .draftCreateSource === "orchestration"
         ? "orchestrator"
         : undefined,
   });
@@ -2770,8 +2778,6 @@ export function SessionPane({
               "sendText",
               {
                 text: effectiveText,
-                // ...submission 已含 visionDelegateModel 三态（undefined 不携带、null 清除），
-                // 协议 sendText payload 由此自然承接，无需在此单独组装。
                 ...submission,
                 ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
                 ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
@@ -2823,8 +2829,6 @@ export function SessionPane({
             "createSession",
             {
               workspaceId: workspaceKey,
-              // firstInput 单独组装，但 ...submission 的展开已自然覆盖 visionDelegateModel
-              //（含 null 清除语义），无需再显式取 submission.visionDelegateModel。
               firstInput: { text: effectiveText, ...submission },
               ...draftConfigPayload,
               ...orchestrationCreatePayload,
@@ -3407,6 +3411,31 @@ export function SessionPane({
         );
         requireAcceptedConfigAck("setFollowupMode", ack);
       }
+
+      // 常驻 skill：预热首发走 sendText，不经过 createSession.config，这里是名单进入
+      // runtime 的唯一确定性时点（在首条 turn 之前）。与 followupMode 不同，失败不阻断
+      // 发送——最坏结果是首个 turn 缺常驻注入，后续同步 effect 会继续收敛。
+      const projectedPinned = projectedConfig?.pinnedSkills ?? [];
+      const desiredPinned = desiredConfig.pinnedSkills;
+      if (
+        desiredPinned &&
+        (projectedPinned.length !== desiredPinned.length ||
+          projectedPinned.some((name, index) => name !== desiredPinned[index]))
+      ) {
+        const ack = await dispatchConfigCas(
+          "setPinnedSkills",
+          { skills: desiredPinned },
+          { targetSessionId },
+        );
+        if (
+          !ack ||
+          !(ack.status === "accepted" || ack.status === "noop" || ack.status === "duplicate")
+        ) {
+          logger.warn(
+            `[v4-pane] setPinnedSkills 首发前未收敛: ${ack?.status ?? "missing-ack"} ${ack?.reasonCode ?? ""}`,
+          );
+        }
+      }
     },
     [appFollowupMode, dispatchConfigCas, draftConfigRef],
   );
@@ -3438,6 +3467,40 @@ export function SessionPane({
     sessionId,
     snapshotFollowupMode,
     snapshotRevision,
+    snapshotSessionId,
+  ]);
+  // ── 常驻 skill：workspace 偏好 → runtime 同步（setPinnedSkills 命令，唯一 runtime 写路径）──
+  // 偏好（经 useDraftConfigControl 暴露在 draftConfig.pinnedSkills）是用户意图 owner；
+  // snapshot 投影是 runtime 回声。两者发散时按值补发一次命令，收敛（回声一致）后停止；
+  // 会话内即时改选与 prewarm 首发前同步都走同一条路。偏好为空 = workspace 级"无常驻"，
+  // 对旧会话同样收敛（常驻语义随 workspace 走，不再随会话草稿漂移）。
+  const pinnedSkillsSyncRef = useRef<string | null>(null);
+  const draftPinnedSkills = draftConfig.pinnedSkills ?? [];
+  useEffect(() => {
+    const targetSessionId = sessionId ?? prewarmSessionId;
+    if (!targetSessionId) return;
+    if (snapshotSessionId !== targetSessionId) return;
+    const desiredKey = JSON.stringify(draftPinnedSkills);
+    if (pinnedSkillsSyncRef.current === desiredKey) return;
+    const projected = snapshotPinnedSkills ?? [];
+    if (
+      projected.length === draftPinnedSkills.length &&
+      projected.every((name, index) => name === draftPinnedSkills[index])
+    ) {
+      pinnedSkillsSyncRef.current = desiredKey;
+      return;
+    }
+    pinnedSkillsSyncRef.current = desiredKey;
+    void configCommandBarrier.enqueue(() =>
+      dispatchConfigCas("setPinnedSkills", { skills: draftPinnedSkills }, { targetSessionId }),
+    );
+  }, [
+    configCommandBarrier,
+    dispatchConfigCas,
+    draftPinnedSkills,
+    prewarmSessionId,
+    sessionId,
+    snapshotPinnedSkills,
     snapshotSessionId,
   ]);
 
@@ -4404,6 +4467,7 @@ export function SessionPane({
       // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
       skillCatalogSessionId={effectiveSessionId}
+      onSetPinnedSkills={handleDraftSetPinnedSkills}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}
@@ -4445,8 +4509,6 @@ export function SessionPane({
       onStop={handleStopFromButton}
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
-      visionDelegateModel={visionDelegateModel}
-      onSelectVisionDelegate={handleDraftSelectVisionDelegate}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
@@ -4751,7 +4813,15 @@ export function SessionPane({
           </div>
         ) : null}
 
-        {errored ? (
+        {showPlanPage && sessionId ? (
+          <OrchestrationPlanPage
+            sessionId={sessionId}
+            workspacePath={workspacePath}
+            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+            focusPlanId={planPageRequest?.focusPlanId ?? null}
+            onBack={closeOrchestrationPlanPage}
+          />
+        ) : errored ? (
           <SessionSubscriptionErrorPanel
             error={state.lastError ?? intl.formatMessage({ id: "chat.error.connectionLost" })}
             sessionId={sessionId}

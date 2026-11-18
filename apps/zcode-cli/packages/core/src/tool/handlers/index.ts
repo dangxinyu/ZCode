@@ -45,9 +45,12 @@ import {
 } from "./cron.js";
 import { offPeakCreateToolEntry, offPeakListToolEntry } from "./off-peak.js";
 import {
+  bindPlanNodesToolEntry,
   linkTaskToolEntry,
   listOrchestrationChildrenToolEntry,
   listWorkspaceTasksToolEntry,
+  markPlanNodesStaleToolEntry,
+  proposeOrchestrationPlanToolEntry,
   sendChildTaskPromptToolEntry,
   spawnSubTaskToolEntry,
 } from "./orchestration.js";
@@ -100,6 +103,9 @@ export const builtInTools: ToolEntry[] = [
   offPeakListToolEntry,
   // 编排任务工具面：includeOrchestration 门 + orchestration_child 结构性禁用名单双保险。
   spawnSubTaskToolEntry,
+  proposeOrchestrationPlanToolEntry,
+  markPlanNodesStaleToolEntry,
+  bindPlanNodesToolEntry,
   linkTaskToolEntry,
   sendChildTaskPromptToolEntry,
   listOrchestrationChildrenToolEntry,
@@ -276,6 +282,13 @@ export function registerBuiltInTools(
         entry.metadata.name === "ListWorkspaceTasks") &&
       options.includeOrchestration !== true
     ) {
+      continue;
+    }
+    // 编排主任务不注册 EnterPlanMode（用户需求 2026-10-29）：编排有自己的计划机制
+    // （ProposeOrchestrationPlan），内置计划模式与它双轨打架——实测模型在编排会话里
+    // 误入计划模式。结构性排除（非状态相关）：ExitPlanMode 保留作逃生口，防历史 plan
+    // 态会话无法自出。
+    if (entry.metadata.name === "EnterPlanMode" && options.includeOrchestration === true) {
       continue;
     }
     if (

@@ -262,6 +262,56 @@ export async function applyRequestedSessionConfig(
   if (config.followupMode && config.followupMode !== "queue") {
     await record.app.setFollowupMode(config.followupMode);
   }
+
+  // pinnedSkills：与 runtime 真值不同才写，避免 createSession 每次空转事件。
+  if (config.pinnedSkills) {
+    const requested = normalizePinnedSkillNames(config.pinnedSkills);
+    const current = record.app.runtime.getPinnedSkills();
+    const unchanged =
+      current.length === requested.length && current.every((name, index) => name === requested[index]);
+    if (!unchanged) {
+      await record.app.setPinnedSkills(requested);
+    }
+  }
 }
 
-export const modelConfigHandlers = { switchModelConfig, switchCollaborationMode };
+/**
+ * setPinnedSkills：替换会话常驻 skill 名单（全量语义，空数组=清除）。
+ * 与 switchModelConfig 同族：同值切换 → noop ACK（config.unchanged）。
+ */
+async function setPinnedSkillsCommand(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const payload = envelope.payload as CommandPayloadMap["setPinnedSkills"];
+  const record = requireRecord(host, envelope.sessionId);
+  const next = normalizePinnedSkillNames(payload.skills);
+  const current = record.app.runtime.getPinnedSkills();
+  if (
+    current.length === next.length &&
+    current.every((name, index) => name === next[index])
+  ) {
+    throw new V4CommandNoopError(CONFIG_UNCHANGED);
+  }
+  await record.app.setPinnedSkills(next);
+  return undefined;
+}
+
+/** 与 core runtime methods/pinned-skills.ts 同规则的名单规范化（trim + 去重保序）。 */
+function normalizePinnedSkillNames(skills: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of skills) {
+    const name = raw.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    normalized.push(name);
+  }
+  return normalized;
+}
+
+export const modelConfigHandlers = {
+  switchModelConfig,
+  switchCollaborationMode,
+  setPinnedSkills: setPinnedSkillsCommand,
+};

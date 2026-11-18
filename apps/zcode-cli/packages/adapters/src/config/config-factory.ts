@@ -434,6 +434,10 @@ function resolveConfigDiagnosticLogMessage(
   if (code === "config_project_hooks_pending_trust") {
     return "Project hooks pending workspace trust";
   }
+  if (code === "config_section_invalid") return "Config section skipped";
+  if (code === "config_hooks_misplaced_migrated") {
+    return "Misplaced hooks events migrated under hooks.events";
+  }
   return "Config file failed to load";
 }
 
@@ -444,6 +448,8 @@ function resolveConfigDiagnosticLogEvent(
   if (code === "config_project_hooks_pending_trust") {
     return "config.project_hooks.pending_trust";
   }
+  if (code === "config_section_invalid") return "config.section.skipped";
+  if (code === "config_hooks_misplaced_migrated") return "config.hooks.misplaced_migrated";
   return "config.file.invalid";
 }
 

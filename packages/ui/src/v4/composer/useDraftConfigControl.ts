@@ -35,6 +35,10 @@ import {
   type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
+import {
+  readPinnedSkillPreference,
+  writePinnedSkillPreference,
+} from "@/v4/composer/pinnedSkillPreference.js";
 import { logger } from "@/logger.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
@@ -97,10 +101,8 @@ interface DraftConfigControl {
   handleDraftSelectModel: (modelProvider: string, model: string) => void;
   handleDraftSelectThought: (thought: string) => void;
   handleDraftSwitchMode: (mode: string) => void;
-  /** 视觉委托模型草稿当前值；null=用户显式清除，undefined=未选择。 */
-  visionDelegateModel: ModelSelection | null | undefined;
-  /** 选择视觉委托模型；modelId 传 null 表示显式清除会话级委托。 */
-  handleDraftSelectVisionDelegate: (providerId: string, modelId: string | null) => void;
+  /** 替换常驻 skill 名单（全量语义；空数组=清除）。 */
+  handleDraftSetPinnedSkills: (skills: string[]) => void;
 }
 
 export function useDraftConfigControl(params: {
@@ -144,6 +146,17 @@ export function useDraftConfigControl(params: {
   const [storedState, setStoredState] = useState(loadedScope);
   let currentState = storedState.scopeKey === scopeKey ? storedState : loadedScope;
   let draft = currentState.draft;
+  // 常驻 skill 是 workspace 级偏好（pinnedSkillPreference），不属于 per-session 草稿：
+  // promote 建会话会清空根草稿，per-scope 存储会让每次新建任务/打开会话页都「莫名清空」。
+  // 换 workspace 时在渲染期对齐（与 loadedScope 同款模式，避免闪烁双写）。
+  const [pinnedSkills, setPinnedSkillsState] = useState<string[]>(() =>
+    readPinnedSkillPreference(workspacePath, workspaceIdentity),
+  );
+  const pinnedSkillsWorkspaceRef = useRef(workspaceKey);
+  if (pinnedSkillsWorkspaceRef.current !== workspaceKey) {
+    pinnedSkillsWorkspaceRef.current = workspaceKey;
+    setPinnedSkillsState(readPinnedSkillPreference(workspacePath, workspaceIdentity));
+  }
   const modelSelectionRead = useModelSelectionServiceView(
     modelSelectionService,
     true,
@@ -191,11 +204,9 @@ export function useDraftConfigControl(params: {
       provider: effectiveSelection?.providerId ?? "",
       model: effectiveSelection?.modelId ?? "",
       thought: effectiveSelection?.options?.reasoningLevel ?? "",
-      // 不能写成 `?? undefined`：?? 对 null 也生效，会把「显式清除」降级成「未选择」，
-      // 提交时就丢失清除语义。这里三态原样透传给 Submission。
-      visionDelegateModel: draft.visionDelegateModel,
+      ...(pinnedSkills.length > 0 ? { pinnedSkills } : {}),
     }),
-    [draft.mode, draft.planEnabled, draft.visionDelegateModel, effectiveSelection],
+    [draft.mode, draft.planEnabled, pinnedSkills, effectiveSelection],
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
@@ -230,8 +241,6 @@ export function useDraftConfigControl(params: {
         provider: selection?.providerId ?? "",
         model: selection?.modelId ?? "",
         thought: selection?.options?.reasoningLevel ?? "",
-        // 同上：visionDelegateModel 三态（未选/已选/显式清除 null）原样进投影。
-        visionDelegateModel: next.visionDelegateModel,
       };
       setStoredState(nextState);
       persistV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, next);
@@ -466,17 +475,20 @@ export function useDraftConfigControl(params: {
     [updateDraftConfig],
   );
 
-  const handleDraftSelectVisionDelegate = useCallback(
-    (providerId: string, modelId: string | null) => {
-      // 委托模型只表达身份（无 reasoning 档位），不走 updateDraftConfig 的
-      // modelSelection 校验链（那条链会要求补齐 thought/完整选择）；
-      // null=显式清除，提交时随 payload 传达会话级清除语义。
-      updateComposerDraft((current) => ({
-        ...current,
-        visionDelegateModel: modelId === null ? null : { providerId, modelId },
-      }));
+  const handleDraftSetPinnedSkills = useCallback(
+    (skills: string[]) => {
+      // 写 workspace 级偏好：promote/clear 草稿、切换会话页都不再影响「常驻」选择；
+      // 运行时同步由 SessionPane 的 setPinnedSkills 命令链（唯一 runtime 写路径）负责。
+      writePinnedSkillPreference(workspacePath, workspaceIdentity, skills);
+      setPinnedSkillsState((current) => {
+        const normalized = skills.map((raw) => raw.trim()).filter(Boolean);
+        return current.length === normalized.length &&
+          current.every((name, index) => name === normalized[index])
+          ? current
+          : normalized;
+      });
     },
-    [updateComposerDraft],
+    [workspacePath, workspaceIdentity],
   );
 
   const handleDraftSwitchMode = useCallback(
@@ -515,8 +527,7 @@ export function useDraftConfigControl(params: {
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
-    visionDelegateModel: draft.visionDelegateModel,
-    handleDraftSelectVisionDelegate,
+    handleDraftSetPinnedSkills,
   };
 }
 

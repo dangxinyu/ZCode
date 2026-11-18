@@ -191,7 +191,13 @@ export function useGlobalTaskList(params: {
       workspaceSourceGenerationSignature,
       manualRefreshSerial: manualRefreshSerialRef.current + globalManualRefreshSerial,
     });
-  }, [controllerRevision, globalManualRefreshSerial, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
+  }, [
+    controllerRevision,
+    globalManualRefreshSerial,
+    load,
+    taskListVersionSignature,
+    workspaceSourceGenerationSignature,
+  ]);
 
   useEffect(() => {
     // 远程 workspace 从断开占位恢复为在线 session 时 identity/path 不变，
@@ -203,7 +209,13 @@ export function useGlobalTaskList(params: {
       workspaceSourceGenerationSignature,
       manualRefreshSerial: manualRefreshSerialRef.current + globalManualRefreshSerial,
     });
-  }, [controllerRevision, globalManualRefreshSerial, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
+  }, [
+    controllerRevision,
+    globalManualRefreshSerial,
+    load,
+    taskListVersionSignature,
+    workspaceSourceGenerationSignature,
+  ]);
 
   const hasRemoteScope = params.workspaceTabs.some((tab) => Boolean(tab.workspaceIdentity));
   return {

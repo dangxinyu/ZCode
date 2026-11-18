@@ -41,7 +41,6 @@ import {
   TID_V4_ATTACHMENT_UPLOAD_RETRY,
   TID_V4_STOP,
   testId,
-  type ModelSelection,
   type PlanIdentitySnapshot,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -120,6 +119,7 @@ import {
 import { appendWorkspaceFileMentionToComposer } from "@/lib/workspaceFileComposer.js";
 import { resolveProviderBaseURL } from "@/lib/registryProviderView.js";
 import type { ModelSelectionView } from "@zcode/services";
+import { useOrchestrationPlanControl } from "@/hooks/useOrchestrationPlanControl.js";
 import type { ModelSelectionState } from "@/hooks/useModelSelectionView.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import {
@@ -153,6 +153,8 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
+import { V4ComposerPinnedSkillEntry } from "@/v4/composer/V4ComposerPinnedSkillEntry.js";
+import { useSkills } from "@/hooks/useSkills.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -429,11 +431,9 @@ interface ConversationComposerProps {
   ) => void;
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
-  /** 视觉委托模型草稿；null=显式清除，undefined=未选择。主模型不支持图片输入时由工具条渲染选择。 */
-  visionDelegateModel?: ModelSelection | null;
-  /** 选择视觉委托模型；modelId 传 null 表示清除会话级委托。 */
-  onSelectVisionDelegate?: (providerId: string, modelId: string | null) => void;
   onSwitchMode: (mode: string) => void;
+  /** 替换常驻 skill 名单；宿主负责会话内 setPinnedSkills 命令派发（草稿态可缺省）。 */
+  onSetPinnedSkills?: (skills: string[]) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
   /**
@@ -490,6 +490,7 @@ function ConversationComposerImpl({
   snapshot,
   sessionId = null,
   skillCatalogSessionId = sessionId,
+  onSetPinnedSkills,
   draftMode = false,
   draftConfig,
   composerDraft,
@@ -522,8 +523,6 @@ function ConversationComposerImpl({
   onStop,
   onSelectModel,
   onSelectThought,
-  visionDelegateModel,
-  onSelectVisionDelegate,
   onSwitchMode,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
@@ -574,6 +573,17 @@ function ConversationComposerImpl({
   }
   const activeConfigPicker =
     configPickerState.scopeKey === configPickerScopeKey ? configPickerState.activePicker : null;
+  // 常驻 skill catalog：工具条入口与 chips 共用一次拉取（与 $ 面板同源同 scope）。
+  const {
+    skills: pinnedCatalogSkills,
+    loading: pinnedCatalogLoading,
+    error: pinnedCatalogError,
+  } = useSkills({
+    workspacePath,
+    workspaceIdentity,
+    sessionId: skillCatalogSessionId,
+    enabled: true,
+  });
   const handleConfigPickerOpenChange = useCallback(
     (picker: V4ComposerConfigPicker, open: boolean) => {
       // composer 内容为导航 rail 恢复 pointer-events 后，三个 Radix modal
@@ -768,6 +778,15 @@ function ConversationComposerImpl({
   });
   const draftPersistTimerRef = useRef<number | null>(null);
   const suppressDraftPersistRef = useRef(false);
+
+  const handleSetPinnedSkills = useCallback(
+    (skills: string[]) => {
+      // 常驻 skill 真值在 workspace 偏好（宿主 handleDraftSetPinnedSkills 持有）；
+      // composer 不再写 per-session 草稿，避免 promote/clear 草稿把选择清掉。
+      onSetPinnedSkills?.(skills);
+    },
+    [onSetPinnedSkills],
+  );
 
   const snapshotDraftOfEditor = useCallback((): {
     text: string;
@@ -2048,6 +2067,14 @@ function ConversationComposerImpl({
       }),
     [onSelectModel],
   );
+  // 编排主任务会话的工具栏计划开关（spec: orchestration-plan.md）；普通/子任务会话返回
+  // isOrchestrator=false，不渲染。
+  const orchestrationPlanControl = useOrchestrationPlanControl({
+    sessionId,
+    workspacePath,
+    ...(workspaceIdentity ? { workspaceIdentity } : {}),
+    draftOrchestration: draftMode && isOrchestrationDraft,
+  });
   const submitControlNode = useMemo(
     () => (
       <div className="flex min-w-0 items-center gap-1">
@@ -2069,11 +2096,10 @@ function ConversationComposerImpl({
             onConfigPickerOpenChange={handleConfigPickerOpenChange}
             onSelectModel={handleSelectModelTrace}
             onSelectThought={onSelectThought}
-            visionDelegateModel={visionDelegateModel}
-            onSelectVisionDelegate={onSelectVisionDelegate}
             onSwitchMode={onSwitchMode}
             onRecoverCustomModelSelection={onRecoverCustomModelSelection}
             onSendCompressionCommand={onSendCompressionCommand}
+            orchestrationPlanControl={orchestrationPlanControl}
           />
         </span>
         {showStopControl ? (
@@ -2115,13 +2141,13 @@ function ConversationComposerImpl({
     ),
     [
       canSend,
+      orchestrationPlanControl,
       activeConfigPicker,
       composerPhase,
       composerUsage,
       disabled,
       draftConfig,
       draftMode,
-      visionDelegateModel,
       handleStopClick,
       handleSendButtonClick,
       handleConfigPickerOpenChange,
@@ -2131,7 +2157,6 @@ function ConversationComposerImpl({
       modelSelectionState,
       modelSelectionView,
       onSelectThought,
-      onSelectVisionDelegate,
       onRecoverCustomModelSelection,
       onSendCompressionCommand,
       onSwitchMode,
@@ -2165,6 +2190,9 @@ function ConversationComposerImpl({
           activeConfigPicker={activeConfigPicker}
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
+          // 编排主任务一律隐藏内置「计划模式」（用户需求 2026-10-30：与 CLI 结构性
+          // 不注册 EnterPlanMode 对齐——编排有自己的计划机制，开关状态无关）。
+          hidePlanMode={orchestrationPlanControl.isOrchestrator}
         />
         {/* 附件画廊重构曾整段覆盖 leadingActions，误删 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
@@ -2173,6 +2201,16 @@ function ConversationComposerImpl({
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId}
           currentSessionBusy={canStop}
+        />
+        <V4ComposerPinnedSkillEntry
+          skills={pinnedCatalogSkills}
+          loading={pinnedCatalogLoading}
+          error={pinnedCatalogError}
+          draftConfig={draftConfig}
+          disabled={disabled}
+          activeConfigPicker={activeConfigPicker}
+          onConfigPickerOpenChange={handleConfigPickerOpenChange}
+          onSetPinnedSkills={handleSetPinnedSkills}
         />
         <ConversationBackgroundWorkTrigger
           backgroundWorks={snapshot?.backgroundWorks ?? []}
@@ -2188,9 +2226,12 @@ function ConversationComposerImpl({
       disabled,
       draftConfig,
       handleConfigPickerOpenChange,
+      handleSetPinnedSkills,
+      pinnedCatalogSkills,
       backgroundWorkOpenTarget,
       onOpenRunningBackgroundWorks,
       onSwitchMode,
+      orchestrationPlanControl.isOrchestrator,
       provider,
       remoteSessionId,
       runningSubagentCount,
@@ -2219,7 +2260,7 @@ function ConversationComposerImpl({
       style={isBlockedByInteraction ? { display: "none" } : undefined}
       className={cn(
         "chat-composer-region z-20 w-full shrink-0 @container/composer",
-        centered && "max-w-2xl",
+        centered && "max-w-3xl",
       )}
     >
       {/* 旧 ChatViewComposer 同款隐藏 file input（web/无 native picker 平台回退）。 */}

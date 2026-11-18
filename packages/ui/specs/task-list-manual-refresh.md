@@ -19,12 +19,12 @@
 
 ## 状态所有者与接口
 
-| 状态 / 接口 | 所有者 | 说明 |
-| --- | --- | --- |
+| 状态 / 接口                                                        | 所有者                                                                                   | 说明                                                                                                                                              |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bumpTaskListManualRefresh()` / `useTaskListManualRefreshSerial()` | `src/v4/taskListManualRefresh.ts`（模块级 store，模式同 `taskListMembershipVersion.ts`） | 全局串行号。`useGlobalTaskList` 将其与 hook 局部 serial 相加并入 `version.manualRefreshSerial`，使 registry queryCache 版本 miss → 强制重新 RPC。 |
-| `bumpTaskListMembershipVersion()` | `src/v4/taskListMembershipVersion.ts`（既有） | bump 后 `useWorkspaceTaskLists` 的 sessions effect 把 taskQueryCache 标脏 → pendingConfigs 重查。手动刷新复用该既有链路，不新增第二条写路径。 |
-| `WorkspaceTaskListRefreshButton` | `src/WorkspaceTaskListRefreshButton.tsx` | 侧栏底部按钮。点击时依次调用上述两个 bump；不持有任何业务状态。 |
-| `WorkspaceSessionReloadButton` | `src/WorkspaceSessionReloadButton.tsx` | 头部按钮。仅调用 `onReloadSession`（透传自 shell 层 `useWorkspaceSessionReload` 的 `handleReloadSession`），pending 时图标旋转并禁用。 |
+| `bumpTaskListMembershipVersion()`                                  | `src/v4/taskListMembershipVersion.ts`（既有）                                            | bump 后 `useWorkspaceTaskLists` 的 sessions effect 把 taskQueryCache 标脏 → pendingConfigs 重查。手动刷新复用该既有链路，不新增第二条写路径。     |
+| `WorkspaceTaskListRefreshButton`                                   | `src/WorkspaceTaskListRefreshButton.tsx`                                                 | 侧栏底部按钮。点击时依次调用上述两个 bump；不持有任何业务状态。                                                                                   |
+| `WorkspaceSessionReloadButton`                                     | `src/WorkspaceSessionReloadButton.tsx`                                                   | 头部按钮。仅调用 `onReloadSession`（透传自 shell 层 `useWorkspaceSessionReload` 的 `handleReloadSession`），pending 时图标旋转并禁用。            |
 
 ## 事件顺序
 

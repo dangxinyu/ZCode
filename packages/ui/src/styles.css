@@ -156,6 +156,9 @@ body {
   --animated-gradient-text-strong: rgba(10, 10, 10, 1);
   --animated-gradient-text-soft: rgba(10, 10, 10, 0.22);
   --color-background: var(--color-neutral-50);
+  /* 编排计划画布：节点卡底色 / 连线色（画布需要比页面更强的图形对比）。 */
+  --color-plan-node-bg: var(--color-white);
+  --color-plan-edge: var(--color-neutral-500);
   --color-background-alt: color-mix(in oklab, var(--color-neutral-100) 60%, transparent);
   --color-background-win-alt: var(--color-neutral-200);
   --color-brand: var(--color-sky-400);
@@ -309,6 +312,10 @@ body {
   --animated-gradient-text-strong: rgba(255, 255, 255, 1);
   --animated-gradient-text-soft: rgba(255, 255, 255, 0.2);
   --color-background: var(--color-neutral-900);
+  /* 编排计划画布：暗色下 surface 只有 5% 白（实测节点和画布糊在一起），
+     节点卡用 12% 白提亮一档，连线用 neutral-400 保证可辨。 */
+  --color-plan-node-bg: color-mix(in oklab, var(--color-white) 12%, var(--color-background));
+  --color-plan-edge: var(--color-neutral-400);
   --color-background-alt: color-mix(in oklab, var(--color-neutral-800) 60%, transparent);
   --color-background-win-alt: var(--color-neutral-800);
   --color-brand: var(--color-sky-500);
@@ -462,6 +469,8 @@ body {
   --animated-gradient-text-strong: rgba(13, 13, 13, 1);
   --animated-gradient-text-soft: rgba(13, 13, 13, 0.22);
   --color-background: #f8f8f8;
+  --color-plan-node-bg: var(--color-white);
+  --color-plan-edge: var(--color-neutral-500);
   --color-background-win-alt: #ececee;
   --color-background-alt: color-mix(in oklab, var(--color-background) 70%, transparent);
   --color-brand: #000000;
@@ -607,6 +616,8 @@ body {
   --animated-gradient-text-strong: rgba(255, 255, 255, 1);
   --animated-gradient-text-soft: rgba(255, 255, 255, 0.22);
   --color-background: #161616;
+  --color-plan-node-bg: color-mix(in oklab, var(--color-white) 12%, var(--color-background));
+  --color-plan-edge: var(--color-neutral-400);
   --color-background-win-alt: #2b2b2b;
   --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
   --color-brand: #ffffff;
@@ -2050,4 +2061,18 @@ body {
 
 .prompt-mention[data-mention-category="plugins"]::before {
   border-radius: var(--radius-sm);
+}
+
+/* 编排计划画布（xyflow）：四向锚点平时不拦截指针——锚点贴在节点边缘中点，
+   常驻可点会让拖节点时误抓成连线（用户实测"挪动不舒服"）；悬停/选中节点
+   或拖拽连线期间（xyflow 给可交互 Handle 挂 connectionindicator 类）才激活并显形。 */
+.react-flow__handle.plan-anchor {
+  pointer-events: none;
+  opacity: 0;
+}
+.react-flow__node:hover .plan-anchor,
+.react-flow__node.selected .plan-anchor,
+.react-flow__handle.plan-anchor.connectionindicator {
+  pointer-events: all;
+  opacity: 1;
 }

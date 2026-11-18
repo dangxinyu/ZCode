@@ -53,7 +53,10 @@ export function useOrchestrationWorkspaceGroupsCollapsed(): {
     () => version,
   );
   void snapshot;
-  const isGroupCollapsed = useCallback((workspaceKey: string) => collapsedKeys.has(workspaceKey), []);
+  const isGroupCollapsed = useCallback(
+    (workspaceKey: string) => collapsedKeys.has(workspaceKey),
+    [],
+  );
   const toggleGroupCollapsed = useCallback((workspaceKey: string) => {
     const next = new Set(collapsedKeys);
     if (next.has(workspaceKey)) {

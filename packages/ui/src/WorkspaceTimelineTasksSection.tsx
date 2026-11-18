@@ -6,6 +6,7 @@ import type { ZCodeTaskMeta } from "@zcode/shared";
 import { isOrchestrationTask } from "@zcode/shared";
 import { OrchestrationChildrenList, isChildRunning } from "@/OrchestrationChildrenList.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import { useOrchestrationPlans } from "@/hooks/useOrchestrationPlans.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
 import { useOrchestrationWorkspaceGroupsCollapsed } from "@/lib/orchestrationWorkspaceGroupsCollapse.js";
 import { toast } from "@/components/ui/toast.js";
@@ -143,7 +144,13 @@ export function WorkspaceTimelineTasksSection({
   // timeline 不应沿用 10 条首屏限制，和其它 sidebar 列表的 20 条基准保持一致。
   // 这里把首屏和每次“显示更多”的阶梯统一成 20，避免用户误以为列表只加载到 10/20 就结束。
   const collapsedLimit = 20;
-  const [visibleTaskLimit, setVisibleTaskLimit] = useState(collapsedLimit);
+  // 编排分区（用户确认 2026-10-23）：主任务默认展示 5 个、每次「显示更多」+5。
+  // 展示条数是过滤后的 orchestrator 计数，与查询 limit 解耦——分区拉全量 timeline
+  // 后本地分页，否则 +5 未过滤任务在编排稀疏的 workspace 里可能一条主任务都不多。
+  const orchestrationPageSize = 5;
+  const [visibleTaskLimit, setVisibleTaskLimit] = useState(
+    orchestrationOnly ? orchestrationPageSize : collapsedLimit,
+  );
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const pendingArchiveItemKeyRef = useRef<string | null>(pendingArchiveItemKey);
   const renamingItemKeyRef = useRef<string | null>(renamingItemKey);
@@ -186,8 +193,10 @@ export function WorkspaceTimelineTasksSection({
     workspaceTabs: scopedWorkspaceTabs,
     sortBy: taskSortBy,
     searchQuery: "",
-    expanded: false,
-    collapsedLimit: visibleTaskLimit,
+    // 编排分区拉全量（expanded → 无 limit）后本地分页，保证「显示更多」每次稳定
+    // 多出 5 个主任务；普通时间线保持 20 条阶梯的限量分页。
+    expanded: orchestrationOnly,
+    collapsedLimit: orchestrationOnly ? 0 : visibleTaskLimit,
   });
   const remoteTimelineItemsByWorkspaceKey = useRemoteTimelineTaskStore(
     (state) => state.itemsByWorkspaceKey,
@@ -287,6 +296,73 @@ export function WorkspaceTimelineTasksSection({
     },
     [intl, workspaceServiceLookup],
   );
+  // 行尾归档按钮（用户确认 2026-10-23，spec: orchestration-tasks.md）：解链 + 归档
+  // 一体动作——归档不参与统筹是硬性规定，挂在编排名下的任务必须先解除关系才能归档，
+  // 合并成一次确认一次调用。解链失败即中止（保持"归档的一定不在册"）；关系已不在册
+  // （unlinked=false，曾解链/未关联）也继续归档。
+  const archiveOrchestrationChild = useCallback(
+    (params: {
+      orchestrationTaskId: string;
+      childWorkspacePath: string;
+      childTaskId: string;
+      childWorkspaceIdentity?: string;
+    }) => {
+      const workspaceServices = workspaceServiceLookup.get(
+        buildTaskWorkspaceKey(params.childWorkspacePath, params.childWorkspaceIdentity),
+      );
+      if (!workspaceServices) {
+        return;
+      }
+      const childScope = {
+        workspacePath: params.childWorkspacePath,
+        ...(params.childWorkspaceIdentity
+          ? { workspaceIdentity: params.childWorkspaceIdentity }
+          : {}),
+      };
+      void workspaceServices.services.zcodeTaskService
+        .unlinkOrchestrationChild({
+          orchestrationTaskId: params.orchestrationTaskId,
+          ...childScope,
+          childTaskId: params.childTaskId,
+        })
+        .then(() =>
+          workspaceServices.services.zcodeTaskService.archiveTask({
+            taskId: params.childTaskId,
+            ...childScope,
+          }),
+        )
+        .then(() => {
+          removeTaskStateRef.current(
+            params.childWorkspacePath,
+            params.childTaskId,
+            params.childWorkspaceIdentity,
+          );
+          if (params.childWorkspaceIdentity) {
+            useRemoteTimelineTaskStore
+              .getState()
+              .removeTask(
+                params.childWorkspacePath,
+                params.childTaskId,
+                params.childWorkspaceIdentity,
+              );
+            useRemotePinnedTaskStore
+              .getState()
+              .removeTask(
+                params.childWorkspacePath,
+                params.childTaskId,
+                params.childWorkspaceIdentity,
+              );
+          }
+          // 解链与归档跨分区生效（编排下拉、归档区、普通时间线、其他窗口）：
+          // bump 全局刷新串号统一重拉——局部 refresh 只覆盖本组件实例，会漏。
+          bumpTaskListManualRefresh();
+        })
+        .catch(() => {
+          toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildArchiveFailed" }));
+        });
+    },
+    [intl, workspaceServiceLookup],
+  );
   // 权威子关系（links）按编排拉取：多编排跟踪下 tasks 行的 parent 列只记首个父，
   // 第二父的下拉/计数必须查 links。触达面：编排分区可见的 orchestrator 行
   // （数量级小）；手动刷新串号变化时重拉。
@@ -366,6 +442,34 @@ export function WorkspaceTimelineTasksSection({
   // 子任务行执行指示的活流源：sessions-index 聚合 meta（phase 实时、响应式）。
   // syncer 对 running 帧不落库不广播（processSummary 只处理终态/标题），静态列表
   // 在子任务运行期间 status 停在 completed——下拉的转圈必须以这里的活流 meta 为准。
+  // 计划面板数据源（spec: orchestration-plan.md）：与 children-map 同款分组拉取，
+  // 手动刷新串号驱动重拉；开关/确认后本地回填即时生效。
+  const resolvePlanServices = useCallback(
+    (workspacePath: string, workspaceIdentity?: string) =>
+      workspaceServiceLookup.get(buildTaskWorkspaceKey(workspacePath, workspaceIdentity))?.services
+        .zcodeTaskService,
+    [workspaceServiceLookup],
+  );
+  const { plansByParentId, createPlan, renamePlan, deletePlan } = useOrchestrationPlans({
+    enabled: orchestrationOnly,
+    orchestrators: sortedItems,
+    resolvePlanServices,
+    refreshKey: manualRefreshSerial,
+  });
+  const [planActionTaskId, setPlanActionTaskId] = useState<string | null>(null);
+  const runPlanAction = useCallback(async (taskId: string, action: () => Promise<void>) => {
+    setPlanActionTaskId(taskId);
+    try {
+      await action();
+    } catch (error) {
+      logger.warn("[WorkspaceTimelineTasksSection] plan action failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        taskId,
+      });
+    } finally {
+      setPlanActionTaskId(null);
+    }
+  }, []);
   const { items: liveSessionItems } = useWorkspaceSessionsIndexItems(
     orchestrationOnly
       ? scopedWorkspaceTabs.map((tab) => ({
@@ -581,15 +685,21 @@ export function WorkspaceTimelineTasksSection({
     }
     return keys.size;
   }, [localItems, remoteItems]);
-  const currentLimitFilled =
-    (clientFiltered ? unfilteredLoadedCount : sortedItems.length) >= visibleTaskLimit;
-  // 远端/本地 hasMore 偶尔会在下一轮请求完成前保持旧值。
-  // 如果当前已加载数量没有填满 limit，说明这轮已经到底了，不能继续显示 show more。
-  const canLoadMore = loading ? hasKnownMore : currentLimitFilled && hasKnownMore;
+  // 编排分区拉全量后本地分页（用户确认 2026-10-23）：还有未展示的主任务才显示按钮。
+  // 不依赖 loading/hasMore——activity 帧重查翻转 loading 不再造成按钮闪烁，
+  // 全量已加载时过滤后计数就是权威的"是否还有更多"。
+  // 普通分区维持限量分页：loading 中放宽为 hasKnownMore（hasMore 偶发陈旧时
+  // 由页填满判定兜底：没填满说明这轮已到底，不显示按钮）。
+  const canLoadMore = orchestrationOnly
+    ? sortedItems.length > visibleTaskLimit
+    : loading
+      ? hasKnownMore
+      : (clientFiltered ? unfilteredLoadedCount : sortedItems.length) >= visibleTaskLimit &&
+        hasKnownMore;
 
   useEffect(() => {
-    setVisibleTaskLimit(collapsedLimit);
-  }, [taskSortBy, workspaceTabsSignature]);
+    setVisibleTaskLimit(orchestrationOnly ? orchestrationPageSize : collapsedLimit);
+  }, [orchestrationOnly, taskSortBy, workspaceTabsSignature]);
 
   useEffect(() => {
     // 这条日志会随着远端 timeline 同步和 tab 恢复多次触发。
@@ -1127,13 +1237,80 @@ export function WorkspaceTimelineTasksSection({
                             {orchestrationChildrenByParentId && !orchestrationChildrenCollapsed ? (
                               <OrchestrationChildrenList
                                 parentTaskId={item.taskId}
+                                parentWorkspacePath={item.workspacePath}
+                                {...(item.workspaceIdentity
+                                  ? { parentWorkspaceIdentity: item.workspaceIdentity }
+                                  : {})}
                                 childTasks={orchestrationChildTasks}
+                                plansMap={plansByParentId?.[item.taskId] ?? null}
+                                planBusy={planActionTaskId === item.taskId}
+                                onCreatePlan={() => {
+                                  void runPlanAction(item.taskId, () =>
+                                    createPlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      title: intl.formatMessage({
+                                        id: "orchestration.plan.defaultNewTitle",
+                                      }),
+                                    }),
+                                  );
+                                }}
+                                onRenamePlan={(planId, title) => {
+                                  void runPlanAction(item.taskId, () =>
+                                    renamePlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      planId,
+
+                                      title,
+                                    }),
+                                  );
+                                }}
+                                onDeletePlan={(planId) => {
+                                  void runPlanAction(item.taskId, () =>
+                                    deletePlan({
+                                      orchestrationTaskId: item.taskId,
+
+                                      workspacePath: item.workspacePath,
+
+                                      ...(item.workspaceIdentity
+                                        ? { workspaceIdentity: item.workspaceIdentity }
+                                        : {}),
+
+                                      planId,
+                                    }),
+                                  );
+                                }}
                                 onUnlinkTask={(
                                   childWorkspacePath,
                                   childTaskId,
                                   childWorkspaceIdentity,
                                 ) => {
                                   unlinkOrchestrationChild({
+                                    orchestrationTaskId: item.taskId,
+                                    childWorkspacePath,
+                                    childTaskId,
+                                    childWorkspaceIdentity,
+                                  });
+                                }}
+                                onArchiveTask={(
+                                  childWorkspacePath,
+                                  childTaskId,
+                                  childWorkspaceIdentity,
+                                ) => {
+                                  archiveOrchestrationChild({
                                     orchestrationTaskId: item.taskId,
                                     childWorkspacePath,
                                     childTaskId,
@@ -1340,9 +1517,12 @@ export function WorkspaceTimelineTasksSection({
           <span
             className="text-ui-base text-foreground-subtlest hover:text-foreground-subtle"
             onClick={() => {
-              // timeline 目标是单向分页，每次点击只增加一个 20 条阶梯。
-              // 不再复用“显示更少”的旧展开/收起方案，避免按钮状态和真实分页语义冲突。
-              setVisibleTaskLimit((current) => current + collapsedLimit);
+              // timeline 目标是单向分页：普通分区每次 +20 条阶梯；编排分区（拉全量
+              // 后本地分页）每次 +5 主任务。不复用"显示更少"的旧展开/收起方案，
+              // 避免按钮状态和真实分页语义冲突。
+              setVisibleTaskLimit(
+                (current) => current + (orchestrationOnly ? orchestrationPageSize : collapsedLimit),
+              );
             }}
           >
             {intl.formatMessage({

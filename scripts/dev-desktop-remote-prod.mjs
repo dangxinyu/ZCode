@@ -14,7 +14,13 @@ export function resolveProductionRemoteAssetCacheDir(
 ) {
   const pathApi = pathApiForPlatform(platform);
   if (platform === "darwin") {
-    return pathApi.join(homeDir, "Library", "Application Support", "Don’t-think", "remote-assets-cache");
+    return pathApi.join(
+      homeDir,
+      "Library",
+      "Application Support",
+      "Don’t-think",
+      "remote-assets-cache",
+    );
   }
 
   if (platform === "win32") {

@@ -14,48 +14,54 @@ export function isOrchestrationNoticeText(text: string | undefined | null): bool
   return Boolean(text?.startsWith(ORCHESTRATION_NOTICE_PREFIX));
 }
 
-export const ConversationOrchestrationNoticeCard = memo(function ConversationOrchestrationNoticeCard({
-  text,
-}: {
-  text: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  // 首行 = 标题（【编排通知】子任务「X」已完成/失败）；其余为摘要正文。
-  const withoutPrefix = text.startsWith(ORCHESTRATION_NOTICE_PREFIX)
-    ? text.slice(ORCHESTRATION_NOTICE_PREFIX.length)
-    : text;
-  const firstLineBreak = withoutPrefix.indexOf("\n");
-  const title = (firstLineBreak >= 0 ? withoutPrefix.slice(0, firstLineBreak) : withoutPrefix).trim();
-  const body = firstLineBreak >= 0 ? withoutPrefix.slice(firstLineBreak + 1).trim() : "";
+export const ConversationOrchestrationNoticeCard = memo(
+  function ConversationOrchestrationNoticeCard({ text }: { text: string }) {
+    const [expanded, setExpanded] = useState(false);
+    // 首行 = 标题（【编排通知】子任务「X」已完成/失败）；其余为摘要正文。
+    const withoutPrefix = text.startsWith(ORCHESTRATION_NOTICE_PREFIX)
+      ? text.slice(ORCHESTRATION_NOTICE_PREFIX.length)
+      : text;
+    const firstLineBreak = withoutPrefix.indexOf("\n");
+    const title = (
+      firstLineBreak >= 0 ? withoutPrefix.slice(0, firstLineBreak) : withoutPrefix
+    ).trim();
+    const body = firstLineBreak >= 0 ? withoutPrefix.slice(firstLineBreak + 1).trim() : "";
 
-  return (
-    <div
-      data-v4-orchestration-notice="true"
-      className={cn(
-        "flex max-w-full flex-col gap-1 rounded-xl border border-border/70 border-l-2 border-l-status-running",
-        "bg-surface/60 px-3.5 py-2.5 text-ui-base text-foreground-subtle",
-        "@min-[624px]/conversation:max-w-xl",
-      )}
-    >
-      <button
-        type="button"
-        className="flex min-w-0 items-center gap-1.5 text-left"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        <Network aria-hidden="true" className="size-3.5 shrink-0 text-status-running" />
-        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{title}</span>
-        {expanded ? (
-          <ChevronUpIcon aria-hidden="true" className="size-3.5 shrink-0 text-foreground-subtlest" />
-        ) : (
-          <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 text-foreground-subtlest" />
+    return (
+      <div
+        data-v4-orchestration-notice="true"
+        className={cn(
+          "flex max-w-full flex-col gap-1 rounded-xl border border-border/70 border-l-2 border-l-status-running",
+          "bg-surface/60 px-3.5 py-2.5 text-ui-base text-foreground-subtle",
+          "@min-[624px]/conversation:max-w-xl",
         )}
-      </button>
-      {expanded && body ? (
-        <div className="min-w-0 break-words pl-5 text-foreground-subtle [&_p]:my-1">
-          <Streamdown mode="static">{body}</Streamdown>
-        </div>
-      ) : null}
-    </div>
-  );
-});
+      >
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-1.5 text-left"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <Network aria-hidden="true" className="size-3.5 shrink-0 text-status-running" />
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{title}</span>
+          {expanded ? (
+            <ChevronUpIcon
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-foreground-subtlest"
+            />
+          ) : (
+            <ChevronDownIcon
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-foreground-subtlest"
+            />
+          )}
+        </button>
+        {expanded && body ? (
+          <div className="min-w-0 break-words pl-5 text-foreground-subtle [&_p]:my-1">
+            <Streamdown mode="static">{body}</Streamdown>
+          </div>
+        ) : null}
+      </div>
+    );
+  },
+);

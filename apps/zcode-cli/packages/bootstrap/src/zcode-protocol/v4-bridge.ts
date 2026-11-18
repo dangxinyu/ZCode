@@ -1532,6 +1532,10 @@ export function createConversationV4Gateway(
           : [],
         mode: record.app.getMode(),
         planEnabled: record.app.runtime.getPlanEnabled(),
+        // 常驻名单只在非空时携带：空键缺席 = 未配置，避免每个快照都带空数组空转 delta。
+        ...(record.app.runtime.getPinnedSkills().length > 0
+          ? { pinnedSkills: [...record.app.runtime.getPinnedSkills()] }
+          : {}),
         ...(record.app.runtime.lastPermissionGrantId
           ? { permissionGrant: { interactionId: record.app.runtime.lastPermissionGrantId } }
           : {}),

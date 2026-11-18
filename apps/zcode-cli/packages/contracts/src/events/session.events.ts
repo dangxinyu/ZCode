@@ -106,6 +106,8 @@ export const SessionEventType = {
   QueueAutoDrainChanged: "queue_auto_drain_changed",
   // v4 输入控制：followup 路由模式（running 时 enqueue vs guide）。
   FollowupModeChanged: "followup_mode_changed",
+  // 常驻 skill 名单变化：runtime 会话真值 + PinnedSkillsChanged 事件供 v4 投影消费。
+  PinnedSkillsChanged: "pinned_skills_changed",
   TurnComplete: "turn_complete",
   TurnError: "turn_error",
   UserMessage: "user_message",
@@ -524,6 +526,11 @@ export interface QueueAutoDrainChangedPayload {
 
 export interface FollowupModeChangedPayload {
   mode: "queue" | "guide";
+}
+
+/** 常驻 skill 名单变化（全量替换语义；空数组=清除）。payload 即新的会话真值。 */
+export interface PinnedSkillsChangedPayload {
+  skills: string[];
 }
 
 export interface TurnSteerDrainedPayload {
@@ -1184,6 +1191,7 @@ export type SessionEventPayload =
   | TurnSteerReorderedPayload
   | QueueAutoDrainChangedPayload
   | FollowupModeChangedPayload
+  | PinnedSkillsChangedPayload
   | TurnSteerRejectedPayload
   | TurnSteerDiscardedPayload
   | SessionInputPromotedPayload

@@ -62,7 +62,7 @@ import {
   openStartupSessionStore,
   readProjectPermissionMode,
   readSessionModelSelection,
-  readSessionVisionDelegateSelection,
+  readSessionPinnedSkills,
 } from "./session-store.js";
 import { createWorkflowFacade } from "./workflow-facade.js";
 import { createInputFacade } from "./input-facade.js";
@@ -474,16 +474,18 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       return selection;
     };
 
-    const restorePersistedVisionDelegateSelection = async (): Promise<void> => {
+    const restorePersistedPinnedSkills = async (): Promise<void> => {
       try {
-        const selection = await readSessionVisionDelegateSelection(sessionStore, sessionId);
-        // 与主模型不同：委托模型只在描述图片时才使用，恢复阶段不做 Registry 严格校验，
-        // 描述失败会按既有语义回退占位文本，不阻断会话。
-        getRuntime().setVisionDelegateSelection(selection);
+        // 恢复阶段不校验 skill 存在性：失效项由 runtime 注入 unavailable 占位行呈现，
+        // context 初始化（首个 turn）时才做实际解析。
+        const skills = await readSessionPinnedSkills(sessionStore, sessionId);
+        // 免事件写入：恢复只还原真值（PinnedSkillsChanged 不重放），全文由首个
+        // turn 的 context 初始化解析。
+        getRuntime().setSessionPinnedSkills(skills);
       } catch (error) {
-        logger.warn("Session vision delegate restore failed", {
+        logger.warn("Session pinned skills restore failed", {
           error: error instanceof Error ? error.message : String(error),
-          event: "session.vision_delegate.restore_failed",
+          event: "session.pinned_skills.restore_failed",
           sessionId,
         });
       }
@@ -498,7 +500,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       try {
         const resumeTraceContext = resumeOptions?.traceContext ?? traceContext;
         const modelSelection = await restorePersistedModelSelection();
-        await restorePersistedVisionDelegateSelection();
+        await restorePersistedPinnedSkills();
         await initializeSessionShellEnvironment();
         const result = await runtime.resumeFromStore({
           ...(resumeOptions?.abortSignal ? { abortSignal: resumeOptions.abortSignal } : {}),

@@ -1688,6 +1688,335 @@ export class TaskIndexRepo {
   }
 
   /**
+   * 编排计划 v2（spec: packages/services/specs/orchestration-plan.md）：每编排任务多行
+   * 计划（plan_id + is_active 选中态 + 标题）。计划事实的所有者是 host（本表）；编排会话
+   * 只经注入消息接收，UI 编辑不经过会话。无行 = 默认（无计划）。
+   */
+  async listOrchestrationPlanRows(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+  }): Promise<
+    Array<{
+      planId: string;
+      title: string;
+      planMode: boolean;
+      status: string;
+      planJson: string;
+      isActive: boolean;
+      createdAt: number;
+      updatedAt: number;
+    }>
+  > {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare(
+        `SELECT plan_id, title, plan_mode, status, plan_json, is_active, created_at, updated_at
+         FROM orchestration_plans
+         WHERE workspace_key = ? AND orchestration_task_id = ?
+         ORDER BY created_at ASC, plan_id ASC`,
+      )
+      .all(workspaceKey(params), params.orchestrationTaskId) as Array<{
+      plan_id: string;
+      title: string;
+      plan_mode: number;
+      status: string;
+      plan_json: string;
+      is_active: number;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return rows.map((row) => ({
+      planId: row.plan_id,
+      title: row.title,
+      planMode: row.plan_mode === 1,
+      status: row.status,
+      planJson: row.plan_json,
+      isActive: row.is_active === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /** 计划行 upsert（提案/确认/节点进度/微调共用）：按 planId 整行覆盖式写入。 */
+  async upsertOrchestrationPlanRow(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    planId: string;
+    title: string;
+    planMode: boolean;
+    status: string;
+    planJson: string;
+    isActive: boolean;
+    /** 新建计划时传入；缺省 = 已有行（upsert 沿用原 created_at）。 */
+    createdAt?: number;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        this.getDatabase()
+          .prepare(
+            `INSERT INTO orchestration_plans
+            (workspace_key, orchestration_task_id, plan_id, title, plan_mode, status,
+             plan_json, is_active, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(workspace_key, orchestration_task_id, plan_id)
+           DO UPDATE SET title = excluded.title, plan_mode = excluded.plan_mode,
+             status = excluded.status, plan_json = excluded.plan_json,
+             is_active = excluded.is_active, updated_at = excluded.updated_at`,
+          )
+          .run(
+            workspaceKey(params),
+            params.orchestrationTaskId,
+            params.planId,
+            params.title,
+            params.planMode ? 1 : 0,
+            params.status,
+            params.planJson,
+            params.isActive ? 1 : 0,
+            params.createdAt ?? Date.now(),
+            Date.now(),
+          );
+      },
+    );
+  }
+
+  /** 选中态切换（唯一 active）：先清全部再置一个；planId=null = 全部取消选中。 */
+  async setActiveOrchestrationPlan(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    planId: string | null;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        const database = this.getDatabase();
+        database
+          .prepare(
+            `UPDATE orchestration_plans SET is_active = 0
+           WHERE workspace_key = ? AND orchestration_task_id = ?`,
+          )
+          .run(workspaceKey(params), params.orchestrationTaskId);
+        if (params.planId) {
+          database
+            .prepare(
+              `UPDATE orchestration_plans SET is_active = 1, updated_at = ?
+           WHERE workspace_key = ? AND orchestration_task_id = ? AND plan_id = ?`,
+            )
+            .run(Date.now(), workspaceKey(params), params.orchestrationTaskId, params.planId);
+        }
+      },
+    );
+  }
+
+  /** 计划模式开关（per-orchestration 语义）：同步到该编排的全部计划行。 */
+  async setOrchestrationPlanModeAll(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    planMode: boolean;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        this.getDatabase()
+          .prepare(
+            `UPDATE orchestration_plans SET plan_mode = ?, updated_at = ?
+           WHERE workspace_key = ? AND orchestration_task_id = ?`,
+          )
+          .run(
+            params.planMode ? 1 : 0,
+            Date.now(),
+            workspaceKey(params),
+            params.orchestrationTaskId,
+          );
+      },
+    );
+  }
+
+  /** 删除计划行（仅计划事实：子任务/links 不动；若是 active 行，选中态一并清空）。 */
+  async deleteOrchestrationPlanRow(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    planId: string;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        const database = this.getDatabase();
+        database
+          .prepare(
+            `DELETE FROM orchestration_plans
+           WHERE workspace_key = ? AND orchestration_task_id = ? AND plan_id = ?`,
+          )
+          .run(workspaceKey(params), params.orchestrationTaskId, params.planId);
+      },
+    );
+  }
+
+  /** 计划模式开关（per-orchestration 事实，orchestration_plan_mode 表；零计划也可存）。 */
+  async isOrchestrationPlanModeOn(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+  }): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT plan_mode FROM orchestration_plan_mode
+         WHERE workspace_key = ? AND orchestration_task_id = ?`,
+      )
+      .get(workspaceKey(params), params.orchestrationTaskId) as { plan_mode: number } | undefined;
+    return row?.plan_mode === 1;
+  }
+
+  /** 模式 + 选中态原子更新：mode 写 plan_mode 表；selection 写 plans 行（null=全清）。 */
+  async setPlanModeAndSelection(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    planMode: boolean;
+    planId: string | null;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        const database = this.getDatabase();
+        database
+          .prepare(
+            `INSERT INTO orchestration_plan_mode
+            (workspace_key, orchestration_task_id, plan_mode, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(workspace_key, orchestration_task_id)
+           DO UPDATE SET plan_mode = excluded.plan_mode, updated_at = excluded.updated_at`,
+          )
+          .run(
+            workspaceKey(params),
+            params.orchestrationTaskId,
+            params.planMode ? 1 : 0,
+            Date.now(),
+          );
+        database
+          .prepare(
+            `UPDATE orchestration_plans SET is_active = 0
+           WHERE workspace_key = ? AND orchestration_task_id = ?`,
+          )
+          .run(workspaceKey(params), params.orchestrationTaskId);
+        if (params.planId) {
+          database
+            .prepare(
+              `UPDATE orchestration_plans SET is_active = 1, plan_mode = ?, updated_at = ?
+           WHERE workspace_key = ? AND orchestration_task_id = ? AND plan_id = ?`,
+            )
+            .run(
+              params.planMode ? 1 : 0,
+              Date.now(),
+              workspaceKey(params),
+              params.orchestrationTaskId,
+              params.planId,
+            );
+        }
+      },
+    );
+  }
+
+  /** 无任何计划行时读取模式开关的兜底：不存在行 = 模式关（空编排无计划历史）。 */
+  async hasOrchestrationPlanRows(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+  }): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT 1 FROM orchestration_plans
+         WHERE workspace_key = ? AND orchestration_task_id = ? LIMIT 1`,
+      )
+      .get(workspaceKey(params), params.orchestrationTaskId);
+    return row !== undefined;
+  }
+
+  /** 「另起新计划」等待态（spec: orchestration-plan.md；用户需求 2026-10-29：选中
+   * 下拉入口只挂状态不发消息，起不起由后续对话决定；新计划落地/用户取消时清除）。 */
+  async getOrchestrationNewPlanPending(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+  }): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT pending_new_plan FROM orchestration_plan_mode
+         WHERE workspace_key = ? AND orchestration_task_id = ?`,
+      )
+      .get(workspaceKey(params), params.orchestrationTaskId) as
+      | { pending_new_plan: number }
+      | undefined;
+    return row?.pending_new_plan === 1;
+  }
+
+  async setOrchestrationNewPlanPending(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    orchestrationTaskId: string;
+    pending: boolean;
+  }): Promise<void> {
+    await this.ensureReady();
+    return this.enqueueWrite(
+      {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        taskId: params.orchestrationTaskId,
+      },
+      () => {
+        // 只翻 pending 位，不碰同行的 plan_mode（INSERT 兜底行用列默认值 0）。
+        this.getDatabase()
+          .prepare(
+            `INSERT INTO orchestration_plan_mode
+            (workspace_key, orchestration_task_id, plan_mode, pending_new_plan, updated_at)
+           VALUES (?, ?, 0, ?, ?)
+           ON CONFLICT(workspace_key, orchestration_task_id)
+           DO UPDATE SET pending_new_plan = excluded.pending_new_plan, updated_at = excluded.updated_at`,
+          )
+          .run(
+            workspaceKey(params),
+            params.orchestrationTaskId,
+            params.pending ? 1 : 0,
+            Date.now(),
+          );
+      },
+    );
+  }
+
+  /**
    * 把一条 cron session 归入固定的 cron 系统分组（见 CRON_DEFAULT_GROUP_ID）。
    * 幂等：分组行、视图排序、成员关系都用 INSERT OR IGNORE，绝不覆盖用户手动整理的结果。
    * 仅在 session 首次获得 cronAutomationId 时由 syncTaskMeta 调用一次。

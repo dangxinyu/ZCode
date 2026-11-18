@@ -66,6 +66,10 @@ export class NodeSkillAdapter implements SkillPort {
     const roots = request.roots ?? (await resolveDefaultSkillRoots(workingDirectory, this.options));
     const diagnostics: SkillDiagnostic[] = [];
     const selected = new Map<string, SkillMetadata>();
+    // 同 scope 内已被 zcode 来源根收录的技能名 key（trim + 小写）：agents 来源的同名
+    // vendored 副本据此跳过；只对 agents 来源生效，插件/自定义根（不同生态的同名
+    // 技能）不受影响。
+    const zcodeNameKeysByScope = new Map<string, Set<string>>();
     let totalDiscovered = 0;
 
     for (const root of roots.toSorted((a, b) => a.priority - b.priority)) {
@@ -80,6 +84,25 @@ export class NodeSkillAdapter implements SkillPort {
         // 同名技能可能来自不同技能生态或版本，不能只按 name 去重；路径才是安装项身份。
         if (selected.has(parsed.path)) {
           continue;
+        }
+        // 同名解析（用户需求 2026-11-05"skill 重复只要 .zcode 的"；spec:
+        // packages/services/specs/skills.md）：同 scope 内同名已被 zcode 来源根收录时
+        // 跳过 agents 来源副本——roots.ts"同一级别 .zcode 优先、后续同名按 root 顺序
+        // 解析"的既定意图落地；与桌面端 skillsService.isUserAgentsSkillCoveredByZcode
+        // 同口径（服务端目录/设置页与 agent 会话快照两处不再各出一条重复项）。
+        if (root.source === "agents") {
+          const covered = zcodeNameKeysByScope
+            .get(root.scope)
+            ?.has(parsed.name.trim().toLowerCase());
+          if (covered) {
+            continue;
+          }
+        }
+        if (root.source === "zcode") {
+          const nameKey = parsed.name.trim().toLowerCase();
+          const nameKeys = zcodeNameKeysByScope.get(root.scope) ?? new Set<string>();
+          nameKeys.add(nameKey);
+          zcodeNameKeysByScope.set(root.scope, nameKeys);
         }
         selected.set(parsed.path, parsed);
       }

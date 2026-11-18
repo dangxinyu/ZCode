@@ -17,6 +17,7 @@ import { buildIdentitySection } from "./sections/identity.js";
 import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
 import { buildEnvInfoSection, buildGitSystemContextSection } from "./sections/env-info.js";
 import { buildSkillsSection } from "./sections/skills.js";
+import { buildPinnedSkillsSection } from "./sections/pinned-skills.js";
 import { buildRequestUserContextSection } from "./sections/request-user-context.js";
 import { buildCurrentDateSection } from "./sections/current-date.js";
 import { buildMemorySection } from "./sections/memory.js";
@@ -187,6 +188,26 @@ export class ContextBuilder {
       }
     }
 
+    // 4b. 常驻 skill 全文：与 skills_listing 同为 meta_user system-reminder，但
+    // 独立 source（pinned_skill 前缀附件）。同样受 Skill 工具注册门控——常驻注入
+    // 的指引文本引用 Skill 工具作为降级路径，没有该工具的会话不应出现这段。
+    if (
+      this.config.pinnedSkills &&
+      this.config.pinnedSkills.length > 0 &&
+      this.skillToolAvailable()
+    ) {
+      const pinnedSkillsSection = buildPinnedSkillsSection({
+        skills: this.config.pinnedSkills,
+        // 预算不传 = 用 section 自己的 DEFAULT_PINNED_SKILLS_BUDGET（50k，2026-11-04 实测
+        // 上调）。此前复用 skills.metadataBudget（listing 元数据截断预算，默认 20k）——
+        // 真实 skill 1.5~3 万字符必然降级挂名，编排派发挂载形同虚设；两者语义不同，
+        // 不该共用一个配置。
+      });
+      if (pinnedSkillsSection) {
+        sections.push(pinnedSkillsSection);
+      }
+    }
+
     // 5. Meta user context: workspace instructions/project memory first, date second.
     const requestUserContextSection = buildRequestUserContextSection({
       userInstructions: this.config.userInstructions,
@@ -292,9 +313,24 @@ export class ContextBuilder {
       });
     }
 
+    const pinnedSkillsContent = buildSkillsMetaUserBody(
+      sections.filter(
+        (section) => section.injectionTarget === "meta_user" && section.source === "pinned_skills",
+      ),
+    );
+    if (pinnedSkillsContent) {
+      attachments.push({
+        source: "pinned_skill",
+        content: pinnedSkillsContent,
+      });
+    }
+
     const contextContent = buildContextMetaUserBody(
       sections.filter(
-        (section) => section.injectionTarget === "meta_user" && section.source !== "skills",
+        (section) =>
+          section.injectionTarget === "meta_user" &&
+          section.source !== "skills" &&
+          section.source !== "pinned_skills",
       ),
     );
     if (contextContent) {

@@ -283,27 +283,43 @@ const hooksSchema = z
   })
   .strict();
 
-export const ZCodeConfigFileSchema = z
-  .object({
-    $schema: z.string().optional(),
-    modelStream: modelStreamSchema.optional(),
-    permission: permissionSchema.optional(),
-    storage: storageSchema.optional(),
-    network: networkSchema.optional(),
-    features: featuresSchema.optional(),
-    memory: memorySchema.optional(),
-    mcp: mcpSchema.optional(),
-    plugins: pluginsSchema.optional(),
-    skills: skillsSchema.optional(),
-    skill: skillCommandOverridesSchema.optional(),
-    command: skillCommandOverridesSchema.optional(),
-    logging: loggingSchema.optional(),
-    ui: uiSchema.optional(),
-    toolConcurrency: toolConcurrencySchema.optional(),
-    modelAnomalyGuard: modelAnomalyGuardSchema.optional(),
-    hooks: hooksSchema.optional(),
-  })
-  .passthrough();
+// HookEvent 事件名集合，必须与 hooksSchema.events 的 key 严格一致。
+// 以本包字面量维护而非引用 shared：zod 双实例问题见上方 hooksSchema 注释。
+// 另用于 normalize 阶段识别 Claude Code 风格的错位写法（事件直接挂在 hooks 根层级）。
+const HOOK_EVENT_NAMES = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PermissionRequest",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Stop",
+] as const;
+
+// 顶层 section 校验表：字段级隔离的依据，parse 阶段逐项 safeParse，
+// 单个 section 非法只丢弃该 section 并产生 warning 诊断。新增顶层 section 必须同步登记，
+// 否则加载阶段会被静默忽略（根 schema 仅由本表组合而来，不做 passthrough 之外的放行）。
+const CONFIG_SECTION_SCHEMAS = {
+  $schema: z.string().optional(),
+  modelStream: modelStreamSchema.optional(),
+  permission: permissionSchema.optional(),
+  storage: storageSchema.optional(),
+  network: networkSchema.optional(),
+  features: featuresSchema.optional(),
+  memory: memorySchema.optional(),
+  mcp: mcpSchema.optional(),
+  plugins: pluginsSchema.optional(),
+  skills: skillsSchema.optional(),
+  skill: skillCommandOverridesSchema.optional(),
+  command: skillCommandOverridesSchema.optional(),
+  logging: loggingSchema.optional(),
+  ui: uiSchema.optional(),
+  toolConcurrency: toolConcurrencySchema.optional(),
+  modelAnomalyGuard: modelAnomalyGuardSchema.optional(),
+  hooks: hooksSchema.optional(),
+};
+
+export const ZCodeConfigFileSchema = z.object(CONFIG_SECTION_SCHEMAS).passthrough();
 
 export type ZCodeConfigFile = z.infer<typeof ZCodeConfigFileSchema>;
 
@@ -313,7 +329,9 @@ export type ConfigDiagnosticSeverity = "warning" | "error";
 export type ConfigDiagnosticCode =
   | "config_file_invalid"
   | "config_mcp_server_invalid"
-  | "config_project_hooks_pending_trust";
+  | "config_project_hooks_pending_trust"
+  | "config_section_invalid"
+  | "config_hooks_misplaced_migrated";
 
 export interface ConfigDiagnostic {
   code: ConfigDiagnosticCode;
@@ -388,7 +406,30 @@ export function parseConfigFileToRuntimePatchWithDiagnostics(
 ): ParseConfigFileResult {
   const diagnostics: ConfigDiagnostic[] = [];
   const normalized = normalizeConfigFileInput(value, diagnostics);
-  const parsed = ZCodeConfigFileSchema.parse(normalized);
+  if (!isPlainRecord(normalized)) {
+    // 顶层不是对象时无法确定 section 边界，保持整文件失败语义（adapter 兜底为 config_file_invalid）。
+    const parsed = ZCodeConfigFileSchema.parse(normalized);
+    return { config: parsedConfigFileToRuntimePatch(parsed), diagnostics };
+  }
+  const parsedSections: Record<string, unknown> = {};
+  for (const [section, sectionSchema] of Object.entries(CONFIG_SECTION_SCHEMAS)) {
+    const raw = normalized[section];
+    if (raw === undefined) continue;
+    const result = sectionSchema.safeParse(raw);
+    if (result.success) {
+      parsedSections[section] = result.data;
+      continue;
+    }
+    // 单个 section 非法不应拖垮整份配置（与 mcp 逐 server 隔离同一设计原则），
+    // 丢弃该 section 并降级为 warning 诊断，其余 section 照常加载。
+    diagnostics.push({
+      code: "config_section_invalid",
+      message: formatZodError(result.error),
+      path: section,
+      severity: "warning",
+    });
+  }
+  const parsed = ZCodeConfigFileSchema.parse(parsedSections);
   return {
     config: parsedConfigFileToRuntimePatch(parsed),
     diagnostics,
@@ -463,6 +504,7 @@ function normalizeConfigFileInput(value: unknown, diagnostics: ConfigDiagnostic[
   if (!isPlainRecord(value)) return value;
 
   const root = { ...value };
+  normalizeHooksInput(root, diagnostics);
   const mcp = root.mcp;
   if (!isPlainRecord(mcp)) return root;
 
@@ -507,6 +549,15 @@ function normalizeConfigFileInput(value: unknown, diagnostics: ConfigDiagnostic[
   return root;
 }
 
+function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "<config>";
+      return `${path}: ${issue.message}`;
+    })
+    .join("; ");
+}
+
 function formatMcpServerError(error: z.ZodError): string {
   return error.issues
     .map((issue) => {
@@ -514,6 +565,37 @@ function formatMcpServerError(error: z.ZodError): string {
       return `${path}: ${issue.message}`;
     })
     .join("; ");
+}
+
+// 兼容 Claude Code 风格的 hooks 写法：事件数组直接挂在 hooks 根层级（如 hooks.UserPromptSubmit），
+// 本 schema 只认 hooks.events 下的 key，直接校验会因 strict 抛错并在旧实现中拖垮整份配置。
+// 这里在 section 校验前把错位事件搬入 hooks.events，只在加载时归一化、不写回用户文件。
+function normalizeHooksInput(root: Record<string, unknown>, diagnostics: ConfigDiagnostic[]): void {
+  const hooks = root.hooks;
+  if (!isPlainRecord(hooks)) return;
+
+  const misplaced: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(hooks)) {
+    if ((HOOK_EVENT_NAMES as readonly string[]).includes(key)) {
+      misplaced[key] = entry;
+    } else {
+      rest[key] = entry;
+    }
+  }
+  if (Object.keys(misplaced).length === 0) return;
+
+  const existingEvents = isPlainRecord(rest.events) ? rest.events : {};
+  root.hooks = {
+    ...rest,
+    events: { ...existingEvents, ...misplaced },
+  };
+  diagnostics.push({
+    code: "config_hooks_misplaced_migrated",
+    message: `hooks 根层级的事件字段 ${Object.keys(misplaced).join(", ")} 已自动迁移到 hooks.events 下（兼容 Claude Code 风格写法），建议修改配置文件。`,
+    path: "hooks",
+    severity: "warning",
+  });
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

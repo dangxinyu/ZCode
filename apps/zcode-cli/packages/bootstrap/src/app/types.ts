@@ -638,10 +638,10 @@ export interface ZCodeApp {
     traceId: TraceContext["traceId"];
   }>;
   /**
-   * 视觉委托模型（会话级）：主模型 inputFormat.supportsImage=false 时由它描述图片。
-   * null = 显式清除。经 Registry 校验；立即生效并持久化为 session entry。
+   * 常驻 skill 名单（会话级）：runtime 写入 + 重解析全文 + PinnedSkillsChanged 事件，
+   * 并持久化为 session entry。全量替换语义；空数组 = 清除。
    */
-  setVisionDelegateSelection(selection: ModelSelection | null): Promise<void>;
+  setPinnedSkills(skills: string[]): Promise<void>;
   setLocale(locale: UiLocale): Promise<SetLocaleResult>;
   stopExpertWorkflow(options?: {
     abortSignal?: AbortSignal;

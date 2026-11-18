@@ -25,19 +25,19 @@ Web/命令行版的 renderer 侧任务列表（置顶区、已归档视图、全
 
 ## 接口映射
 
-| IWindowControllerService | 转发目标 |
-| --- | --- |
-| listTaskList(kind=pinned) | listPinnedTasks(scope) |
-| listTaskList(kind=archived) | listArchivedTasks(scope) |
-| listTaskList(kind=timeline/active) | listTasks(scope) |
-| listTaskList(search 非空) | zcodeTaskService.listTaskList(query)（全文检索） |
-| mutateTask(pin) | setTaskPinned |
-| mutateTask(archive) | archiveTask / unarchiveTask |
-| mutateTask(delete) | deleteTask（返回 null） |
-| mutateTask(delete-archived) | deleteArchivedTask（返回 null） |
-| mutateTask(mark-read / mark-unread) | setTaskUnread |
-| mutateTask(open) | 无服务端效果，返回 null |
-| deleteArchivedTask / deleteArchivedTasks | 同名转发 |
+| IWindowControllerService                 | 转发目标                                         |
+| ---------------------------------------- | ------------------------------------------------ |
+| listTaskList(kind=pinned)                | listPinnedTasks(scope)                           |
+| listTaskList(kind=archived)              | listArchivedTasks(scope)                         |
+| listTaskList(kind=timeline/active)       | listTasks(scope)                                 |
+| listTaskList(search 非空)                | zcodeTaskService.listTaskList(query)（全文检索） |
+| mutateTask(pin)                          | setTaskPinned                                    |
+| mutateTask(archive)                      | archiveTask / unarchiveTask                      |
+| mutateTask(delete)                       | deleteTask（返回 null）                          |
+| mutateTask(delete-archived)              | deleteArchivedTask（返回 null）                  |
+| mutateTask(mark-read / mark-unread)      | setTaskUnread                                    |
+| mutateTask(open)                         | 无服务端效果，返回 null                          |
+| deleteArchivedTask / deleteArchivedTasks | 同名转发                                         |
 
 返回的 items 补 `sourceAvailability: "online"` 与按 meta 推导的 `liveStatus`
 （completed/error/idle），与桌面实现的行形状一致。

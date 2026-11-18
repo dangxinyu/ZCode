@@ -3,7 +3,7 @@ import { SqliteSessionStore } from "@zcode/adapters/storage";
 import { resolvePath, type ConfigResult } from "@zcode/adapters/config";
 import {
   SESSION_ENTRY_MODEL_SELECTION,
-  SESSION_ENTRY_VISION_DELEGATE,
+  SESSION_ENTRY_PINNED_SKILLS,
   parseModelSelectionValue,
   type SessionId,
   type SessionStorePort,
@@ -68,18 +68,22 @@ export async function readSessionModelSelection(
   return undefined;
 }
 
-/** 读取 Session 最近一次视觉委托选择；条目缺失或 cleared 标记都视为未配置。 */
-export async function readSessionVisionDelegateSelection(
+/**
+ * 读取 Session 常驻 skill 名单（最近一次写入为全量快照）；条目缺失或 cleared 标记
+ * 都视为空名单。恢复阶段不校验 skill 存在性——失效项由 runtime 注入占位行呈现。
+ */
+export async function readSessionPinnedSkills(
   store: Pick<SessionStorePort, "sessionEntries">,
   sessionID: SessionId,
-): Promise<ModelSelection | undefined> {
-  if (!store.sessionEntries) return undefined;
+): Promise<string[]> {
+  if (!store.sessionEntries) return [];
   const entries = await store.sessionEntries({
     sessionID,
-    type: SESSION_ENTRY_VISION_DELEGATE,
+    type: SESSION_ENTRY_PINNED_SKILLS,
   });
   const data = entries.at(-1)?.data;
-  return parseModelSelectionValue(data) ?? undefined;
+  if (!Array.isArray(data)) return [];
+  return data.filter((name): name is string => typeof name === "string");
 }
 
 export function closeSessionStore(store: SqliteSessionStore): void {

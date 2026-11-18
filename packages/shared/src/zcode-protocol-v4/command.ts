@@ -37,6 +37,9 @@ const createSessionRequestedConfigSchema = z.object({
   // 会把“没传 mode”误变成“请求切回 build”，覆盖 workspace 默认 yolo。
   mode: z.string().optional(),
   planEnabled: z.boolean().optional(),
+  // 常驻 skill 名单（catalog name；全量替换，空数组=清除）。applyRequestedSessionConfig
+  // 消费：与 runtime 真值不同才写，避免 createSession 空转事件。
+  pinnedSkills: z.array(z.string()).optional(),
 });
 
 // ── 命令 payload 全集 ──
@@ -49,8 +52,6 @@ export const commandPayloadSchemas = {
         text: z.string(),
         attachments: z.array(attachmentRefSchema).optional(),
         modelSelection: modelSelectionSchema.optional(),
-        // 视觉委托模型（主模型无视觉时描述图片）；null=显式清除，会话级生效。
-        visionDelegateModel: modelSelectionSchema.nullable().optional(),
         mode: submissionModeSchema.optional(),
         planEnabled: z.boolean().optional(),
       })
@@ -102,9 +103,6 @@ export const commandPayloadSchemas = {
       // 迁移期允许旧发送端缺省；CLI admission 会把当前 Session Selection 固定进
       // canonical intent。Renderer 切换完成后，第一方用户提交始终显式携带这两项。
       modelSelection: modelSelectionSchema.optional(),
-      // 视觉委托模型：主模型无视觉时随提交更新会话级委托（null=显式清除）。
-      // 与 modelSelection 同语义：提交时应用，不进 intent 快照。
-      visionDelegateModel: modelSelectionSchema.nullable().optional(),
       mode: submissionModeSchema.optional(),
       planEnabled: z.boolean().optional(),
       // 本次执行仍使用上面的标准 Selection；这里只携带不持久化语义、动态鉴权和 child 策略。
@@ -223,6 +221,9 @@ export const commandPayloadSchemas = {
     mode: z.enum(["build", "edit", "plan", "yolo"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
+  // 常驻 skill 名单（catalog name 全量替换，空数组=清除）。与 switchModelConfig 同族：
+  // CAS 命令；同值切换由 CLI 回 noop（config.unchanged）。
+  setPinnedSkills: z.object({ skills: z.array(z.string()) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
@@ -314,6 +315,7 @@ export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Se
   "switchModelConfig",
   "switchCollaborationMode",
   "setFollowupMode",
+  "setPinnedSkills",
   "pauseGoal",
   "resumeGoal",
 ]);

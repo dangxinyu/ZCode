@@ -92,6 +92,7 @@ import {
 } from "@/lib/sidebarPurposeSectionPreferences.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
+import { closeOrchestrationPlanPage } from "@/lib/orchestrationPlanSync.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
   increaseWorkspaceTaskVisibleLimit,
@@ -327,6 +328,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       targetWorkspaceIdentity?: string,
       expectedUnreadAt?: number,
     ) => {
+      // 侧栏任务行 = 用户主动导航：点任何任务都看它的对话界面，编排计划页在此关闭
+      // （用户需求 2026-10-30：点主任务切回对话）。不能放在 shell 的
+      // handleSelectTaskInChat——WorkbenchPane 对会话区任何点击（含计划页画布）都会
+      // 走"激活当前会话"进到那个漏斗，会把计划页内的普通点击误判成导航退出。
+      closeOrchestrationPlanPage();
       // Shell 第四个参数是远程 session 路由，任务行的 unreadAt 不能复用该位置。
       // Sidebar 行选择显式留空 remoteSessionId，再把用户看到的未读版本传给已读事务。
       onSelectTask(
@@ -1453,9 +1459,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                   activeWorkspaceIdentity={workspaceIdentity}
                   activeTaskId={activeTaskId}
                   taskSortBy={taskSortBy}
-                  orchestrationFilter={
-                    taskOrganizeBy === "orchestration" ? "only" : "exclude"
-                  }
+                  orchestrationFilter={taskOrganizeBy === "orchestration" ? "only" : "exclude"}
                   onOrchestrationChildJump={handleOrchestrationChildJump}
                   onSelectTask={handleTaskRowSelect}
                   onOpenFileTree={(target) => {
@@ -1475,9 +1479,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     sortBy={taskSortBy}
                     // 归档历史按入口 tab 分流（spec: orchestration-tasks.md）：
                     // 编排 tab 下只显示编排任务的归档；普通视图的归档历史排除编排任务。
-                    orchestrationFilter={
-                      taskOrganizeBy === "orchestration" ? "only" : "exclude"
-                    }
+                    orchestrationFilter={taskOrganizeBy === "orchestration" ? "only" : "exclude"}
                     onSelectTask={onSelectTask}
                   />
                 ) : taskViewMode === "grouped" ? (

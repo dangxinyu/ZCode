@@ -53,11 +53,15 @@ export const MESSAGE_VISIBILITIES = ["user-visible", "model-only"] as const;
 export type MessageVisibility = (typeof MESSAGE_VISIBILITIES)[number];
 
 export const SYNTHETIC_USER_MESSAGE_SOURCES = [
+  // 前向兼容（bug 修复 2026-11-03）：与 shared 协议枚举同词表；新版 App 写入的
+  // agent_listing_delta / bot_topic_context 缺席会让旧检出加载该会话时校验失败。
+  "agent_listing_delta",
   "background_task",
   "fork",
   "goal_state_change",
   "goal-continuation",
   "plugin_reference",
+  "bot_topic_context",
   "rewind",
   "selection_side_chat",
   "subagent",
@@ -807,7 +811,7 @@ export const SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION =
   "target_completion_verification" as const;
 export const SESSION_ENTRY_BASH_SHELL_SELECTION = "runtime/bash_shell_selection" as const;
 export const SESSION_ENTRY_MODEL_SELECTION = "runtime/model_selection" as const;
-export const SESSION_ENTRY_VISION_DELEGATE = "runtime/vision_delegate" as const;
+export const SESSION_ENTRY_PINNED_SKILLS = "runtime/pinned_skills" as const;
 export const SESSION_ENTRY_EXECUTION_STATE = "runtime/execution_state" as const;
 export const SESSION_ENTRY_USER_INPUT_AUTO_RESOLUTION =
   "runtime/user_input_auto_resolution" as const;
@@ -818,7 +822,7 @@ export const SESSION_ENTRY_TYPES = [
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
   SESSION_ENTRY_BASH_SHELL_SELECTION,
   SESSION_ENTRY_MODEL_SELECTION,
-  SESSION_ENTRY_VISION_DELEGATE,
+  SESSION_ENTRY_PINNED_SKILLS,
   SESSION_ENTRY_EXECUTION_STATE,
   SESSION_ENTRY_USER_INPUT_AUTO_RESOLUTION,
   SESSION_ENTRY_WORKSPACE_CHECKPOINT,

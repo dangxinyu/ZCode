@@ -45,6 +45,7 @@ function V4ComposerModeSwitchImpl({
   activeConfigPicker,
   onConfigPickerOpenChange,
   onSwitchMode,
+  hidePlanMode = false,
 }: Pick<
   V4ComposerToolbarProps,
   | "workspacePath"
@@ -55,7 +56,10 @@ function V4ComposerModeSwitchImpl({
   | "activeConfigPicker"
   | "onConfigPickerOpenChange"
   | "onSwitchMode"
->) {
+> & {
+  /** 编排计划模式开启时隐藏内置「计划模式」勾选项（用户需求 2026-10-29：双轨打架）。 */
+  hidePlanMode?: boolean;
+}) {
   const { intl } = useZCodeIntl();
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
@@ -140,23 +144,27 @@ function V4ComposerModeSwitchImpl({
                 ?.focus();
           }}
         >
-          <DropdownMenuCheckboxItem
-            checked={draftConfig?.planEnabled ?? false}
-            onCheckedChange={(checked) => onSwitchMode(checked ? "plan" : "plan-off")}
-            data-testid={testId(TID_CHAT_MODE_SELECT_ITEM, "plan")}
-            className="min-h-13 items-start gap-3 py-2"
-          >
-            <LightbulbIcon className="mt-0.5 size-4.5 shrink-0" />
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span>{planLabel}</span>
-              {planDescriptionId && (
-                <span className="text-ui-sm text-foreground-subtle">
-                  {intl.formatMessage({ id: planDescriptionId })}
+          {hidePlanMode ? null : (
+            <>
+              <DropdownMenuCheckboxItem
+                checked={draftConfig?.planEnabled ?? false}
+                onCheckedChange={(checked) => onSwitchMode(checked ? "plan" : "plan-off")}
+                data-testid={testId(TID_CHAT_MODE_SELECT_ITEM, "plan")}
+                className="min-h-13 items-start gap-3 py-2"
+              >
+                <LightbulbIcon className="mt-0.5 size-4.5 shrink-0" />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span>{planLabel}</span>
+                  {planDescriptionId && (
+                    <span className="text-ui-sm text-foreground-subtle">
+                      {intl.formatMessage({ id: planDescriptionId })}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-          </DropdownMenuCheckboxItem>
-          <DropdownMenuSeparator />
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuRadioGroup value={selected.id} onValueChange={onSwitchMode}>
             {permissions.map((mode) => {
               const ModeIcon = resolveModeOptionIcon(mode.id);

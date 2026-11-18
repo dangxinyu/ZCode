@@ -690,7 +690,6 @@ function RootInner({
     onReauthenticationRequired: handleReauthenticationRequired,
   });
 
-
   const canEnterNativeThemeSyncSurface = Boolean(
     !isStartupRenderBlocked &&
     !welcomeScreenOpenReason &&

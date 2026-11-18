@@ -22,9 +22,7 @@ import {
   resolveModelProviderFamilySpecByProviderId,
   TID_V4_MODEL_CONFIG,
   TID_V4_COMPOSER_INPUT,
-  TID_VISION_DELEGATE_SELECT,
   ZCODE_AGENT_PROVIDER,
-  type ModelSelection,
   type ProviderFamilyConnectionSelection,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
@@ -41,6 +39,15 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { Button } from "@/components/ui/button.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
 import {
   hasChatCodingPlanUsageRemaining,
@@ -73,6 +80,9 @@ import {
   type UsageEntitlementRefreshOptions,
 } from "@/hooks/useUsageEntitlement.js";
 import { useToolbarConfigOptions } from "@/hooks/useZCodeConfig.js";
+import type { OrchestrationPlanControl } from "@/hooks/useOrchestrationPlanControl.js";
+import { ChevronDownIcon, LoaderIcon, PlusIcon } from "lucide-react";
+import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   createCodingPlanFunnelContext,
@@ -85,7 +95,6 @@ import { useCodingPlanEntitlements } from "@/settings/model-provider-section/use
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 import {
   buildRegistryModelSelectGroups,
-  resolveModelDisplayName,
   type ModelProviderGroupLabelOptions,
 } from "@/lib/modelSelectionGroups.js";
 import {
@@ -111,11 +120,97 @@ export { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerModeControls.js";
 
 const V4_COMPOSER_INPUT_SELECTOR = `[data-testid="${TID_V4_COMPOSER_INPUT}"]`;
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
-/** 视觉委托下拉的「不使用视觉模型」清除项 value；onValueChange 时映射为 (…, null)。 */
-const VISION_DELEGATE_NONE_VALUE = "__none__";
 
 /** 稳定空回调（热键 hook 单实例只处理本组件拥有的选项，其余动作占位）。 */
 function noop(): void {}
+
+/**
+ * 计划模式下拉：触发器与菜单样式对齐 ModelConfigSelect（用户需求 2026-10-28：
+ * 和「选择模型」观感一致，替代原生 select 的系统菜单）。选中态单一事实 = plansMap.activePlanId。
+ */
+function OrchestrationPlanSelectDropdown({ control }: { control: OrchestrationPlanControl }) {
+  const { intl } = useZCodeIntl();
+  const plans = control.plansMap?.plans ?? [];
+  const activePlan = plans.find((plan) => plan.planId === control.plansMap?.activePlanId);
+  // 等待态优先（用户需求 2026-11-02）：挂起「另起新计划」时触发器显示「新计划（等待创建）」，
+  // 有活动计划也一样——此前活动计划名抢占触发器，等待态只在零计划时才露脸。
+  const triggerTitle = control.pendingNewPlan
+    ? intl.formatMessage({ id: "orchestration.plan.pendingNewPlan" })
+    : (activePlan?.title ??
+      (plans.length > 0
+        ? intl.formatMessage({ id: "orchestration.plan.selectPlan" })
+        : intl.formatMessage({ id: "orchestration.plan.noPlans" })));
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="default"
+          // 0 计划不禁用：菜单里的「新建计划（AI 生成）」就是从零开始的入口。
+          disabled={control.busy}
+          aria-label={intl.formatMessage({ id: "orchestration.plan.selectPlan" })}
+          title={triggerTitle}
+          className="h-7 w-fit max-w-40 shrink-0 justify-between gap-1 rounded-lg pl-2 pr-1.5 text-ui-sm whitespace-nowrap"
+        >
+          <span className="min-w-0 truncate">{triggerTitle}</span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-foreground-subtle" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-max min-w-40 max-w-72">
+        {/* 「另起新计划」等待态：意图已注入对话，agent 创建后自动消失（用户需求 2026-10-29） */}
+        {control.pendingNewPlan ? (
+          <div className="flex min-h-8 items-center gap-2 px-2 text-ui-sm text-foreground-subtle">
+            <LoaderIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+            <span className="min-w-0 flex-1 truncate">
+              {intl.formatMessage({ id: "orchestration.plan.pendingNewPlan" })}
+            </span>
+          </div>
+        ) : null}
+        {control.pendingNewPlan ? <DropdownMenuSeparator /> : null}
+        {/* 新建计划（AI 生成）：只注入用户意图，agent 在对话中创建计划并填充（用户需求 2026-10-29） */}
+        <DropdownMenuItem
+          className="min-h-8 gap-2 px-2 text-ui-sm"
+          disabled={control.busy}
+          onSelect={() => control.requestNewPlanIntent()}
+        >
+          <PlusIcon aria-hidden="true" className="size-3.5" />
+          {intl.formatMessage({
+            id: control.pendingNewPlan
+              ? "orchestration.plan.cancelNewPlan"
+              : "orchestration.plan.newPlanAiEntry",
+          })}
+        </DropdownMenuItem>
+        {plans.length > 0 ? <DropdownMenuSeparator /> : null}
+        {/* 单选呈现（用户需求 2026-11-02）：等待态下现有计划不打勾——菜单顶部的等待行
+            就是当前选择；点选现有计划经 selectPlan 清等待态（服务端单次写入）。 */}
+        <DropdownMenuRadioGroup
+          value={control.pendingNewPlan ? "" : (control.plansMap?.activePlanId ?? "")}
+          onValueChange={(value) => control.selectPlan(value)}
+        >
+          {plans.map((plan) => (
+            <DropdownMenuRadioItem
+              key={plan.planId}
+              value={plan.planId}
+              className="min-h-8 gap-2 pl-2 pr-8 text-ui-sm"
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                <span className="min-w-0 truncate" title={plan.title}>
+                  {plan.title}
+                </span>
+                {plan.origin === "manual" ? (
+                  <span className="shrink-0 rounded-full bg-surface px-1 py-px text-ui-xs font-medium leading-normal text-foreground-subtle">
+                    {intl.formatMessage({ id: "orchestration.plan.originManual" })}
+                  </span>
+                ) : null}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export interface ModelSelectionSource {
   provider: string;
@@ -330,6 +425,8 @@ function resolveContextCodingPlanUsageSource(params: {
 
 export interface V4ComposerToolbarProps {
   workspacePath: string;
+  /** 编排计划开关（spec: orchestration-plan.md）：仅编排主任务会话由调用方注入；缺省不渲染。 */
+  orchestrationPlanControl?: OrchestrationPlanControl;
   workspaceIdentity?: string;
   modelSelectionView?: ModelSelectionView | null;
   modelSelectionState?: ModelSelectionState;
@@ -360,10 +457,6 @@ export interface V4ComposerToolbarProps {
   ) => void;
   /** 选中思考深度；modelContext 固定本次用户操作的目标模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
-  /** 视觉委托模型草稿；null=用户显式清除，undefined=未选择。主模型不支持图片输入时渲染委托下拉。 */
-  visionDelegateModel?: ModelSelection | null;
-  /** 选择视觉委托模型；modelId 传 null 表示清除会话级委托。 */
-  onSelectVisionDelegate?: (providerId: string, modelId: string | null) => void;
   onSwitchMode: (mode: string) => void;
   /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
   onRecoverCustomModelSelection?: (
@@ -390,10 +483,9 @@ function V4ComposerModelControlsImpl({
   onConfigPickerOpenChange,
   onSelectModel,
   onSelectThought,
-  visionDelegateModel,
-  onSelectVisionDelegate,
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
+  orchestrationPlanControl,
 }: V4ComposerToolbarProps) {
   const { intl, locale } = useZCodeIntl();
   const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
@@ -777,73 +869,6 @@ function V4ComposerModelControlsImpl({
     return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, providerGroupLabels);
   }, [displayProvider, modelSelectionView, providerGroupLabels]);
 
-  // 主模型是否原生支持图片输入：只读原始能力位 supportsImage（不用
-  // shouldShowModelVisionBadge——它会把套餐 GLM-5.3 的服务端桥接误判成视觉模型，
-  // 从而错误隐藏委托入口）。模型不在目录（未选/失效/合成）按 false 处理，保守展示下拉。
-  const mainModelSupportsImage = useMemo(() => {
-    if (!effectiveConfig?.provider || !effectiveConfig.model) return false;
-    return (
-      modelSelectionView?.providers
-        .find((provider) => provider.providerId === effectiveConfig.provider)
-        ?.models.find((model) => model.modelId === effectiveConfig.model)
-        ?.config.properties?.inputFormat?.supportsImage === true
-    );
-  }, [effectiveConfig?.model, effectiveConfig?.provider, modelSelectionView]);
-
-  // 视觉委托候选：把 view 过滤为只剩 supportsImage===true 的模型，再复用
-  // buildRegistryModelSelectGroups 生成组（保留 provider 徽标与连接方式呈现）。
-  const visionModelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
-    if (!modelSelectionView) return [];
-    const visionView: ModelSelectionView = {
-      ...modelSelectionView,
-      providers: modelSelectionView.providers
-        .map((provider) => ({
-          ...provider,
-          models: provider.models.filter(
-            (model) => model.config.properties?.inputFormat?.supportsImage === true,
-          ),
-        }))
-        .filter((provider) => provider.models.length > 0),
-    };
-    return buildRegistryModelSelectGroups(displayProvider, visionView, providerGroupLabels);
-  }, [displayProvider, modelSelectionView, providerGroupLabels]);
-  const hasVisionDelegateOptions = visionModelSelectGroups.some(
-    (group) => group.items.length > 0,
-  );
-
-  // 委托下拉的受控值：已选=目录编码值；null（显式清除）=清除项；undefined（未选择）=空。
-  const visionDelegateValue = visionDelegateModel
-    ? encodeCustomModelValue(visionDelegateModel.providerId, visionDelegateModel.modelId)
-    : visionDelegateModel === null
-      ? VISION_DELEGATE_NONE_VALUE
-      : "";
-  const visionDelegateTriggerLabel = useMemo(() => {
-    if (!visionDelegateModel) {
-      return visionDelegateModel === null
-        ? intl.formatMessage({ id: "chat.toolbar.visionModel.none" })
-        : intl.formatMessage({ id: "chat.toolbar.visionModel" });
-    }
-    return (
-      resolveModelDisplayName(visionModelSelectGroups, visionDelegateValue) ??
-      visionDelegateModel.modelId
-    );
-  }, [intl, visionDelegateModel, visionDelegateValue, visionModelSelectGroups]);
-
-  const handleVisionDelegateValueChange = useCallback(
-    (value: string) => {
-      if (!onSelectVisionDelegate) return;
-      // 清除项映射为 (providerId, null)：协议约定 null 表达清除会话级委托。
-      if (value === VISION_DELEGATE_NONE_VALUE) {
-        onSelectVisionDelegate("", null);
-        return;
-      }
-      const decoded = decodeCustomModelValue(value);
-      if (!decoded?.providerId || !decoded.modelName) return;
-      onSelectVisionDelegate(decoded.providerId, decoded.modelName);
-    },
-    [onSelectVisionDelegate],
-  );
-
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {
     setPendingSettingsSectionIntent("modelProvider");
@@ -1097,6 +1122,53 @@ function V4ComposerModelControlsImpl({
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
         className="hidden"
       />
+      {/*
+        编排计划开关（spec: orchestration-plan.md）：仅编排主任务会话渲染，位置在用量圈
+        左侧（用户确认 2026-10-28：与用量圈对调），滑块在文案后。滑块形态明确表达"已开启"；配色提亮
+        （关 = foreground-subtle，开 = accent），避免暗色主题下开关态难以分辨。
+        运行中禁用：确认/模式注入经 sendPrompt，busy 会话会被拒。
+      */}
+      {orchestrationPlanControl?.isOrchestrator ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={orchestrationPlanControl.planModeOn}
+          aria-label={intl.formatMessage({ id: "orchestration.plan.modeToggle" })}
+          title={intl.formatMessage({ id: "orchestration.plan.modeToggleHint" })}
+          // 运行中不禁用（用户反馈）：切换已是纯配置翻转，不发消息、无 busy 拒绝问题。
+          disabled={orchestrationPlanControl.busy}
+          onClick={orchestrationPlanControl.togglePlanMode}
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1 text-ui-sm text-foreground-subtle transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          <span className="hidden @sm/composer:inline">
+            {intl.formatMessage({ id: "orchestration.plan.modeToggle" })}
+          </span>
+          <span
+            className={cn(
+              // 底色：关 = 白（用户指定），开 = accent；旋钮随之反色保证对比。
+              "relative h-4 w-7 shrink-0 rounded-full transition-colors",
+              orchestrationPlanControl.planModeOn ? "bg-accent" : "bg-white",
+            )}
+          >
+            <span
+              className={cn(
+                // 旋钮：白底上用深灰，accent 底上用白。
+                orchestrationPlanControl.planModeOn
+                  ? "left-3.5 bg-white"
+                  : "left-0.5 bg-neutral-500",
+                "absolute top-0.5 size-3 rounded-full shadow-sm transition-[left]",
+              )}
+            />
+          </span>
+        </button>
+      ) : null}
+      {/*
+        计划模式开启后的下拉（需求点 1 箭头位置）：对话中随时切换选中计划；
+        右侧图标进计划页（画布编辑/进度）。无计划时禁用显示占位。
+      */}
+      {orchestrationPlanControl?.isOrchestrator && orchestrationPlanControl.planModeOn ? (
+        <OrchestrationPlanSelectDropdown control={orchestrationPlanControl} />
+      ) : null}
       <ChatContextUsage
         codingPlanUsageRemaining={codingPlanUsageRemaining}
         taskUsage={taskUsage}
@@ -1156,34 +1228,6 @@ function V4ComposerModelControlsImpl({
           triggerIconClassName="inline-flex @sm/composer:hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
           focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
           providerSubmenuClassName={providerSubmenuClassName}
-        />
-      ) : null}
-      {!mainModelSupportsImage && hasVisionDelegateOptions && onSelectVisionDelegate ? (
-        <ModelConfigSelect
-          modelGroups={visionModelSelectGroups}
-          normalizedValue={visionDelegateValue}
-          triggerLabel={visionDelegateTriggerLabel}
-          leadingItems={[
-            {
-              key: "vision-delegate:none",
-              value: VISION_DELEGATE_NONE_VALUE,
-              name: intl.formatMessage({ id: "chat.toolbar.visionModel.none" }),
-            },
-          ]}
-          showManageModelsAction={false}
-          lockReasonMessage=""
-          isItemLocked={isModelOptionLocked}
-          onValueChange={handleVisionDelegateValueChange}
-          disabled={disabled || modelSelectionState.status !== "ready"}
-          // tooltipTitle 同时充当触发器 aria-label（组件内 triggerAriaLabel = tooltipTitle ?? label）。
-          tooltipTitle={intl.formatMessage({ id: "chat.toolbar.visionModel" })}
-          triggerTestId={TID_VISION_DELEGATE_SELECT}
-          focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
-          labelVisibilityClassName="hidden @sm/composer:inline-flex"
-          triggerLabelClassName="min-w-0 max-w-40 truncate text-left"
-          // 与现有 trigger 一致的手机布局收缩；委托下拉无自定义图标位（组件图标固定为
-          // PackageIcon，triggerIconClassName 只控制显隐），保持默认隐藏走纯文本。
-          triggerClassName="@max-sm/composer:size-7 @max-sm/composer:justify-center @max-sm/composer:gap-0 @max-sm/composer:p-0"
         />
       ) : null}
       {thoughtOption ? (

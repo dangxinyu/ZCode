@@ -121,7 +121,8 @@ async function renderConversationSharePage(): Promise<void> {
   document.documentElement.lang = routeLocale;
   // 分享页必须设置 title：否则浏览器标签只显示 index.html 的通用标题。
   // 会话标题要等 preview 加载完，先给一个语言正确的兜底。
-  document.title = routeLocale === "zh-CN" ? "Don’t-think 会话分享" : "Don’t-think Conversation Share";
+  document.title =
+    routeLocale === "zh-CN" ? "Don’t-think 会话分享" : "Don’t-think Conversation Share";
   const shareCode = resolveConversationShareCodeFromPath(window.location.pathname);
   if (!shareCode) {
     root.render(

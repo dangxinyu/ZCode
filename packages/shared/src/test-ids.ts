@@ -539,6 +539,7 @@ export const TID_V4_COMPOSER_INPUT = "v4-composer-input";
 export const TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER = "v4-composer-background-work-trigger";
 /** v4 composer 电脑操作（CUA）常驻入口按钮 */
 export const TID_V4_COMPOSER_CUA_ENTRY = "v4-composer-cua-entry";
+export const TID_V4_COMPOSER_PINNED_SKILL_ENTRY = "v4-composer-pinned-skill-entry";
 /** v4 composer 发送按钮 */
 export const TID_V4_COMPOSER_SEND = "v4-composer-send";
 /** v4 暂停队列发送确认：清空队列并发送 */
@@ -622,8 +623,6 @@ export const TID_V4_BACKGROUND_WORK_ITEM = "v4-background-work-item";
 export const TID_V4_BACKGROUND_WORK_CANCEL = "v4-background-work-cancel";
 /** v4 模型配置显示（data-provider/data-model/data-thought，switchModelConfig 效果投影） */
 export const TID_V4_MODEL_CONFIG = "v4-model-config";
-/** Composer 视觉委托模型下拉 */
-export const TID_VISION_DELEGATE_SELECT = "vision-delegate-select";
 // v4-model-provider-input / v4-model-model-input / v4-model-thought-input /
 // v4-model-apply（调试表单）已退役——模型切换由 composer 工具条的
 // TID_CHAT_MODEL_SELECT_* / TID_CHAT_THOUGHT_LEVEL_SELECT_* 承载。

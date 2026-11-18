@@ -68,6 +68,12 @@ import {
   zcodeOrchestrationSendChildTaskPromptParamsSchema,
   zcodeOrchestrationListChildrenParamsSchema,
   zcodeOrchestrationListWorkspaceTasksParamsSchema,
+  zcodeOrchestrationProposePlanParamsSchema,
+  zcodeOrchestrationProposePlanResultSchema,
+  zcodeOrchestrationSelectPlanParamsSchema,
+  zcodeOrchestrationBindPlanNodesParamsSchema,
+  zcodeOrchestrationMarkPlanNodesStaleParamsSchema,
+  zcodeOrchestrationMarkPlanNodesStaleResultSchema,
   OFF_PEAK_PROVIDER_IDS,
   zcodeComputerUseOperationEventSchema,
   zcodeProviderRuntimeHeadersCancelledSchema,
@@ -304,6 +310,7 @@ import { ZCodeAgentProcessManager } from "./zcodeAgentProcessManager.js";
 import type { ZCodeAgentProcessManagerOptions } from "./zcodeAgentProcessManager.js";
 import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
 import type { IOrchestrationTaskService } from "#src/zcode-agent/orchestrationTaskService.js";
+import type { IOrchestrationPlanService } from "#src/zcode-agent/orchestrationPlanService.js";
 import {
   ZCodeProtocolRequestTimeoutError,
   type ZCodeProtocolClient,
@@ -662,7 +669,9 @@ function buildSessionCreateParams(
       : {}),
     // 编排任务身份（spec: orchestration-tasks.md）：taskType 在创建期定型，必须随
     // create 请求进入 CLI；child 由 spawn 链路携带（adapter 保证与 parent 配对）。
-    ...(params.orchestrationRole !== undefined ? { orchestrationRole: params.orchestrationRole } : {}),
+    ...(params.orchestrationRole !== undefined
+      ? { orchestrationRole: params.orchestrationRole }
+      : {}),
     ...(params.orchestrationParentTaskId !== undefined
       ? { orchestrationParentTaskId: params.orchestrationParentTaskId }
       : {}),
@@ -898,7 +907,7 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    */
   resolveDynamicWorkflowClientConfig?: () => Promise<DynamicWorkflowClientConfig | undefined>;
   resolveOffPeakTaskService?: () =>
-    Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
+    | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
   /**
    * 编排任务服务（spec: packages/services/specs/orchestration-tasks.md）。
@@ -906,6 +915,8 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    * 纯 CLI / 远程 attached 装配不传（编排工具只对 orchestration_parent 会话注册）。
    */
   resolveOrchestrationTaskService?: () => IOrchestrationTaskService | undefined;
+  // 编排计划服务（spec: orchestration-plan.md）：proposePlan 反向请求的执行面。
+  resolveOrchestrationPlanService?: () => IOrchestrationPlanService | undefined;
   /**
    * browser-use 执行桥：把 agent 的 interaction/browserExecute 反向请求转发到 main
    * （WebContentsView+CDP）。desktop host 装配时注入；缺省（纯 CLI/远控无 main）则
@@ -2584,6 +2595,7 @@ export function createZCodeAgentService(
                   : {}),
                 name: parsed.data.name,
                 prompt: parsed.data.prompt,
+                ...(parsed.data.planNodeId ? { planNodeId: parsed.data.planNodeId } : {}),
               });
               await client.respond(request.id, result);
             } catch (error) {
@@ -2637,7 +2649,9 @@ export function createZCodeAgentService(
         }
 
         if (request.method === zcodeProtocolMethods.orchestrationSendChildTaskPrompt) {
-          const parsed = zcodeOrchestrationSendChildTaskPromptParamsSchema.safeParse(request.params);
+          const parsed = zcodeOrchestrationSendChildTaskPromptParamsSchema.safeParse(
+            request.params,
+          );
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2664,6 +2678,7 @@ export function createZCodeAgentService(
                   : {}),
                 childTaskId: parsed.data.childTaskId,
                 prompt: parsed.data.prompt,
+                ...(parsed.data.planNodeId ? { planNodeId: parsed.data.planNodeId } : {}),
               });
               await client.respond(request.id, result);
             } catch (error) {
@@ -2715,9 +2730,7 @@ export function createZCodeAgentService(
         }
 
         if (request.method === zcodeProtocolMethods.orchestrationListWorkspaceTasks) {
-          const parsed = zcodeOrchestrationListWorkspaceTasksParamsSchema.safeParse(
-            request.params,
-          );
+          const parsed = zcodeOrchestrationListWorkspaceTasksParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2737,12 +2750,194 @@ export function createZCodeAgentService(
                 return;
               }
               const result = await orchestrationService.listWorkspaceTasks({
+                orchestrationTaskId: parsed.data.sessionId,
                 workspacePath: workspace.workspacePath,
                 ...(workspace.workspaceIdentity
                   ? { workspaceIdentity: workspace.workspaceIdentity }
                   : {}),
               });
               await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationProposePlan) {
+          const parsed = zcodeOrchestrationProposePlanParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration proposePlan params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const planService = options?.resolveOrchestrationPlanService?.();
+              if (!planService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration plan service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await planService.proposePlan({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                ...(parsed.data.title ? { title: parsed.data.title } : {}),
+                // createNew 必须透传（bug 修复 2026-11-02）：此前 handler 只转了 title/nodes，
+                // agent 带 createNew=true 的「另起新计划」提案在 host 侧被当成修订 active 计划，
+                // 新节点合并进老计划、等待态也清不掉（用户实测：选了新计划却创建在老计划里）。
+                ...(parsed.data.createNew ? { createNew: true } : {}),
+                nodes: parsed.data.nodes.map((node) => ({
+                  nodeId: node.nodeId,
+                  name: node.name,
+                  goal: node.goal,
+                  dependsOn: node.dependsOn ?? [],
+                  needsUpstreamResult: node.needsUpstreamResult ?? true,
+                })),
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationSelectPlan) {
+          const parsed = zcodeOrchestrationSelectPlanParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration selectPlan params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const planService = options?.resolveOrchestrationPlanService?.();
+              if (!planService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration plan service is unavailable on this host",
+                });
+                return;
+              }
+              // 选中切换是 UI/host 动作，不发会话消息；CLI 侧不调用（保留协议对称性）。
+              const result = await planService.selectPlan({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                planId: parsed.data.planId,
+              });
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationMarkPlanNodesStale) {
+          const parsed = zcodeOrchestrationMarkPlanNodesStaleParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration markPlanNodesStale params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const planService = options?.resolveOrchestrationPlanService?.();
+              if (!planService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration plan service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await planService.markPlanNodesStale({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                nodeIds: parsed.data.nodeIds,
+                stale: parsed.data.stale,
+              });
+              await client.respond(request.id, {
+                updated: result.updated,
+                message:
+                  result.updated > 0
+                    ? `Updated ${result.updated} plan node(s).`
+                    : "No matching nodes in the active plan; nothing changed.",
+              });
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.orchestrationBindPlanNodes) {
+          const parsed = zcodeOrchestrationBindPlanNodesParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid orchestration bindPlanNodes params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const planService = options?.resolveOrchestrationPlanService?.();
+              if (!planService) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Orchestration plan service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await planService.bindPlanNodesToChildren({
+                orchestrationTaskId: parsed.data.sessionId,
+                workspacePath: workspace.workspacePath,
+                ...(workspace.workspaceIdentity
+                  ? { workspaceIdentity: workspace.workspaceIdentity }
+                  : {}),
+                bindings: parsed.data.bindings,
+              });
+              await client.respond(request.id, {
+                updated: result.updated,
+                message:
+                  result.updated > 0
+                    ? `Bound ${result.updated} plan node(s) to linked child tasks. The plan view now shows each node's child task and progress; already-finished children light up as completed.`
+                    : "All bindings already match the active plan; nothing changed.",
+              });
             } catch (error) {
               await client.respondError(request.id, {
                 code: -32603,

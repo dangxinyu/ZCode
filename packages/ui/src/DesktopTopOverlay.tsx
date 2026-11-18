@@ -197,7 +197,6 @@ export function DesktopTopOverlay({
               <MessageCirclePlus className="size-4" />
             </DesktopTopOverlayActionButton>
           </div>
-
         </div>
       </div>
     </div>

@@ -54,7 +54,8 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Record<Locale, string>> = {
       "Use before any creative work, including creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements, and design before implementation.",
   },
   "control-browser": {
-    "zh-CN": "控制 Don’t-think 内置浏览器，用于打开、检查、点击、输入、截图或验证网页和本地开发页面。",
+    "zh-CN":
+      "控制 Don’t-think 内置浏览器，用于打开、检查、点击、输入、截图或验证网页和本地开发页面。",
     "en-US":
       "Control Don’t-think's built-in browser to open, inspect, click, type, screenshot, or verify webpages and local development targets.",
   },
