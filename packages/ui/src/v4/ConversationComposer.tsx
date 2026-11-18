@@ -41,7 +41,6 @@ import {
   TID_V4_ATTACHMENT_UPLOAD_RETRY,
   TID_V4_STOP,
   testId,
-  type ModelSelection,
   type PlanIdentitySnapshot,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -432,10 +431,6 @@ interface ConversationComposerProps {
   ) => void;
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
-  /** 视觉委托模型草稿；null=显式清除，undefined=未选择。主模型不支持图片输入时由工具条渲染选择。 */
-  visionDelegateModel?: ModelSelection | null;
-  /** 选择视觉委托模型；modelId 传 null 表示清除会话级委托。 */
-  onSelectVisionDelegate?: (providerId: string, modelId: string | null) => void;
   onSwitchMode: (mode: string) => void;
   /** 替换常驻 skill 名单；宿主负责会话内 setPinnedSkills 命令派发（草稿态可缺省）。 */
   onSetPinnedSkills?: (skills: string[]) => void;
@@ -528,8 +523,6 @@ function ConversationComposerImpl({
   onStop,
   onSelectModel,
   onSelectThought,
-  visionDelegateModel,
-  onSelectVisionDelegate,
   onSwitchMode,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
@@ -2103,8 +2096,6 @@ function ConversationComposerImpl({
             onConfigPickerOpenChange={handleConfigPickerOpenChange}
             onSelectModel={handleSelectModelTrace}
             onSelectThought={onSelectThought}
-            visionDelegateModel={visionDelegateModel}
-            onSelectVisionDelegate={onSelectVisionDelegate}
             onSwitchMode={onSwitchMode}
             onRecoverCustomModelSelection={onRecoverCustomModelSelection}
             onSendCompressionCommand={onSendCompressionCommand}
@@ -2157,7 +2148,6 @@ function ConversationComposerImpl({
       disabled,
       draftConfig,
       draftMode,
-      visionDelegateModel,
       handleStopClick,
       handleSendButtonClick,
       handleConfigPickerOpenChange,
@@ -2167,7 +2157,6 @@ function ConversationComposerImpl({
       modelSelectionState,
       modelSelectionView,
       onSelectThought,
-      onSelectVisionDelegate,
       onRecoverCustomModelSelection,
       onSendCompressionCommand,
       onSwitchMode,

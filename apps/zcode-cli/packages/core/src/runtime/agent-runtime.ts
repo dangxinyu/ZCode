@@ -156,8 +156,6 @@ export class AgentRuntime {
   /** 模型请求准入端口；随每次模型请求进调用上下文。 */
   private modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
   private sessionModelSelection: ModelSelection | undefined;
-  private sessionVisionDelegateSelection: ModelSelection | undefined;
-  private visionDelegateDescriptionCache = new Map<string, Promise<string>>();
   private sessionPinnedSkills: readonly string[] = [];
   private pinnedSkillContents: readonly ResolvedPinnedSkill[] = [];
   private messageHistory: MessageHistory;
@@ -279,7 +277,6 @@ export class AgentRuntime {
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
     this.sessionModelSelection =
       config.modelSelection && cloneModelSelection(config.modelSelection);
-    this.sessionVisionDelegateSelection = undefined;
     this.sessionPinnedSkills = [];
     this.pinnedSkillContents = [];
     this.messageHistory = new MessageHistoryImpl();
@@ -362,8 +359,6 @@ export interface AgentRuntime {
   ): Promise<void>;
   getSessionModelSelection(): ModelSelection | undefined;
   setSessionModelSelection(selection: ModelSelection | undefined): void;
-  getVisionDelegateSelection(): ModelSelection | undefined;
-  setVisionDelegateSelection(selection: ModelSelection | undefined): void;
   getPinnedSkills(): readonly string[];
   setSessionPinnedSkills(skills: readonly string[]): void;
   setPinnedSkills(input: { skills: readonly string[]; traceContext?: TraceContext }): Promise<void>;

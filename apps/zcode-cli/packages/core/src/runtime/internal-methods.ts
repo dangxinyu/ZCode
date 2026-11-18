@@ -81,8 +81,6 @@ export interface AgentRuntimeCoreMethods {
   ): Promise<void>;
   getSessionModelSelection(): ModelSelection | undefined;
   setSessionModelSelection(selection: ModelSelection | undefined): void;
-  getVisionDelegateSelection(): ModelSelection | undefined;
-  setVisionDelegateSelection(selection: ModelSelection | undefined): void;
   getPinnedSkills(): readonly string[];
   /** 免事件的名单写入（冷恢复专用）；不重解析、不追加事件。 */
   setSessionPinnedSkills(skills: readonly string[]): void;

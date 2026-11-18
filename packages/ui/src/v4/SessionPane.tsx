@@ -1259,8 +1259,6 @@ export function SessionPane({
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
-    visionDelegateModel,
-    handleDraftSelectVisionDelegate,
     handleDraftSetPinnedSkills,
     promoteComposerDraft,
     captureAcceptedModelSelection,
@@ -2780,8 +2778,6 @@ export function SessionPane({
               "sendText",
               {
                 text: effectiveText,
-                // ...submission 已含 visionDelegateModel 三态（undefined 不携带、null 清除），
-                // 协议 sendText payload 由此自然承接，无需在此单独组装。
                 ...submission,
                 ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
                 ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
@@ -2833,8 +2829,6 @@ export function SessionPane({
             "createSession",
             {
               workspaceId: workspaceKey,
-              // firstInput 单独组装，但 ...submission 的展开已自然覆盖 visionDelegateModel
-              //（含 null 清除语义），无需再显式取 submission.visionDelegateModel。
               firstInput: { text: effectiveText, ...submission },
               ...draftConfigPayload,
               ...orchestrationCreatePayload,
@@ -4515,8 +4509,6 @@ export function SessionPane({
       onStop={handleStopFromButton}
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
-      visionDelegateModel={visionDelegateModel}
-      onSelectVisionDelegate={handleDraftSelectVisionDelegate}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined

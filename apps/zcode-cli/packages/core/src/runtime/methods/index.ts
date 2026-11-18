@@ -9,8 +9,6 @@ import { getMode, getPlanEnabled } from "./config.js";
 import {
   getSessionModelSelection,
   setSessionModelSelection,
-  getVisionDelegateSelection,
-  setVisionDelegateSelection,
 } from "./config.js";
 import {
   getPinnedSkills,
@@ -218,8 +216,6 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.getPlanEnabled = getPlanEnabled;
   proto.getSessionModelSelection = getSessionModelSelection;
   proto.setSessionModelSelection = setSessionModelSelection;
-  proto.getVisionDelegateSelection = getVisionDelegateSelection;
-  proto.setVisionDelegateSelection = setVisionDelegateSelection;
   proto.getPinnedSkills = getPinnedSkills;
   proto.setSessionPinnedSkills = setSessionPinnedSkills;
   proto.setPinnedSkills = setPinnedSkills;
