@@ -12,17 +12,17 @@ import type {
   ZCodeTaskMeta,
   ZCodeOrchestrationPlansMap,
 } from "@zcode/shared";
-import {
-  Archive,
-  ArrowUpRight,
-  CornerDownRight,
-  LoaderIcon,
-  Pin,
-  Unlink,
-} from "lucide-react";
+import { Archive, ArrowUpRight, CornerDownRight, LoaderIcon, Pin, Unlink } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { cn } from "@/components/lib/utils.js";
+import { toast } from "@/components/ui/toast.js";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu.js";
 import { Switch } from "@/components/ui/switch.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { useOrchestrationChildrenPinned } from "@/lib/orchestrationChildrenPinned.js";
@@ -166,6 +166,20 @@ const OrchestrationChildrenListComponent = ({
         onDeletePlan={onDeletePlan}
       />
     ) : null;
+  // 右键菜单（用户确认 2026-11-11）：child taskId 即会话 id，写入剪贴板 + toast 反馈。
+  const copyChildSessionId = (child: ZCodeTaskMeta) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return;
+    }
+    void navigator.clipboard.writeText(child.taskId).then(
+      () => {
+        toast(intl.formatMessage({ id: "workspaceSidebar.orchestrationChildSessionIdCopied" }));
+      },
+      () => {
+        // 写剪贴板失败（权限拒绝等）：静默，不打断列表交互。
+      },
+    );
+  };
   if (childTasks.length === 0) {
     return (
       <>
@@ -189,198 +203,220 @@ const OrchestrationChildrenListComponent = ({
           const childNodeRef = resolveChildPlanNode(plansMap, child.taskId);
           return (
             <li key={taskKey}>
-              <div
-                className={cn(
-                  "group/orch-child flex h-7 w-full items-center gap-1.5 rounded-md pl-8 pr-2 text-left text-ui-base",
-                  active
-                    ? "bg-surface text-foreground"
-                    : "text-foreground-subtle hover:bg-surface hover:text-foreground",
-                )}
-              >
-                {/* 单击只打开子任务会话（不切视图）；跳转定位是行尾 ↗ 按钮的显式动作。 */}
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                  onClick={() => {
-                    onOpenTask(
-                      child.workspacePath,
-                      child.taskId,
-                      child.workspaceIdentity,
-                      child.unreadAt,
-                    );
-                  }}
-                >
-                  <CornerDownRight
-                    aria-hidden="true"
-                    className="size-3 shrink-0 text-foreground-subtlest"
-                  />
-                  {running ? (
-                    // 执行中：转圈指示（用户要求：不用挨个找谁在跑）。
-                    <LoaderIcon
-                      aria-label={intl.formatMessage({
-                        id: "workspaceSidebar.orchestrationChildStatus",
-                      })}
-                      className="size-3 shrink-0 animate-spin text-foreground-subtle"
-                    />
-                  ) : childNodeRef ? (
-                    // 节点状态口径（用户需求 2026-11-20）：与画布 statusRing 同语义配色，
-                    // tooltip 显示节点状态文案；不再重复子任务自身 status。
-                    <span
-                      aria-label={intl.formatMessage({ id: nodeStatusLabelId(childNodeRef.node.status) })}
-                      title={intl.formatMessage({ id: nodeStatusLabelId(childNodeRef.node.status) })}
-                      className={cn(
-                        "size-1.5 shrink-0 rounded-full",
-                        nodeStatusDotClass(childNodeRef.node.status),
-                      )}
-                    />
-                  ) : (
-                    <span
-                      aria-label={intl.formatMessage({
-                        id: "workspaceSidebar.orchestrationChildStatus",
-                      })}
-                      className={cn("size-1.5 shrink-0 rounded-full", statusDotClass(child.status))}
-                    />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{child.title || child.taskId}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={intl.formatMessage({
-                    id: "workspaceSidebar.orchestrationChildJump",
-                  })}
-                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
-                  onClick={() => {
-                    onJumpToTask(
-                      child.workspacePath,
-                      child.taskId,
-                      child.workspaceIdentity,
-                      child.unreadAt,
-                    );
-                  }}
-                >
-                  <ArrowUpRight aria-hidden="true" className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={intl.formatMessage({
-                    id: "workspaceSidebar.orchestrationChildUnlink",
-                  })}
-                  title={intl.formatMessage({
-                    id: "workspaceSidebar.orchestrationChildUnlink",
-                  })}
-                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
-                  onClick={() => {
-                    // 二次确认走确认弹窗；确认后解除关联，子任务回归普通任务。
-                    void (async () => {
-                      const confirmed = await confirmDialog({
-                        title: intl.formatMessage({
-                          id: "confirmDialog.orchestrationChildUnlinkTitle",
-                        }),
-                        description: intl.formatMessage(
-                          { id: "confirmDialog.orchestrationChildUnlinkDescription" },
-                          { title: child.title || child.taskId },
-                        ),
-                        confirmLabel: intl.formatMessage({ id: "common.confirm" }),
-                      });
-                      if (!confirmed) {
-                        return;
-                      }
-                      onUnlinkTask(child.workspacePath, child.taskId, child.workspaceIdentity);
-                    })();
-                  }}
-                >
-                  <Unlink aria-hidden="true" className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={intl.formatMessage({
-                    id: "workspaceSidebar.orchestrationChildArchive",
-                  })}
-                  title={intl.formatMessage({
-                    id: "workspaceSidebar.orchestrationChildArchive",
-                  })}
-                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
-                  onClick={() => {
-                    // 归档 = 解链 + 移入归档区（spec 硬性规定：归档不参与统筹，
-                    // 挂在编排名下必须先解除关系）。误触代价高于解链，同样二次确认。
-                    void (async () => {
-                      const confirmed = await confirmDialog({
-                        title: intl.formatMessage({
-                          id: "confirmDialog.orchestrationChildArchiveTitle",
-                        }),
-                        description: intl.formatMessage(
-                          { id: "confirmDialog.orchestrationChildArchiveDescription" },
-                          { title: child.title || child.taskId },
-                        ),
-                        confirmLabel: intl.formatMessage({ id: "common.confirm" }),
-                      });
-                      if (!confirmed) {
-                        return;
-                      }
-                      onArchiveTask(child.workspacePath, child.taskId, child.workspaceIdentity);
-                    })();
-                  }}
-                >
-                  <Archive aria-hidden="true" className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={intl.formatMessage({
-                    id: pinnedInDropdown
-                      ? "workspaceSidebar.orchestrationChildUnpin"
-                      : "workspaceSidebar.orchestrationChildPin",
-                  })}
-                  aria-pressed={pinnedInDropdown}
-                  className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded-sm",
-                    pinnedInDropdown
-                      ? "text-foreground-subtle"
-                      : "text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle",
-                  )}
-                  onClick={() => {
-                    toggleChildPinned(parentTaskId, child.taskId);
-                  }}
-                >
-                  <Pin
-                    aria-hidden="true"
-                    className={cn("size-3", pinnedInDropdown && "fill-current")}
-                  />
-                </button>
-                {childNodeRef && onToggleNodeDone ? (
-                  // 完成 toggle（用户需求 2026-11-20）：滑块形态（用户反馈"图标不好看，
-                  // 改成滑块"，再反馈"滑块有点大"→ xs 档；"放在四个功能按钮的最后边"）。
-                  // 画布"手动完成"滑块同款 Switch。开 = terminal（触发直接下游就绪扫描），
-                  // 关 = pending 不触发；常显表达完成状态。planBusy 期间禁用防连点。
-                  <span
-                    title={intl.formatMessage({
-                      id:
-                        childNodeRef.node.status === "terminal"
-                          ? "workspaceSidebar.orchestrationChildUnmarkDone"
-                          : "workspaceSidebar.orchestrationChildMarkDone",
-                    })}
-                    className="flex shrink-0 items-center"
+              {/* 右键菜单挂在整行（用户确认 2026-11-11），目前仅「复制会话 ID」。
+                  Trigger asChild 直接用行 div：行内左键行为（打开会话/行尾按钮）不受影响。 */}
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={cn(
+                      "group/orch-child flex h-7 w-full items-center gap-1.5 rounded-md pl-8 pr-2 text-left text-ui-base",
+                      active
+                        ? "bg-surface text-foreground"
+                        : "text-foreground-subtle hover:bg-surface hover:text-foreground",
+                    )}
                   >
-                    <Switch
-                      size="xs"
-                      aria-label={intl.formatMessage({
-                        id:
-                          childNodeRef.node.status === "terminal"
-                            ? "workspaceSidebar.orchestrationChildUnmarkDone"
-                            : "workspaceSidebar.orchestrationChildMarkDone",
-                      })}
-                      checked={childNodeRef.node.status === "terminal"}
-                      disabled={planBusy}
-                      onCheckedChange={(checked) => {
-                        onToggleNodeDone({
-                          planId: childNodeRef.planId,
-                          planNodeId: childNodeRef.node.nodeId,
-                          done: checked,
-                        });
+                    {/* 单击只打开子任务会话（不切视图）；跳转定位是行尾 ↗ 按钮的显式动作。 */}
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                      onClick={() => {
+                        onOpenTask(
+                          child.workspacePath,
+                          child.taskId,
+                          child.workspaceIdentity,
+                          child.unreadAt,
+                        );
                       }}
-                    />
-                  </span>
-                ) : null}
-              </div>
+                    >
+                      <CornerDownRight
+                        aria-hidden="true"
+                        className="size-3 shrink-0 text-foreground-subtlest"
+                      />
+                      {running ? (
+                        // 执行中：转圈指示（用户要求：不用挨个找谁在跑）。
+                        <LoaderIcon
+                          aria-label={intl.formatMessage({
+                            id: "workspaceSidebar.orchestrationChildStatus",
+                          })}
+                          className="size-3 shrink-0 animate-spin text-foreground-subtle"
+                        />
+                      ) : childNodeRef ? (
+                        // 节点状态口径（用户需求 2026-11-20）：与画布 statusRing 同语义配色，
+                        // tooltip 显示节点状态文案；不再重复子任务自身 status。
+                        <span
+                          aria-label={intl.formatMessage({
+                            id: nodeStatusLabelId(childNodeRef.node.status),
+                          })}
+                          title={intl.formatMessage({
+                            id: nodeStatusLabelId(childNodeRef.node.status),
+                          })}
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            nodeStatusDotClass(childNodeRef.node.status),
+                          )}
+                        />
+                      ) : (
+                        <span
+                          aria-label={intl.formatMessage({
+                            id: "workspaceSidebar.orchestrationChildStatus",
+                          })}
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            statusDotClass(child.status),
+                          )}
+                        />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">{child.title || child.taskId}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildJump",
+                      })}
+                      className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
+                      onClick={() => {
+                        onJumpToTask(
+                          child.workspacePath,
+                          child.taskId,
+                          child.workspaceIdentity,
+                          child.unreadAt,
+                        );
+                      }}
+                    >
+                      <ArrowUpRight aria-hidden="true" className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildUnlink",
+                      })}
+                      title={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildUnlink",
+                      })}
+                      className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
+                      onClick={() => {
+                        // 二次确认走确认弹窗；确认后解除关联，子任务回归普通任务。
+                        void (async () => {
+                          const confirmed = await confirmDialog({
+                            title: intl.formatMessage({
+                              id: "confirmDialog.orchestrationChildUnlinkTitle",
+                            }),
+                            description: intl.formatMessage(
+                              { id: "confirmDialog.orchestrationChildUnlinkDescription" },
+                              { title: child.title || child.taskId },
+                            ),
+                            confirmLabel: intl.formatMessage({ id: "common.confirm" }),
+                          });
+                          if (!confirmed) {
+                            return;
+                          }
+                          onUnlinkTask(child.workspacePath, child.taskId, child.workspaceIdentity);
+                        })();
+                      }}
+                    >
+                      <Unlink aria-hidden="true" className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildArchive",
+                      })}
+                      title={intl.formatMessage({
+                        id: "workspaceSidebar.orchestrationChildArchive",
+                      })}
+                      className="flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle"
+                      onClick={() => {
+                        // 归档 = 解链 + 移入归档区（spec 硬性规定：归档不参与统筹，
+                        // 挂在编排名下必须先解除关系）。误触代价高于解链，同样二次确认。
+                        void (async () => {
+                          const confirmed = await confirmDialog({
+                            title: intl.formatMessage({
+                              id: "confirmDialog.orchestrationChildArchiveTitle",
+                            }),
+                            description: intl.formatMessage(
+                              { id: "confirmDialog.orchestrationChildArchiveDescription" },
+                              { title: child.title || child.taskId },
+                            ),
+                            confirmLabel: intl.formatMessage({ id: "common.confirm" }),
+                          });
+                          if (!confirmed) {
+                            return;
+                          }
+                          onArchiveTask(child.workspacePath, child.taskId, child.workspaceIdentity);
+                        })();
+                      }}
+                    >
+                      <Archive aria-hidden="true" className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={intl.formatMessage({
+                        id: pinnedInDropdown
+                          ? "workspaceSidebar.orchestrationChildUnpin"
+                          : "workspaceSidebar.orchestrationChildPin",
+                      })}
+                      aria-pressed={pinnedInDropdown}
+                      className={cn(
+                        "flex size-5 shrink-0 items-center justify-center rounded-sm",
+                        pinnedInDropdown
+                          ? "text-foreground-subtle"
+                          : "text-foreground-subtlest opacity-0 group-hover/orch-child:opacity-100 hover:text-foreground-subtle",
+                      )}
+                      onClick={() => {
+                        toggleChildPinned(parentTaskId, child.taskId);
+                      }}
+                    >
+                      <Pin
+                        aria-hidden="true"
+                        className={cn("size-3", pinnedInDropdown && "fill-current")}
+                      />
+                    </button>
+                    {childNodeRef && onToggleNodeDone ? (
+                      // 完成 toggle（用户需求 2026-11-20）：滑块形态（用户反馈"图标不好看，
+                      // 改成滑块"，再反馈"滑块有点大"→ xs 档；"放在四个功能按钮的最后边"）。
+                      // 画布"手动完成"滑块同款 Switch。开 = terminal（触发直接下游就绪扫描），
+                      // 关 = pending 不触发；常显表达完成状态。planBusy 期间禁用防连点。
+                      <span
+                        title={intl.formatMessage({
+                          id:
+                            childNodeRef.node.status === "terminal"
+                              ? "workspaceSidebar.orchestrationChildUnmarkDone"
+                              : "workspaceSidebar.orchestrationChildMarkDone",
+                        })}
+                        className="flex shrink-0 items-center"
+                      >
+                        <Switch
+                          size="xs"
+                          aria-label={intl.formatMessage({
+                            id:
+                              childNodeRef.node.status === "terminal"
+                                ? "workspaceSidebar.orchestrationChildUnmarkDone"
+                                : "workspaceSidebar.orchestrationChildMarkDone",
+                          })}
+                          checked={childNodeRef.node.status === "terminal"}
+                          disabled={planBusy}
+                          onCheckedChange={(checked) => {
+                            onToggleNodeDone({
+                              planId: childNodeRef.planId,
+                              planNodeId: childNodeRef.node.nodeId,
+                              done: checked,
+                            });
+                          }}
+                        />
+                      </span>
+                    ) : null}
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    onSelect={() => {
+                      copyChildSessionId(child);
+                    }}
+                  >
+                    {intl.formatMessage({ id: "appHeader.copySessionId" })}
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             </li>
           );
         })}

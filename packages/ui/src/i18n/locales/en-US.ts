@@ -1332,6 +1332,7 @@ const enUS: Record<string, string> = {
   "confirmDialog.orchestrationChildArchiveDescription":
     '"{title}" will be unlinked from the orchestration and moved to the archived list: it no longer receives dispatches, and the orchestration stops receiving its terminal notifications. You can restore it from the archived list.',
   "workspaceSidebar.orchestrationChildArchiveFailed": "Failed to archive, please retry",
+  "workspaceSidebar.orchestrationChildSessionIdCopied": "Session ID copied",
   "orchestration.plan.modeToggle": "Plan mode",
   "orchestration.plan.modeToggleHint":
     "When on: the orchestration proposes a plan draft first; child tasks spawn only after you confirm it here",

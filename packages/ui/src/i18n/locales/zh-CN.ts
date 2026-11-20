@@ -1240,6 +1240,7 @@ const zhCN: Record<string, string> = {
   "confirmDialog.orchestrationChildArchiveDescription":
     "「{title}」将与主任务解除关联并移入归档区：不再接受编排下发，编排也不再接收它的终态通知。需要时可在归档区恢复。",
   "workspaceSidebar.orchestrationChildArchiveFailed": "归档失败，请重试",
+  "workspaceSidebar.orchestrationChildSessionIdCopied": "会话 ID 已复制",
   "orchestration.plan.modeToggle": "计划模式",
   "orchestration.plan.modeToggleHint":
     "开启后：编排收到需求先提交计划草案，你在界面确认后才派生子任务",
