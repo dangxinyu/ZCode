@@ -497,3 +497,21 @@ v1 单计划模型升级为**多计划**（用户需求 2026-10-28）：同一�
     reserve 放行重派（failed → dispatched）；有绑定的 failed 走 sendChildTaskPrompt 复用
     原子任务。引擎扫描同样不含 failed（人工恢复）。
 
+
+- 任务目录子条目直接展示/修改节点状态（用户需求 2026-11-20"每次都要去点开计划，不方便"）：
+  侧栏任务目录的子任务行（OrchestrationChildrenList）此前行首圆点只反映子任务自身
+  status（running/error/completed），与计划节点状态（pending/dispatched/terminal/stale/failed）
+  是两套口径，看/改节点状态必须打开计划画布。改为：
+  - **展示**：行首圆点在子任务命中计划节点时按节点状态着色（与画布 statusRing 同语义：
+    terminal 绿 / failed 红 / dispatched 蓝 / stale 黄 / pending 灰），tooltip 显示节点
+    状态文案；未命中节点（无计划关联/普通子任务）保持原样。执行中转圈判定不变（仍以
+    sessions-index 实时 phase 优先，节点状态只决定非转圈时的颜色）。
+  - **反查口径**：前端内存 join——按节点 `childTaskId === 子任务 taskId` 在 plansMap.plans
+    里匹配，**activePlanId 命中优先**、其余计划次之（多计划残留绑定取第一个命中）；
+    零新增服务端查询（侧栏本就拉好 plansByParentId）。
+  - **修改**：行尾 hover 新增完成 toggle 按钮（画布"手动完成"滑块同款通道
+    `setOrchestrationPlanNodeManualDone`）——非 terminal 点击 → done=true（terminal 并
+    触发直接下游就绪扫描）；terminal 点击 → done=false（pending，不触发扫描）。副作用
+    语义与画布一致（spec「手动执行/手动完成」节）。
+  - **同步**：hook 层 runMutation 局部更新 plansByParentId + bumpOrchestrationPlanVersion，
+    服务端 publishPlansChanged 广播——画布、计划列表进度（done/total）自动同步。

@@ -41,6 +41,8 @@ if [ "${1:-}" = "--dry-run" ]; then
 fi
 
 pnpm bundle:desktop "$@"
-newest_dmg="$(ls -t packages/desktop/dist/*.dmg 2>/dev/null | head -1 || true)"
+# 结尾提示按时间取 dmg/exe 中最新的产物：交叉打 Windows 时产物是 .exe，
+# 硬编码 *.dmg 会把旧 mac 包当成本次产物报出来（实测踩过）。
+newest_artifact="$(ls -t packages/desktop/dist/*.dmg packages/desktop/dist/*.exe 2>/dev/null | head -1 || true)"
 echo "打包完成。产物目录: $root/packages/desktop/dist/"
-[ -n "$newest_dmg" ] && echo "最新 dmg: $newest_dmg"
+[ -n "$newest_artifact" ] && echo "最新产物: $newest_artifact"

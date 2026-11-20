@@ -361,7 +361,8 @@ export function WorkspacePinnedTasksSection({
         ?.zcodeTaskService,
     [baseServices, getRemoteWorkspaceServicesForIdentity],
   );
-  const { plansByParentId, createPlan, renamePlan, deletePlan } = useOrchestrationPlans({
+  const { plansByParentId, createPlan, renamePlan, deletePlan, setNodeManualDone } =
+    useOrchestrationPlans({
     enabled: orchestrationFilter === "only",
     orchestrators: sortedItems,
     resolvePlanServices,
@@ -916,6 +917,25 @@ export function WorkspacePinnedTasksSection({
                       childTasks={orchestrationChildTasks}
                       plansMap={plansByParentId?.[item.taskId] ?? null}
                       planBusy={planActionTaskId === item.taskId}
+                      onToggleNodeDone={({ planId, planNodeId, done }) => {
+                        void runPlanAction(item.taskId, () =>
+                          setNodeManualDone({
+                            orchestrationTaskId: item.taskId,
+
+                            workspacePath: item.workspacePath,
+
+                            ...(item.workspaceIdentity
+                              ? { workspaceIdentity: item.workspaceIdentity }
+                              : {}),
+
+                            planId,
+
+                            planNodeId,
+
+                            done,
+                          }),
+                        );
+                      }}
                       onCreatePlan={() => {
                         void runPlanAction(item.taskId, () =>
                           createPlan({

@@ -7,13 +7,26 @@
 // 取消关联：行尾解链按钮 → 确认弹窗（useConfirmDialog）→ 解除。
 // 解除后编排不再收该任务的终态，误触代价高，必须弹窗二次确认。
 import { memo } from "react";
-import type { ZCodeTaskMeta, ZCodeOrchestrationPlansMap } from "@zcode/shared";
-import { Archive, ArrowUpRight, CornerDownRight, LoaderIcon, Pin, Unlink } from "lucide-react";
+import type {
+  ZCodeOrchestrationPlanNode,
+  ZCodeTaskMeta,
+  ZCodeOrchestrationPlansMap,
+} from "@zcode/shared";
+import {
+  Archive,
+  ArrowUpRight,
+  CornerDownRight,
+  LoaderIcon,
+  Pin,
+  Unlink,
+} from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { cn } from "@/components/lib/utils.js";
+import { Switch } from "@/components/ui/switch.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { useOrchestrationChildrenPinned } from "@/lib/orchestrationChildrenPinned.js";
+import { resolveChildPlanNode } from "@/lib/orchestrationChildPlanNode.js";
 import { openOrchestrationPlanPage } from "@/lib/orchestrationPlanSync.js";
 import { OrchestrationPlanList } from "@/OrchestrationPlanList.js";
 
@@ -40,6 +53,12 @@ interface OrchestrationChildrenListProps {
   ) => void;
   /** 计划列表数据（spec: orchestration-plan.md v2 多计划）；null/缺省 = 不渲染。 */
   plansMap?: ZCodeOrchestrationPlansMap | null;
+  /**
+   * 子条目行尾完成 toggle（用户需求 2026-11-20：任务目录直接改节点完成状态，不开画布）。
+   * 画布"手动完成"同通道（setOrchestrationPlanNodeManualDone）：done=true → terminal
+   * 并触发直接下游就绪扫描；done=false → pending 不触发。未命中节点的子任务不渲染按钮。
+   */
+  onToggleNodeDone?: (args: { planId: string; planNodeId: string; done: boolean }) => void;
   onCreatePlan?: () => void;
   onRenamePlan?: (planId: string, title: string) => void;
   onDeletePlan?: (planId: string) => void;
@@ -69,6 +88,25 @@ function statusDotClass(status: ZCodeTaskMeta["status"]): string {
   return "bg-foreground-subtlest";
 }
 
+/** 计划节点状态圆点配色（用户需求 2026-11-20：目录行与画布 statusRing 同语义）。
+ * dispatched 的转圈由 phase 判定负责（isChildRunning），这里只决定非转圈时的颜色。 */
+function nodeStatusDotClass(status: ZCodeOrchestrationPlanNode["status"]): string {
+  if (status === "terminal") return "bg-success";
+  if (status === "failed") return "bg-terminal-red";
+  if (status === "dispatched") return "bg-status-running";
+  if (status === "stale") return "bg-warning";
+  return "bg-foreground-subtlest";
+}
+
+/** 节点状态 tooltip 文案键（zh-CN：待执行/执行中/已完成/待复核/失败）。 */
+function nodeStatusLabelId(status: ZCodeOrchestrationPlanNode["status"]): string {
+  if (status === "terminal") return "workspaceSidebar.orchestrationChildNodeTerminal";
+  if (status === "failed") return "workspaceSidebar.orchestrationChildNodeFailed";
+  if (status === "dispatched") return "workspaceSidebar.orchestrationChildNodeDispatched";
+  if (status === "stale") return "workspaceSidebar.orchestrationChildNodeStale";
+  return "workspaceSidebar.orchestrationChildNodePending";
+}
+
 /** 子行是否正在执行：sessions-index 实时 phase 优先；无 activity 时退持久化 running
  * （子任务下拉是瞬态视图，终态由通知/列表刷新兜底，短暂陈旧可接受）。
  * 导出供分区计算展开器的 runningCount（收起态显示"有活在跑"小转圈）。 */
@@ -89,6 +127,7 @@ const OrchestrationChildrenListComponent = ({
   onUnlinkTask,
   onArchiveTask,
   plansMap,
+  onToggleNodeDone,
   onCreatePlan,
   onRenamePlan,
   onDeletePlan,
@@ -146,6 +185,8 @@ const OrchestrationChildrenListComponent = ({
           const pinnedInDropdown = isChildPinned(parentTaskId, child.taskId);
           const taskKey = `${child.workspaceIdentity ?? child.workspacePath}:${child.taskId}`;
           const running = isChildRunning(child);
+          // 命中计划节点（activePlanId 优先）：圆点与 tooltip 换节点状态口径，行尾补完成 toggle。
+          const childNodeRef = resolveChildPlanNode(plansMap, child.taskId);
           return (
             <li key={taskKey}>
               <div
@@ -180,6 +221,17 @@ const OrchestrationChildrenListComponent = ({
                         id: "workspaceSidebar.orchestrationChildStatus",
                       })}
                       className="size-3 shrink-0 animate-spin text-foreground-subtle"
+                    />
+                  ) : childNodeRef ? (
+                    // 节点状态口径（用户需求 2026-11-20）：与画布 statusRing 同语义配色，
+                    // tooltip 显示节点状态文案；不再重复子任务自身 status。
+                    <span
+                      aria-label={intl.formatMessage({ id: nodeStatusLabelId(childNodeRef.node.status) })}
+                      title={intl.formatMessage({ id: nodeStatusLabelId(childNodeRef.node.status) })}
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        nodeStatusDotClass(childNodeRef.node.status),
+                      )}
                     />
                   ) : (
                     <span
@@ -294,6 +346,40 @@ const OrchestrationChildrenListComponent = ({
                     className={cn("size-3", pinnedInDropdown && "fill-current")}
                   />
                 </button>
+                {childNodeRef && onToggleNodeDone ? (
+                  // 完成 toggle（用户需求 2026-11-20）：滑块形态（用户反馈"图标不好看，
+                  // 改成滑块"，再反馈"滑块有点大"→ xs 档；"放在四个功能按钮的最后边"）。
+                  // 画布"手动完成"滑块同款 Switch。开 = terminal（触发直接下游就绪扫描），
+                  // 关 = pending 不触发；常显表达完成状态。planBusy 期间禁用防连点。
+                  <span
+                    title={intl.formatMessage({
+                      id:
+                        childNodeRef.node.status === "terminal"
+                          ? "workspaceSidebar.orchestrationChildUnmarkDone"
+                          : "workspaceSidebar.orchestrationChildMarkDone",
+                    })}
+                    className="flex shrink-0 items-center"
+                  >
+                    <Switch
+                      size="xs"
+                      aria-label={intl.formatMessage({
+                        id:
+                          childNodeRef.node.status === "terminal"
+                            ? "workspaceSidebar.orchestrationChildUnmarkDone"
+                            : "workspaceSidebar.orchestrationChildMarkDone",
+                      })}
+                      checked={childNodeRef.node.status === "terminal"}
+                      disabled={planBusy}
+                      onCheckedChange={(checked) => {
+                        onToggleNodeDone({
+                          planId: childNodeRef.planId,
+                          planNodeId: childNodeRef.node.nodeId,
+                          done: checked,
+                        });
+                      }}
+                    />
+                  </span>
+                ) : null}
               </div>
             </li>
           );
