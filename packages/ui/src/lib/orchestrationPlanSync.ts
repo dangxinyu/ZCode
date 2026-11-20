@@ -4,7 +4,11 @@
 //    用户需求 2026-10-28：计划与对话来回切）——SessionPane 消费此信号切换视图。
 import { useEffect } from "react";
 import { useSyncExternalStore } from "react";
-import { ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL } from "@zcode/shared";
+import {
+  ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL,
+  ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL,
+} from "@zcode/shared";
+import { bumpTaskListManualRefresh } from "@/v4/taskListManualRefresh.js";
 
 let version = 0;
 const listeners = new Set<() => void>();
@@ -44,6 +48,28 @@ export function useOrchestrationPlansChangedSync(
     const disposable = broadcast.onMessage((message) => {
       if (message.channel === ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL) {
         bumpOrchestrationPlanVersion();
+      }
+    });
+    return () => disposable.dispose();
+  }, [broadcast]);
+}
+
+/**
+ * 订阅 host 的编排子任务集合变更广播（spawn/link/unlink 成功后发送，用户需求 2026-11-20）。
+ * 收到即 bump 任务列表手动刷新串号——与 UI 解链动作成功后的刷新同一条信号，所有
+ * useGlobalTaskList 实例与侧栏 childrenMap 统一重拉，树下实时出现/移除子任务。
+ * 引擎/agent 侧派发不经 UI 动作，没有这个信号要等手动刷新。
+ */
+export function useOrchestrationChildrenChangedSync(
+  broadcast: {
+    onMessage: (listener: (message: { channel: string }) => void) => { dispose: () => void };
+  } | null,
+): void {
+  useEffect(() => {
+    if (!broadcast) return;
+    const disposable = broadcast.onMessage((message) => {
+      if (message.channel === ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL) {
+        bumpTaskListManualRefresh();
       }
     });
     return () => disposable.dispose();

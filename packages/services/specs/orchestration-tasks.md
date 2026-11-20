@@ -118,3 +118,16 @@
   死亡，tasks 行非新鲜 completed/error 的 pending 轮次都是被中断的，直接按 failed 补投 +
   回写 + 清行。不再用 readSession 探测判活（冷会话从持久层可读成功，误判"还活着"会让
   relay 重新武装后无限轮询死会话）。fresh completed/error 才按 succeeded/failed 补投。
+
+- 子任务集合实时刷新（用户需求 2026-11-20"派生计划后要主动点刷新才能看到"）：spawn/link
+  落库后没有任何信号驱动 UI 重查——侧栏 childrenMap 只认主任务集合变化与手动刷新串号，
+  tasks-index 三桶重查只认 taskListVersion/手动刷新；引擎与 agent 侧派发不经 UI 动作，
+  侧栏树下的新子任务要等用户手动刷新才出现。新增**子任务集合变更广播**：
+  - 频道 `ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL`（orchestration:children-changed），
+    payload 含 orchestrationTaskId 与 workspace 定位；由 orchestrationTaskService 在
+    **spawnSubTask 成功**（创建+关系+首条指令全链路完成）、**linkTask 真新增**（幂等命中
+    不发）、**unlinkTask 真解链**（幂等命中不发）三处 fire-and-forget 发布。
+  - UI `useOrchestrationChildrenChangedSync`（挂载于时间线/置顶两个分区）：收到即
+    `bumpTaskListManualRefresh()`——与 UI 解链动作成功后的刷新同一条全局串号信号，
+    所有 useGlobalTaskList 实例（时间线/置顶/归档索引）与侧栏 childrenMap 统一强制
+    缓存 miss 重拉。广播服务缺省（options.broadcastService 未注入）时静默跳过。

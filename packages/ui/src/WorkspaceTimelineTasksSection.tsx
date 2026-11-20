@@ -5,6 +5,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { isOrchestrationTask } from "@zcode/shared";
 import { OrchestrationChildrenList, isChildRunning } from "@/OrchestrationChildrenList.js";
+import { useOrchestrationChildrenChangedSync } from "@/lib/orchestrationPlanSync.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useOrchestrationPlans } from "@/hooks/useOrchestrationPlans.js";
 import { useOrchestrationChildrenCollapsed } from "@/lib/orchestrationChildrenCollapse.js";
@@ -111,6 +112,9 @@ export function WorkspaceTimelineTasksSection({
 }) {
   const { intl, locale } = useZCodeIntl();
   const baseServices = useBaseWorkspaceServices();
+  // 编排子任务集合变更广播（用户需求 2026-11-20）：引擎/agent 派发不经 UI 动作，
+  // 收到即 bump 手动刷新串号，树下实时出现/移除子任务（与解链成功后的刷新同一条信号）。
+  useOrchestrationChildrenChangedSync(baseServices.broadcastService ?? null);
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
   });

@@ -9,7 +9,9 @@
 
 import { createUuid } from "@zcode/shared";
 import type { ZCodeTaskMeta, ZCodeTaskMode } from "@zcode/shared";
+import { ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
+import type { IBroadcastService } from "../broadcast/broadcast.js";
 import type { TaskIndexRepo } from "../session/taskIndexRepo.js";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
 import type { IZCodeAgentService } from "./zcodeAgent.js";
@@ -113,6 +115,9 @@ export function createOrchestrationTaskService(options: {
   /** 选型视图（用户需求 2026-11-05 子任务模型档位）：声明思考档位的模型派发时缺档位，
    * 从目录兜底首档（registry 校验缺档位即拒 "Reasoning level is required"）。 */
   modelSelectionService?: { getView(): Promise<ModelSelectionView> };
+  /** 子任务集合变更广播（用户需求 2026-11-20）：spawn/link/unlink 成功后发送，
+   * UI 订阅后重查任务列表——引擎/agent 侧派发不经 UI 动作，侧栏树要靠这个信号实时出现新子任务。 */
+  broadcastService?: Pick<IBroadcastService, "send">;
 }): IOrchestrationTaskService {
   const { taskService, taskIndexRepo, zcodeAgentService } = options;
   // 终态通知 relay（spec: orchestration-tasks.md）：持久水位线 + busy/冷会话重试 +
@@ -129,6 +134,28 @@ export function createOrchestrationTaskService(options: {
     ...options,
     resolveAutoDispatcher: () => autoDispatchImpl ?? undefined,
   });
+
+  /** 子任务集合变更后广播（fire-and-forget，用户需求 2026-11-20）：UI 收到即 bump
+   * 任务列表手动刷新串号——引擎/agent 侧派发不经 UI 动作，没有这个信号侧栏树下
+   * 的新子任务要等手动刷新才出现。失败只记日志不阻断业务。 */
+  function publishChildrenChanged(params: WorkspaceScope & { orchestrationTaskId: string }): void {
+    if (!options.broadcastService) return;
+    void options.broadcastService
+      .send({
+        channel: ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL,
+        payload: {
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+      })
+      .catch((error: unknown) => {
+        logger.warn("Orchestration children-changed broadcast failed", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          orchestrationTaskId: params.orchestrationTaskId,
+        });
+      });
+  }
 
   /**
    * 节点配置的常驻 skill 写入子会话（用户需求 2026-11-04）：节点带 pinnedSkills 且
@@ -513,6 +540,13 @@ export function createOrchestrationTaskService(options: {
           orchestrationTaskId: params.orchestrationTaskId,
         });
       }
+      // 子任务集合变更广播（用户需求 2026-11-20）：派生全链路（创建+关系+首条指令）成功
+      // 后发送，侧栏树下实时出现新子任务，不再等手动刷新。
+      publishChildrenChanged({
+        orchestrationTaskId: params.orchestrationTaskId,
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      });
       return { childTaskId: child.taskId, childTaskName };
     },
 
@@ -576,6 +610,12 @@ export function createOrchestrationTaskService(options: {
             taskId: params.childTaskId,
           },
           kind: "linked",
+        });
+        // 真新增关联才广播（alreadyLinked 幂等命中不打扰列表）。
+        publishChildrenChanged({
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
         });
       }
       return { childTaskId: params.childTaskId, childTaskName: childMeta.title, alreadyLinked };
@@ -651,6 +691,14 @@ export function createOrchestrationTaskService(options: {
         unlinked: clearedChild !== null,
         workspacePath: params.workspacePath,
       });
+      // 真解链才广播（幂等命中不打扰列表）；子任务从父行下拉原地消失。
+      if (clearedChild !== null) {
+        publishChildrenChanged({
+          orchestrationTaskId: params.orchestrationTaskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        });
+      }
       return { unlinked: clearedChild !== null, child: clearedChild };
     },
 

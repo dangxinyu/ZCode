@@ -2366,6 +2366,9 @@ export function createLocalServices(options: {
     resolveOrchestrationPlanService: () => orchestrationPlanServiceHolder.current,
     // 子任务模型档位兜底（用户需求 2026-11-05）：声明档位的模型派发缺档位时从目录补首档。
     modelSelectionService: providerRuntime.modelSelection,
+    // 子任务集合变更广播（用户需求 2026-11-20）：spawn/link/unlink 后通知 UI 重查任务列表，
+    // 引擎/agent 侧派发不经 UI 动作，侧栏树靠这个信号实时出现新子任务。
+    broadcastService,
   });
   orchestrationTaskServiceForAgent = orchestrationTaskService;
   // 编排计划服务（spec: orchestration-plan.md）：可选计划模式——提案/确认/开关的
