@@ -1220,6 +1220,13 @@ const zhCN: Record<string, string> = {
   "workspaceSidebar.orchestrationRunning": "运行中",
   "workspaceSidebar.orchestrationNoChildren": "尚未派生或关联子任务",
   "workspaceSidebar.orchestrationChildStatus": "子任务状态",
+  "workspaceSidebar.orchestrationChildNodePending": "计划节点：待执行",
+  "workspaceSidebar.orchestrationChildNodeDispatched": "计划节点：执行中",
+  "workspaceSidebar.orchestrationChildNodeTerminal": "计划节点：已完成",
+  "workspaceSidebar.orchestrationChildNodeStale": "计划节点：待复核",
+  "workspaceSidebar.orchestrationChildNodeFailed": "计划节点：失败",
+  "workspaceSidebar.orchestrationChildMarkDone": "标记节点完成（释放直接下游）",
+  "workspaceSidebar.orchestrationChildUnmarkDone": "取消节点完成（回待执行）",
   "workspaceSidebar.orchestrationChildrenCountRunning": "子任务 {count} 个，{running} 个执行中",
   "workspaceSidebar.orchestrationChildPin": "在下拉内置顶该子任务",
   "workspaceSidebar.orchestrationChildUnpin": "取消下拉内置顶",
@@ -1233,6 +1240,7 @@ const zhCN: Record<string, string> = {
   "confirmDialog.orchestrationChildArchiveDescription":
     "「{title}」将与主任务解除关联并移入归档区：不再接受编排下发，编排也不再接收它的终态通知。需要时可在归档区恢复。",
   "workspaceSidebar.orchestrationChildArchiveFailed": "归档失败，请重试",
+  "workspaceSidebar.orchestrationChildSessionIdCopied": "会话 ID 已复制",
   "orchestration.plan.modeToggle": "计划模式",
   "orchestration.plan.modeToggleHint":
     "开启后：编排收到需求先提交计划草案，你在界面确认后才派生子任务",

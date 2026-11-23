@@ -1310,6 +1310,13 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.orchestrationRunning": "Running",
   "workspaceSidebar.orchestrationNoChildren": "No spawned or linked child tasks yet",
   "workspaceSidebar.orchestrationChildStatus": "Child task status",
+  "workspaceSidebar.orchestrationChildNodePending": "Plan node: pending",
+  "workspaceSidebar.orchestrationChildNodeDispatched": "Plan node: running",
+  "workspaceSidebar.orchestrationChildNodeTerminal": "Plan node: done",
+  "workspaceSidebar.orchestrationChildNodeStale": "Plan node: needs review",
+  "workspaceSidebar.orchestrationChildNodeFailed": "Plan node: failed",
+  "workspaceSidebar.orchestrationChildMarkDone": "Mark node done (releases direct downstream)",
+  "workspaceSidebar.orchestrationChildUnmarkDone": "Unmark node done (back to pending)",
   "workspaceSidebar.orchestrationChildrenCountRunning": "{count} child tasks, {running} running",
   "workspaceSidebar.orchestrationChildPin": "Pin this child task to the top of the dropdown",
   "workspaceSidebar.orchestrationChildUnpin": "Unpin from dropdown top",
@@ -1325,6 +1332,7 @@ const enUS: Record<string, string> = {
   "confirmDialog.orchestrationChildArchiveDescription":
     '"{title}" will be unlinked from the orchestration and moved to the archived list: it no longer receives dispatches, and the orchestration stops receiving its terminal notifications. You can restore it from the archived list.',
   "workspaceSidebar.orchestrationChildArchiveFailed": "Failed to archive, please retry",
+  "workspaceSidebar.orchestrationChildSessionIdCopied": "Session ID copied",
   "orchestration.plan.modeToggle": "Plan mode",
   "orchestration.plan.modeToggleHint":
     "When on: the orchestration proposes a plan draft first; child tasks spawn only after you confirm it here",

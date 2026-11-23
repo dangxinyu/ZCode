@@ -3734,6 +3734,12 @@ export type ZCodeOrchestrationPlansMap = ZCodeOrchestrationPlansMapProtocol;
  * 不经过 UI 动作，没有这个信号画布/列表会一直停在旧快照。payload 仅含 orchestrationTaskId。 */
 export const ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL = "orchestration:plans-changed";
 
+/** 编排子任务集合变更广播：spawnSubTask 派生 / linkTask 关联 / unlinkTask 解链成功后发送。
+ * UI 订阅后 bump 任务列表手动刷新串号——agent/引擎侧派发不经 UI 动作，无此信号侧栏
+ * 树下的新子任务要等手动刷新才出现（用户需求 2026-11-20）。payload 含 orchestrationTaskId
+ * 与 workspace 定位。 */
+export const ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL = "orchestration:children-changed";
+
 export const zcodeOrchestrationProposePlanParamsSchema = z
   .object({
     sessionId: nonEmptyString,

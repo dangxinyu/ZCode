@@ -60,6 +60,16 @@ export interface OrchestrationPlanTaskService {
     planId: string;
     title: string;
   }): Promise<ZCodeOrchestrationPlansMap>;
+  /** UI 手动完成滑块（画布/任务目录子条目共用）：done → terminal，!done → pending。
+   * 返回最新 plansMap。 */
+  setOrchestrationPlanNodeManualDone(params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+    planNodeId: string;
+    done: boolean;
+  }): Promise<ZCodeOrchestrationPlansMap>;
   deleteOrchestrationPlan(params: {
     orchestrationTaskId: string;
     workspacePath: string;
@@ -128,6 +138,15 @@ export function useOrchestrationPlans({
     workspaceIdentity?: string;
     planId: string;
     title: string;
+  }) => Promise<void>;
+  /** 单节点手动完成开关（任务目录子条目 / 画布滑块同通道）：更新本组 plansMap 并广播。 */
+  setNodeManualDone: (params: {
+    orchestrationTaskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    planId: string;
+    planNodeId: string;
+    done: boolean;
   }) => Promise<void>;
   deletePlan: (params: {
     orchestrationTaskId: string;
@@ -285,6 +304,21 @@ export function useOrchestrationPlans({
     [runMutation],
   );
 
+  const setNodeManualDone = useCallback(
+    (params: {
+      orchestrationTaskId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      planId: string;
+      planNodeId: string;
+      done: boolean;
+    }) =>
+      runMutation(params, (taskService) =>
+        taskService.setOrchestrationPlanNodeManualDone(params),
+      ),
+    [runMutation],
+  );
+
   return {
     plansByParentId,
     setPlanMode,
@@ -294,5 +328,6 @@ export function useOrchestrationPlans({
     createPlan,
     renamePlan,
     deletePlan,
+    setNodeManualDone,
   };
 }

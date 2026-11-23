@@ -117,7 +117,7 @@ Agent CLI 子进程由 packages/services/src/zcode-agent/zcodeAgentProcessManage
 
 ### 模型接入（packages/provider + provider-node）
 
-`provider/src/registry.ts`（冻结快照 + revision）→ `sources.ts`（zcodeBuiltin + personal 两层配置合并）→ resolver 计算最终模型选择；Node 落地在 `provider-node/`（配置仓库、内置供应商配置物化/下载/远端同步）。内置兜底配置在根 `config/provider/zcode-builtin.json`。新增智谱模型的正式接入：该文件的 `builtinModelIds` 加 ID + `packages/shared/src/official-glm-model-id.ts` 白名单加一行；能力差异才加 `modelConfigRules.modelRules` 条目（正则 `.*glm-5.*` 已兜底覆盖 5 系）。GLM-5.3 标 `supportsImage=true` 是套餐服务端桥接标记。
+`provider/src/registry.ts`（冻结快照 + revision）→ `sources.ts`（zcodeBuiltin + personal 两层配置合并）→ resolver 计算最终模型选择；Node 落地在 `provider-node/`（配置仓库、内置供应商配置物化/下载/远端同步）。内置兜底配置在根 `config/provider/zcode-builtin.json`。新增智谱模型的正式接入：该文件的 `builtinModelIds` 加 ID + `packages/shared/src/official-glm-model-id.ts` 白名单加一行；能力必须显式写 `modelConfigRules.modelRules` 条目并排在 `.*glm-5…` 兜底规则之后——兜底覆盖整个 5 系但给的是旧参数（200k、思考开关两档、输出 64k），只加 ID 会得到错误能力（GLM-5.4：1M、图片/视频/PDF、low/high/max）。内容变更必须同步递增 `revision`：远端同步按 revision 比大小，同号不同内容会被判为冲突。规则匹配为整串锚定 + 忽略大小写，同批命中时后者覆盖前者。细则见 `packages/provider-node/specs/official-glm-model-onboarding.md`。GLM-5.3 标 `supportsImage=true` 是套餐服务端桥接标记。
 
 ### 桌面（packages/desktop）
 

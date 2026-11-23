@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { isOrchestrationTask } from "@zcode/shared";
+import { useOrchestrationChildrenChangedSync } from "@/lib/orchestrationPlanSync.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
@@ -99,6 +100,9 @@ export function WorkspacePinnedTasksSection({
 }) {
   const { intl } = useZCodeIntl();
   const baseServices = useBaseWorkspaceServices();
+  // 编排子任务集合变更广播（用户需求 2026-11-20）：与时间线分区同款，置顶区的
+  // 编排树下也实时跟随 spawn/link/unlink。
+  useOrchestrationChildrenChangedSync(baseServices.broadcastService ?? null);
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
   });
@@ -361,7 +365,8 @@ export function WorkspacePinnedTasksSection({
         ?.zcodeTaskService,
     [baseServices, getRemoteWorkspaceServicesForIdentity],
   );
-  const { plansByParentId, createPlan, renamePlan, deletePlan } = useOrchestrationPlans({
+  const { plansByParentId, createPlan, renamePlan, deletePlan, setNodeManualDone } =
+    useOrchestrationPlans({
     enabled: orchestrationFilter === "only",
     orchestrators: sortedItems,
     resolvePlanServices,
@@ -916,6 +921,25 @@ export function WorkspacePinnedTasksSection({
                       childTasks={orchestrationChildTasks}
                       plansMap={plansByParentId?.[item.taskId] ?? null}
                       planBusy={planActionTaskId === item.taskId}
+                      onToggleNodeDone={({ planId, planNodeId, done }) => {
+                        void runPlanAction(item.taskId, () =>
+                          setNodeManualDone({
+                            orchestrationTaskId: item.taskId,
+
+                            workspacePath: item.workspacePath,
+
+                            ...(item.workspaceIdentity
+                              ? { workspaceIdentity: item.workspaceIdentity }
+                              : {}),
+
+                            planId,
+
+                            planNodeId,
+
+                            done,
+                          }),
+                        );
+                      }}
                       onCreatePlan={() => {
                         void runPlanAction(item.taskId, () =>
                           createPlan({

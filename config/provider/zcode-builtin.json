@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 30,
+  "revision": 31,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -19,7 +19,7 @@
               "type": "anthropic-messages",
               "baseUrl": "https://api.z.ai/api/anthropic"
             },
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "logo": {
               "type": "builtin",
               "key": "zai"
@@ -42,6 +42,7 @@
               "baseUrl": "https://api.z.ai/api/paas/v4"
             },
             "builtinModelIds": [
+              "GLM-5.4",
               "GLM-5.3",
               "GLM-5.3-Flash",
               "GLM-5V-Turbo",
@@ -88,7 +89,7 @@
               "type": "anthropic-messages",
               "baseUrl": "https://open.bigmodel.cn/api/anthropic"
             },
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "logo": {
               "type": "builtin",
               "key": "bigmodel"
@@ -111,6 +112,7 @@
               "baseUrl": "https://open.bigmodel.cn/api/paas/v4"
             },
             "builtinModelIds": [
+              "GLM-5.4",
               "GLM-5.3",
               "GLM-5.3-Flash",
               "GLM-5V-Turbo",
@@ -694,7 +696,7 @@
           "providerName": "Z.AI Individual Coding Plan",
           "config": {
             "group": "zai-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "access": {
               "type": "zhipu-account",
               "mode": "individual-coding-plan",
@@ -715,7 +717,7 @@
           "providerName": "Z.AI Team Coding Plan",
           "config": {
             "group": "zai-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "access": {
               "type": "zhipu-account",
               "mode": "team-coding-plan",
@@ -736,7 +738,7 @@
           "providerName": "Start Plan",
           "config": {
             "group": "zai-family",
-            "builtinModelIds": ["GLM-5.3-Flash", "GLM-5.2", "GLM-5-Turbo"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3-Flash", "GLM-5.2", "GLM-5-Turbo"],
             "access": {
               "type": "zhipu-account",
               "mode": "start-plan",
@@ -757,7 +759,7 @@
           "providerName": "BigModel Individual Coding Plan",
           "config": {
             "group": "bigmodel-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "access": {
               "type": "zhipu-account",
               "mode": "individual-coding-plan",
@@ -778,7 +780,7 @@
           "providerName": "BigModel Team Coding Plan",
           "config": {
             "group": "bigmodel-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "access": {
               "type": "zhipu-account",
               "mode": "team-coding-plan",
@@ -799,7 +801,7 @@
           "providerName": "Start Plan",
           "config": {
             "group": "bigmodel-family",
-            "builtinModelIds": ["GLM-5.3-Flash", "GLM-5.2", "GLM-5-Turbo"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3-Flash", "GLM-5.2", "GLM-5-Turbo"],
             "access": {
               "type": "zhipu-account",
               "mode": "start-plan",
@@ -820,7 +822,7 @@
           "providerName": "Z.AI Idle plan",
           "config": {
             "group": "zai-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "visibility": "hidden",
             "access": {
               "type": "zhipu-account",
@@ -842,7 +844,7 @@
           "providerName": "BigModel Idle plan",
           "config": {
             "group": "bigmodel-family",
-            "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"],
+            "builtinModelIds": ["GLM-5.4", "GLM-5.3", "GLM-5.3-Flash"],
             "visibility": "hidden",
             "access": {
               "type": "zhipu-account",
@@ -1002,6 +1004,27 @@
                 "supportsImage": true,
                 "supportsVideo": true,
                 "supportsPdf": true
+              }
+            }
+          }
+        },
+        {
+          "modelMatch": ".*glm-5\\.4(?:[.\\-:/\\[].*)?",
+          "config": {
+            "properties": {
+              "contextWindow": 1000000,
+              "inputFormat": {
+                "supportsImage": true,
+                "supportsVideo": true,
+                "supportsPdf": true
+              }
+            },
+            "optionSpecs": {
+              "reasoningLevel": {
+                "values": ["low", "high", "max"]
+              },
+              "maxOutputTokens": {
+                "max": 128000
               }
             }
           }
@@ -4504,6 +4527,13 @@
           }
         },
         {
+          "modelId": "GLM-5.4",
+          "templateId": "zai-api",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
           "modelId": "GLM-5.3",
           "templateId": "zai-api",
           "config": {
@@ -4513,6 +4543,13 @@
         {
           "modelId": "GLM-5.3-Flash",
           "templateId": "zai-api",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "modelId": "GLM-5.4",
+          "templateId": "bigmodel-api",
           "config": {
             "enabled": true
           }
@@ -5484,6 +5521,13 @@
           }
         },
         {
+          "modelId": "GLM-5.4",
+          "templateId": "zai-standard-api",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
           "modelId": "GLM-5.3",
           "templateId": "zai-standard-api",
           "config": {
@@ -5649,6 +5693,13 @@
           "templateId": "zai-standard-api",
           "config": {
             "enabled": false
+          }
+        },
+        {
+          "modelId": "GLM-5.4",
+          "templateId": "bigmodel-standard-api",
+          "config": {
+            "enabled": true
           }
         },
         {
@@ -6026,6 +6077,13 @@
       "builtinProviderModelRules": [
         {
           "providerId": "account:zai-individual-coding-plan",
+          "modelId": "GLM-5.4",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:zai-individual-coding-plan",
           "modelId": "GLM-5.3",
           "config": {
             "enabled": true
@@ -6048,6 +6106,13 @@
         {
           "providerId": "account:zai-individual-coding-plan",
           "modelId": "GLM-5-Turbo",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:zai-team-coding-plan",
+          "modelId": "GLM-5.4",
           "config": {
             "enabled": true
           }
@@ -6082,6 +6147,13 @@
         },
         {
           "providerId": "account:zai-start-plan",
+          "modelId": "GLM-5.4",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:zai-start-plan",
           "modelId": "GLM-5.3-Flash",
           "config": {
             "enabled": true
@@ -6097,6 +6169,13 @@
         {
           "providerId": "account:zai-start-plan",
           "modelId": "GLM-5-Turbo",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:bigmodel-individual-coding-plan",
+          "modelId": "GLM-5.4",
           "config": {
             "enabled": true
           }
@@ -6131,6 +6210,13 @@
         },
         {
           "providerId": "account:bigmodel-team-coding-plan",
+          "modelId": "GLM-5.4",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:bigmodel-team-coding-plan",
           "modelId": "GLM-5.3",
           "config": {
             "enabled": true
@@ -6153,6 +6239,13 @@
         {
           "providerId": "account:bigmodel-team-coding-plan",
           "modelId": "GLM-5-Turbo",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:bigmodel-start-plan",
+          "modelId": "GLM-5.4",
           "config": {
             "enabled": true
           }
@@ -6181,6 +6274,13 @@
         {
           "providerId": "account:zai-offpeak-idle-plan",
           "modelId": "GLM-5.3-Flash",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:zai-offpeak-idle-plan",
+          "modelId": "GLM-5.4",
           "config": {
             "enabled": true
           }
@@ -6195,6 +6295,13 @@
         {
           "providerId": "account:bigmodel-offpeak-idle-plan",
           "modelId": "GLM-5.3-Flash",
+          "config": {
+            "enabled": true
+          }
+        },
+        {
+          "providerId": "account:bigmodel-offpeak-idle-plan",
+          "modelId": "GLM-5.4",
           "config": {
             "enabled": true
           }
