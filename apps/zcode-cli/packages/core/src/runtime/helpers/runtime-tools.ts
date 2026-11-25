@@ -72,6 +72,8 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeOrchestration:
       Boolean(deps.orchestrationPort) &&
       runtime.config.taskType === "orchestration_parent",
+    // 功能点知识库：端口在场即启用，所有会话可用（spec: feature-knowledge.md，非编排专属）。
+    includeFeatureKnowledge: Boolean(deps.featureKnowledgePort),
     // 动态工作流灰度门：与 off-peak 相反，
     // 这里不能用端口在场做判据——十个工具的端口在任何 CLI 里都装配齐全，灰度是 Host 的决定。
     // 取值收在 tool-allowlist.ts，与分支刷新那个入口共用同一个推导。
@@ -195,6 +197,7 @@ function createRuntimeToolExecutor(
     automationPort: deps.automationPort,
     offPeakPort: deps.offPeakPort,
     orchestrationPort: deps.orchestrationPort,
+    featureKnowledgePort: deps.featureKnowledgePort,
     sessionStore: deps.sessionStore,
     sessionModePort: createRuntimeSessionModePort(runtime),
     workflowPort: deps.workflowPort,

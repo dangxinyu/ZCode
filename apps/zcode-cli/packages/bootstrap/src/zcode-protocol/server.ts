@@ -30,6 +30,7 @@ import {
   createSession,
   forkSession,
   generateWorkspaceText,
+  embedWorkspaceText,
   goalSession,
   getTaskTokenUsage,
   getUsageStats,
@@ -639,6 +640,10 @@ export class ZCodeProtocolAgentServer {
         );
       case zcodeProtocolMethods.workspaceCancelGenerateText:
         return this.cancelWorkspaceGenerateText(request.params);
+      case zcodeProtocolMethods.workspaceEmbedText:
+        return await this.withWorkspaceGenerateTextSignal(request, (signal) =>
+          embedWorkspaceText(this.context, request.params, signal),
+        );
       case zcodeProtocolMethods.providerTestModelConnectivity:
         return await testProviderModelConnectivity(this.context, request.params);
       case zcodeProtocolMethods.mcpList:

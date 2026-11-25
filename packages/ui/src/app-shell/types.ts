@@ -105,6 +105,8 @@ export interface AppProps {
   workspaceRemoteSessionId?: string;
   workspaceIdentity?: string;
   isWorkspaceVisible?: boolean;
+  /** 知识库在主区开页（侧栏保留不覆盖）；入口在侧栏视图 tab 行，spec: feature-knowledge.md。 */
+  isKnowledgeTabActive?: boolean;
   isDesktop?: boolean;
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;

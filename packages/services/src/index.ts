@@ -299,3 +299,37 @@ export type {
   FeedbackTicketType,
 } from "@zcode/shared";
 export { IClientConfigService } from "./client-config/clientConfig.js";
+
+// Feature knowledge service — IFeatureKnowledgeService is both a type (interface) and value (descriptor).
+// 根入口只导出 descriptor 与领域类型（browser-safe）；repo/migration/工厂依赖 node:sqlite，
+// 仅由 host 侧从实现文件路径导入，避免把 Node 链拉进 renderer 包。
+export {
+  IFeatureKnowledgeService,
+  type FeatureDetail,
+  type FeatureKnowledgeChanged,
+  type FeatureKnowledgeSearchResult,
+} from "./feature-knowledge/featureKnowledge.js";
+export type {
+  Feature,
+  FeatureAnchor,
+  FeatureDocScanEntry,
+  FeatureDocScanResult,
+  FeatureDocTheme,
+  FeatureDocThemePlan,
+  FeatureProposal,
+  FeatureRelationInput,
+  FeatureSummary,
+  FeatureVersion,
+  ProposeInput,
+  ProposalSource,
+  ProposalStatus,
+  RelationKind,
+  SearchHit,
+  SearchLayer,
+} from "./feature-knowledge/types.js";
+export { KB_ERROR_CODES, type KbErrorCode } from "./feature-knowledge/types.js";
+export {
+  DOC_SCAN_DIRECT_LIMIT,
+  DOC_SCAN_MAX_DOCS,
+  DOC_SCAN_BATCH_MAX_DOCS,
+} from "./feature-knowledge/docScanLimits.js";

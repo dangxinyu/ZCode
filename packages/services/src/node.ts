@@ -255,6 +255,28 @@ export { OffPeakTaskRepo, OFF_PEAK_CLAIM_STALE_MS } from "./session/offPeakTaskR
 export { buildTaskChangeSummary } from "./session/taskChangeSummary.js";
 export { OffPeakTaskService } from "./session/offPeakTaskService.js";
 export { IOffPeakTaskService } from "./session/offPeakTask.js";
+export {
+  IFeatureKnowledgeService,
+  createFeatureKnowledgeService,
+  FeatureKnowledgeRepo,
+} from "./feature-knowledge/index.js";
+export type {
+  Feature,
+  FeatureSummary,
+  FeatureProposal,
+  FeatureVersion,
+  FeatureAnchor,
+  FeatureRelationInput,
+  RelationKind,
+  SearchHit,
+  SearchLayer,
+  ProposalStatus,
+  ProposalSource,
+  ProposeInput,
+  FeatureDetail,
+  FeatureKnowledgeChanged,
+  FeatureKnowledgeSearchResult,
+} from "./feature-knowledge/index.js";
 export { createOffPeakServerClient, OffPeakServerError } from "./session/offPeakServerClient.js";
 export { isOffPeakMockEnabled, startOffPeakMockGateway } from "./session/offPeakMockGateway.js";
 export {
@@ -442,6 +464,12 @@ import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogg
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
 import { OffPeakTaskService } from "./session/offPeakTaskService.js";
 import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
+import {
+  IFeatureKnowledgeService,
+  createFeatureKnowledgeService,
+  FeatureKnowledgeRepo,
+  type FeatureEmbedder,
+} from "./feature-knowledge/index.js";
 import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
 import {
   buildOffPeakRequestAuth,
@@ -2081,6 +2109,8 @@ export function createLocalServices(options: {
   // 编排服务前向引用（同款惰性绑定）：agent service 先建、orchestration service 依赖
   // 其后的 zcodeTaskService；orchestration/* 请求只会在装配完成后发生。
   let orchestrationTaskServiceForAgent: IOrchestrationTaskService | undefined;
+  // 功能点知识库前向引用（同款惰性绑定）：独立全局库，本地与 desktop-attached-remote 均可用。
+  let featureKnowledgeServiceForAgent: IFeatureKnowledgeService | undefined;
   // desktop-attached-remote 装配不暴露 Off-Peak 工具面（远程不在支持范围）。
   const offPeakToolWiring =
     options?.serviceAuthorityMode === "desktop-attached-remote"
@@ -2107,6 +2137,7 @@ export function createLocalServices(options: {
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
     ...orchestrationToolWiring,
+    resolveFeatureKnowledgeService: () => featureKnowledgeServiceForAgent,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
@@ -2628,7 +2659,45 @@ export function createLocalServices(options: {
         oauthService,
       }),
     )
-    .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
+    .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService())
+    .register(
+      IFeatureKnowledgeService,
+      (() => {
+        // 功能点知识库独立全局库（spec: feature-knowledge.md）：唯一写入者属主在本集合，
+        // renderer 经 ProxyChannel 直连；连接句柄收集到链前数组统一 dispose。
+        const featureKnowledgeRepo = new FeatureKnowledgeRepo();
+        sqliteReposToClose.push(featureKnowledgeRepo);
+        // 语义召回 embedding 通道：读知识库设置项（provider/model/workspace），未配置→null 降级。
+        // 网络 I/O 经 zcodeAgentService.embedText 收敛到 CLI adapter，host 不直接 fetch。
+        const featureKnowledgeEmbedLog = createServiceLogger("feature-knowledge");
+        const featureKnowledgeEmbedder: FeatureEmbedder = async ({ texts }) => {
+          const ref = (await settingService.get()).featureKnowledgeEmbedding;
+          if (!ref) return null;
+          try {
+            const result = await zcodeAgentService.embedText({
+              workspacePath: ref.workspacePath,
+              ...(ref.workspaceIdentity ? { workspaceIdentity: ref.workspaceIdentity } : {}),
+              selection: { providerId: ref.providerId, modelId: ref.modelId },
+              texts,
+            });
+            return { vectors: result.vectors, model: result.model };
+          } catch (error) {
+            featureKnowledgeEmbedLog.warn("Embedding channel unavailable; degrading", {
+              event: "feature-knowledge.embed.channel-failed",
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+          }
+        };
+        const featureKnowledgeService = createFeatureKnowledgeService({
+          repo: featureKnowledgeRepo,
+          broadcastService,
+          embedder: featureKnowledgeEmbedder,
+        });
+        featureKnowledgeServiceForAgent = featureKnowledgeService;
+        return featureKnowledgeService;
+      })(),
+    );
 
   // 即使初始配置关闭也必须登记 lifecycle disposer：terminal fence 需要早于任意延迟 setting/acquire
   // 恢复，不能把"当前还没有 Helper"误当成"不需要生命周期所有者"。dispose 时串行 stop host。

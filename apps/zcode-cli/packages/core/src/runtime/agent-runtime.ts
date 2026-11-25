@@ -47,6 +47,7 @@ import type {
   ModelCatalogPort,
   SubagentPort,
   ToolArtifactStorePort,
+  FeatureKnowledgePort,
   ToolCallId,
   TraceContext,
   TurnSteerInput,
@@ -181,6 +182,7 @@ export class AgentRuntime {
   private runtimeTaskRegistry: RuntimeTaskRegistry;
   private branchGeneration = 0;
   private artifactStore?: ToolArtifactStorePort;
+  private featureKnowledgePort?: FeatureKnowledgePort;
   private executionPort?: ExecutionPort;
   private fileSystemPort?: FileSystemPort;
   private imageProcessorPort?: ImageProcessorPort;
@@ -289,6 +291,7 @@ export class AgentRuntime {
     this.runtimeTaskRegistry = deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
     this.runtimeTaskRegistry.setActiveBranchGeneration?.(this.branchGeneration);
     this.artifactStore = deps.artifactStore;
+    this.featureKnowledgePort = deps.featureKnowledgePort;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;
     this.imageProcessorPort = deps.imageProcessorPort;

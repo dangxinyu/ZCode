@@ -55,6 +55,11 @@ import {
   spawnSubTaskToolEntry,
 } from "./orchestration.js";
 import {
+  searchFeaturesToolEntry,
+  readFeatureDocToolEntry,
+  proposeFeatureUpdateToolEntry,
+} from "./feature-knowledge.js";
+import {
   createEnterPlanModeToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
@@ -110,6 +115,10 @@ export const builtInTools: ToolEntry[] = [
   sendChildTaskPromptToolEntry,
   listOrchestrationChildrenToolEntry,
   listWorkspaceTasksToolEntry,
+  // 功能点知识库工具面：includeFeatureKnowledge 门（端口在场即启用，所有会话可用）。
+  searchFeaturesToolEntry,
+  readFeatureDocToolEntry,
+  proposeFeatureUpdateToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
   askUserQuestionToolEntry,
@@ -195,6 +204,8 @@ interface RegisterBuiltInToolsOptions {
   includeOffPeak?: boolean;
   /** 编排任务会话工具面；门 = taskType==="orchestration_parent" 且 orchestrationPort 在场。 */
   includeOrchestration?: boolean;
+  /** 功能点知识库工具面；门 = featureKnowledgePort 在场（所有会话可用，spec: feature-knowledge.md）。 */
+  includeFeatureKnowledge?: boolean;
   /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
@@ -281,6 +292,14 @@ export function registerBuiltInTools(
         entry.metadata.name === "ListOrchestrationChildren" ||
         entry.metadata.name === "ListWorkspaceTasks") &&
       options.includeOrchestration !== true
+    ) {
+      continue;
+    }
+    if (
+      (entry.metadata.name === "SearchFeatures" ||
+        entry.metadata.name === "ReadFeatureDoc" ||
+        entry.metadata.name === "ProposeFeatureUpdate") &&
+      options.includeFeatureKnowledge !== true
     ) {
       continue;
     }

@@ -194,6 +194,7 @@ export function WorkspaceHeader({
         <WorkspaceHeaderActionSection
           variant={variant}
           activeTaskId={activeTaskId}
+          activeSessionId={activeSessionId}
           user={user}
           readOnlyReason={readOnlyReason}
           workspaceAbsPath={workspaceAbsPath}

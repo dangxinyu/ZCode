@@ -43,6 +43,10 @@ import type {
   V4ConversationFileChangesResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
+import { FEATURE_DISTILL_DISPATCH_INSTRUCTION } from "@/feature-knowledge/distillInstruction.js";
+import { FeatureKnowledgeSessionProposalWatcher } from "@/feature-knowledge/FeatureKnowledgeSessionProposalWatcher.js";
+import { useFeatureKnowledgeDistillStore } from "@/store/featureKnowledgeDistillStore.js";
+import { useFeatureAnalysisStore } from "@/store/featureKnowledgeAnalysisStore.js";
 import {
   getConversationShareErrorDetails,
   resolveConversationShareFallbackIssueCode,
@@ -1249,6 +1253,7 @@ export function SessionPane({
     modelSelectionService,
   });
 
+  const activeSessionConfig = snapshot?.sessionId === sessionId ? snapshot.config : null;
   // Composer 保存下一次 Submission 的 renderer intent；prewarm session 仅承载草稿预热。
   const {
     composerDraft,
@@ -1269,7 +1274,7 @@ export function SessionPane({
     workspaceIdentity,
     provider,
     sessionId,
-    sessionConfig: snapshot?.sessionId === sessionId ? snapshot.config : null,
+    sessionConfig: activeSessionConfig,
     agentStartupAllowed: draftAgentStartupAllowed,
     modelSelectionService,
   });
@@ -3640,6 +3645,55 @@ export function SessionPane({
     [dispatchSlashCommand, sessionId],
   );
 
+  // 功能点知识库「提炼」：向当前会话发派发指令，主 agent 用 Agent 工具派内联后台子智能体跑提炼
+  // （spec: feature-knowledge.md）。内联子智能体没有 host 直接派生入口，只能经当前会话模型触发，
+  // 故不另开 session；提案落库后仍由确认 dialog 人闸。
+  const handleDistill = useCallback(() => {
+    if (!sessionId) return;
+    void (async () => {
+      try {
+        const result = await handleSendText(FEATURE_DISTILL_DISPATCH_INSTRUCTION);
+        if (result === "sent") {
+          useFeatureAnalysisStore.getState().record({
+            sessionId,
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            kind: "distill",
+            label: intl.formatMessage({ id: "knowledge.analyzingDistill" }),
+            startedAt: Date.now(),
+          });
+          toast(intl.formatMessage({ id: "knowledge.distillDispatched" }), { variant: "info" });
+        } else {
+          toast(intl.formatMessage({ id: "knowledge.distillDispatchFailed" }), {
+            variant: "warning",
+          });
+        }
+      } catch (error) {
+        logger.warn("[feature-knowledge] 提炼指令发送失败", { error });
+        toast(intl.formatMessage({ id: "knowledge.distillDispatchFailed" }), {
+          variant: "warning",
+        });
+      }
+    })();
+  }, [sessionId, handleSendText, intl]);
+
+  // 归属纠正等 dialog 动作经此把手复用 pane 唯一发送路径（store 桥接，spec: feature-knowledge.md）。
+  const sendDistillInstruction = useCallback(
+    async (text: string, explicit?: ComposerSubmissionConfig) => {
+      // 新会话 pane 刚挂载时 composer 草稿还没有模型/模式配置，submission 为 null 会被 blocked；
+      // 等配置就绪（bounded 8s）并显式携带，避免首条指令静默丢失（2026-11-25 bug）。
+      const deadline = Date.now() + 8000;
+      let submission = explicit ?? createSubmissionFromComposer();
+      while (!submission && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        submission = createSubmissionFromComposer();
+      }
+      if (!submission) return false;
+      return (await handleSendText(text, { submission })) === "sent";
+    },
+    [createSubmissionFromComposer, handleSendText],
+  );
+
   // 误停排障需要区分按钮与 Esc；普通 info 在生产禁用，必须走生命周期日志。
   const handleStop = useCallback(
     (source: "button" | "escape") => {
@@ -4055,6 +4109,47 @@ export function SessionPane({
     (quotaBanner.takesOverError ? null : projectedComposerError);
   useEffect(() => {
     setSendSubmissionError(null);
+  }, [sessionId]);
+  // 头部「提炼」入口桥接（spec: feature-knowledge.md）：仅 focused 且会话已有内容、非只读时
+  // 登记控制器，头部按 activeSessionId 哑渲染；发送仍唯一走 handleDistill。空会话/草稿不登记
+  // → 头部隐藏。用 getState() 取动作，避免 pane 订阅 store 造成回环。
+  const distillHasConversation = (snapshot?.rows.totalCount ?? 0) > 0;
+  const distillDisabled =
+    connecting ||
+    draftRuntimeRebuilding ||
+    queueEditActiveForCurrentComposer ||
+    quotaBanner.state.blocksSubmit;
+  useEffect(() => {
+    const store = useFeatureKnowledgeDistillStore.getState();
+    // 空会话也登记把手：文档分析等动作会新建会话并经把手发首条指令；
+    // 头部提炼按钮仍靠 disabled（无对话内容）隐藏意图，不在这里拦发送。
+    if (focused && sessionId && !readOnly) {
+      useFeatureKnowledgeDistillStore.setState({
+        activeSessionId: sessionId,
+        activeWorkspacePath: workspacePath,
+        activeModelSelection: activeSessionConfig?.modelSelection ?? null,
+      });
+      store.register(sessionId, {
+        disabled: distillDisabled || !distillHasConversation,
+        requestDistill: handleDistill,
+        sendInstruction: sendDistillInstruction,
+      });
+    } else if (sessionId) {
+      store.unregister(sessionId);
+    }
+  }, [
+    focused,
+    sessionId,
+    readOnly,
+    distillHasConversation,
+    distillDisabled,
+    handleDistill,
+    sendDistillInstruction,
+  ]);
+  useEffect(() => {
+    return () => {
+      if (sessionId) useFeatureKnowledgeDistillStore.getState().unregister(sessionId);
+    };
   }, [sessionId]);
   const handleDismissComposerError = useCallback(() => {
     if (draftModelReadinessError) {
@@ -4692,6 +4787,12 @@ export function SessionPane({
       onDrop={effectiveDropTargetController?.onDrop}
       className="relative flex h-full min-h-0 flex-col"
     >
+      <FeatureKnowledgeSessionProposalWatcher
+        sessionId={sessionId}
+        focused={focused}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+      />
       {effectiveDropTargetController?.active ? (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-accent/55 backdrop-blur-sm">
           <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">

@@ -46,6 +46,8 @@ import type {
 } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
 import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadcrumbFrame.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
+import { FeatureKnowledgePage } from "@/feature-knowledge/FeatureKnowledgePage.js";
+import { FeatureDocAnalysisDialog } from "@/feature-knowledge/FeatureDocAnalysisDialog.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
@@ -191,6 +193,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   services,
   workspaceReadOnlyReason,
   workspaceMainView,
+  isKnowledgeTabActive = false,
   pluginStoreOpenVersion,
   openAutomationId,
   openAutomationTab,
@@ -1593,9 +1596,10 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     goForwardShortcutLabel={goForwardShortcutLabel}
                     onOpenCommandCenter={handleOpenCommandCenter}
                     onOpenAutomations={handleOpenAutomations}
-                    automationsActive={workspaceMainView === "automations"}
+                    automationsActive={workspaceMainView === "automations" && !isKnowledgeTabActive}
                     onOpenPluginStore={handleOpenPluginStore}
-                    pluginStoreActive={workspaceMainView === "plugin-store"}
+                    pluginStoreActive={workspaceMainView === "plugin-store" && !isKnowledgeTabActive}
+                    knowledgeActive={isKnowledgeTabActive}
                     onFileTreeOpenChange={setIsSidebarFileTreeOpen}
                   />
                 </WorkflowRunOpenProvider>
@@ -1739,7 +1743,22 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                       </ScopedErrorBoundary>
                     ) : null}
                     <div className="min-h-0 flex-1 overflow-hidden">
-                      {workspaceMainView === "automations" ? (
+                      {isKnowledgeTabActive ? (
+                        // 知识库在主区开页（用户指定 2026-11-25）：侧栏任务列表保留、不被覆盖，
+                        // 不再走整窗 overlay（旧实现连侧栏一起盖住）。
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <ScopedErrorBoundary
+                            scope="knowledge-main"
+                            resetKeys={workspaceOnlyResetKeys}
+                            variant="panel"
+                            className="h-full"
+                          >
+                            <FeatureKnowledgePage
+                              onJumpToSession={handleSelectTaskInChat}
+                            />
+                          </ScopedErrorBoundary>
+                        </main>
+                      ) : workspaceMainView === "automations" ? (
                         <main
                           id={AUTOMATIONS_TOAST_ANCHOR_ID}
                           className="flex h-full min-h-0 flex-1 flex-col bg-background"
@@ -1962,6 +1981,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
           />
         </ScopedErrorBoundary>
       </div>
+      {/* 文档分析 dialog 挂根层：侦察等待/主题勾选期间会跳转工作会话，KB 页内挂载会被卸载。 */}
+      <FeatureDocAnalysisDialog />
     </DesktopWindowFrame>
   );
 });

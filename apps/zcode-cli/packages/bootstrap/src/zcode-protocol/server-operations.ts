@@ -67,6 +67,7 @@ import {
   zcodeTaskTokenUsageParamsSchema,
   zcodeUsageStatsParamsSchema,
   zcodeWorkspaceGenerateTextParamsSchema,
+  zcodeWorkspaceEmbedTextParamsSchema,
   getConversationMessageProjectionPolicy,
   parseRemoteWorkspaceIdentity,
   type ZCodeSessionCreateParams,
@@ -108,6 +109,7 @@ import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
 import { createProtocolOrchestrationPort } from "./orchestration-port.js";
+import { createProtocolFeatureKnowledgePort } from "./feature-knowledge-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js";
@@ -2814,6 +2816,38 @@ export async function generateWorkspaceText(
   }
 }
 
+export async function embedWorkspaceText(
+  context: ZCodeProtocolAgentServerContext,
+  rawParams: unknown,
+  abortSignal?: AbortSignal,
+) {
+  const params = parseParams(zcodeWorkspaceEmbedTextParamsSchema, rawParams);
+  const active = Array.from(context.sessions.values()).find(
+    (record) => record.workspace.workspaceKey === params.workspace.workspaceKey,
+  );
+  const app =
+    active?.app ??
+    (await createWorkspaceZCodeApp(context, params.workspace, {
+      env: context.deps.env,
+      eventStore: context.deps.createSessionEventStore("workspace-embed-text"),
+      runtimeConfig: {
+        workingDirectory: params.workspace.workspacePath,
+      },
+      sessionStore: context.deps.sessionStore,
+      version: context.deps.version,
+    }));
+  try {
+    return await app.embedText(
+      { selection: params.selection, texts: params.texts },
+      { abortSignal },
+    );
+  } finally {
+    if (!active) {
+      await app.close?.();
+    }
+  }
+}
+
 function ensureNoActiveTurn(record: ZCodeProtocolSessionRecord, message: string): void {
   if (!record.activeAbortController) {
     return;
@@ -3413,6 +3447,9 @@ async function createRecord(
     ...(taskType === "orchestration_parent"
       ? { orchestrationPort: createProtocolOrchestrationPort(context) }
       : {}),
+    // 功能点知识库工具面：所有会话注入（spec: feature-knowledge.md）；core 的
+    // includeFeatureKnowledge 门按端口在场启用。host 未装配服务时反向请求返回 unavailable。
+    featureKnowledgePort: createProtocolFeatureKnowledgePort(context),
     // 只接入 Host 已开放的工具面；缺省不注入。复用现行异步工厂，
     // 不恢复旧 deferred ModelAdapter/Registry overlay，也不改变 Session Selection。
     ...(("offPeakToolEnabled" in params && params.offPeakToolEnabled === true) ||

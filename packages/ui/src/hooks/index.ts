@@ -54,3 +54,10 @@ export { useGitActions } from "./useGitActions.js";
 export { useTaskNativeSessionLogFile } from "./useTaskNativeSessionLogFile.js";
 export { useTaskSessionFilePath } from "./useTaskSessionFilePath.js";
 export { useUsageStats } from "./useUsageStats.js";
+
+// 功能点知识库（全局活文档）
+export { useFeatureKnowledge } from "./useFeatureKnowledge.js";
+export type {
+  UseFeatureKnowledgeResult,
+  FeatureKnowledgeMutationResult,
+} from "./useFeatureKnowledge.js";

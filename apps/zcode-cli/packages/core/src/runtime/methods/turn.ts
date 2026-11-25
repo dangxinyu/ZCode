@@ -46,6 +46,7 @@ import { createRuntimeCommandId } from "../command-queue.js";
 import type { PromptRuntimeCommand } from "../command-queue.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
 import { buildReferencedSessionContextReminderBody } from "../../session-context/read-session-context.js";
+import { injectFeatureKnowledgeRecall } from "../../feature-knowledge/auto-recall.js";
 import { runRegularTurnLoop } from "./turn-loop.js";
 import {
   maybeStartDeferredSessionTitleGeneration,
@@ -422,6 +423,13 @@ export async function executeTurnCommand(
           userPromptHookResult.additionalContexts,
         );
         injectReferencedSessionContextReminderIntoMessageHistory.call(this, input, options);
+        // 开工自动召回：本轮问题检索知识库，top-k 摘要+锚点注入当轮 reminder（spec: feature-knowledge.md）。
+        if (options?.inputVisibility !== "model-only") {
+          const recalled = await injectFeatureKnowledgeRecall(this, this.config.taskType, input);
+          if (recalled) {
+            this.logger?.info("[feature-knowledge] 开工自动召回已注入当轮 reminder");
+          }
+        }
         injectDateChangeReminderIntoMessageHistory.call(this);
         const resolvedAttachments = await resolveTurnAttachments(attachments, {
           abortSignal: turnAbortSignal,

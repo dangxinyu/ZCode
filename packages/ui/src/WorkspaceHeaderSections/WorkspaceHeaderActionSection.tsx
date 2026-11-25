@@ -2,6 +2,7 @@ import { WorkspaceEditorButtonGroup } from "@/WorkspaceEditorButtonGroup.js";
 import { WorkspaceSidePaneToggleButton } from "@/WorkspaceSidePaneToggleButton.js";
 import { WorkspaceTerminalToggleButton } from "@/WorkspaceTerminalToggleButton.js";
 import { WorkspaceSessionReloadButton } from "@/WorkspaceSessionReloadButton.js";
+import { WorkspaceDistillButton } from "@/WorkspaceDistillButton.js";
 import { cn } from "@/components/lib/utils.js";
 import type { WorkspaceHeaderActionSectionProps } from "@/WorkspaceHeaderSections/shared.js";
 import { ConversationShareMenu } from "@/ConversationShareMenu.js";
@@ -12,6 +13,7 @@ export type { WorkspaceHeaderActionSectionProps } from "@/WorkspaceHeaderSection
 export function WorkspaceHeaderActionSection({
   variant = "task",
   activeTaskId,
+  activeSessionId,
   user,
   readOnlyReason,
   workspaceAbsPath,
@@ -40,6 +42,10 @@ export function WorkspaceHeaderActionSection({
         useWindowsCaptionSpacing ? "-my-2 h-12 gap-0" : "gap-0.5",
       )}
     >
+      <WorkspaceDistillButton
+        activeSessionId={activeSessionId ?? null}
+        useWindowsCaptionSpacing={useWindowsCaptionSpacing}
+      />
       <WorkspaceSessionReloadButton
         onReloadSession={onReloadSession}
         disabled={reloadSessionDisabled}

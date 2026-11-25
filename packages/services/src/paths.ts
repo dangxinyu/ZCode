@@ -187,6 +187,11 @@ export function getTasksIndexDatabasePath(): string {
   return join(getAppConfigDir(), "tasks-index.sqlite");
 }
 
+/** ~/.zcode/v2/feature-knowledge.sqlite —— 功能点知识库独立全局库（跨 workspace 积累）。 */
+export function getFeatureKnowledgeDatabasePath(): string {
+  return join(getAppConfigDir(), "feature-knowledge.sqlite");
+}
+
 /** workspace 级身份键：远程优先使用 workspaceIdentity，本地回退 workspacePath。 */
 function getWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
   return workspaceIdentity?.trim() || workspacePath;

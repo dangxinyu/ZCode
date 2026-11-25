@@ -74,6 +74,9 @@ import {
   zcodeOrchestrationBindPlanNodesParamsSchema,
   zcodeOrchestrationMarkPlanNodesStaleParamsSchema,
   zcodeOrchestrationMarkPlanNodesStaleResultSchema,
+  zcodeFeatureKnowledgeSearchParamsSchema,
+  zcodeFeatureKnowledgeReadParamsSchema,
+  zcodeFeatureKnowledgeProposeParamsSchema,
   OFF_PEAK_PROVIDER_IDS,
   zcodeComputerUseOperationEventSchema,
   zcodeProviderRuntimeHeadersCancelledSchema,
@@ -106,6 +109,7 @@ import {
   zcodeWorkspacePresentationSchema,
   zcodeWorkspaceCancelGenerateTextResultSchema,
   zcodeWorkspaceGenerateTextResultSchema,
+  zcodeWorkspaceEmbedTextResultSchema,
   zcodeWorkspaceHookTrustGrantResultSchema,
   zcodeWorkspaceUpdateInteractionPreferencesResultSchema,
   zcodeWorkspaceUpdateModelIoPreferencesResultSchema,
@@ -162,6 +166,7 @@ import type {
   ZCodeAgentInstallPluginParams,
   ZCodeAgentGenerateWorkspaceTextParams,
   ZCodeAgentTestModelConnectivityParams,
+  ZCodeAgentEmbedTextParams,
   ZCodeAgentGoalParams,
   ZCodeAgentGrantWorkspaceHookTrustParams,
   ZCodeAgentInitializeResult,
@@ -311,6 +316,7 @@ import type { ZCodeAgentProcessManagerOptions } from "./zcodeAgentProcessManager
 import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
 import type { IOrchestrationTaskService } from "#src/zcode-agent/orchestrationTaskService.js";
 import type { IOrchestrationPlanService } from "#src/zcode-agent/orchestrationPlanService.js";
+import type { IFeatureKnowledgeService } from "#src/feature-knowledge/featureKnowledge.js";
 import {
   ZCodeProtocolRequestTimeoutError,
   type ZCodeProtocolClient,
@@ -917,6 +923,9 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   resolveOrchestrationTaskService?: () => IOrchestrationTaskService | undefined;
   // 编排计划服务（spec: orchestration-plan.md）：proposePlan 反向请求的执行面。
   resolveOrchestrationPlanService?: () => IOrchestrationPlanService | undefined;
+  // 功能点知识库服务（spec: feature-knowledge.md）：featureKnowledge/* 反向请求的执行面。
+  // 所有会话可用（端口在场即启用）；commit/reject 仅 UI，不进此协议。
+  resolveFeatureKnowledgeService?: () => IFeatureKnowledgeService | undefined;
   /**
    * browser-use 执行桥：把 agent 的 interaction/browserExecute 反向请求转发到 main
    * （WebContentsView+CDP）。desktop host 装配时注入；缺省（纯 CLI/远控无 main）则
@@ -2757,6 +2766,126 @@ export function createZCodeAgentService(
                   : {}),
               });
               await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.featureKnowledgeSearch) {
+          const parsed = zcodeFeatureKnowledgeSearchParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid featureKnowledge search params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const service = options?.resolveFeatureKnowledgeService?.();
+              if (!service) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Feature knowledge service is unavailable on this host",
+                });
+                return;
+              }
+              const result = await service.searchFeatures(parsed.data.query);
+              await client.respond(request.id, result);
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.featureKnowledgeRead) {
+          const parsed = zcodeFeatureKnowledgeReadParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid featureKnowledge read params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const service = options?.resolveFeatureKnowledgeService?.();
+              if (!service) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Feature knowledge service is unavailable on this host",
+                });
+                return;
+              }
+              const detail = await service.readFeature(parsed.data.featureId);
+              await client.respond(request.id, {
+                feature: detail?.feature ?? null,
+                versions: detail?.versions ?? [],
+                relations: detail?.relations ?? [],
+              });
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.featureKnowledgePropose) {
+          const parsed = zcodeFeatureKnowledgeProposeParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid featureKnowledge propose params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const service = options?.resolveFeatureKnowledgeService?.();
+              if (!service) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Feature knowledge service is unavailable on this host",
+                });
+                return;
+              }
+              const params = parsed.data;
+              const proposal = await service.propose({
+                featureId: params.featureId ?? null,
+                proposedName: params.proposedName,
+                proposedAliases: params.proposedAliases,
+                proposedDomain: params.proposedDomain,
+                proposedAnchors: params.proposedAnchors,
+                proposedRelations: params.proposedRelations,
+                docMd: params.docMd,
+                changeSummary: params.changeSummary,
+                source: {
+                  ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                  ...(params.traceId ? { traceId: params.traceId } : {}),
+                  workspaceKey: workspace.workspaceIdentity?.trim() || workspace.workspacePath,
+                  origin: "session",
+                },
+              });
+              await client.respond(request.id, {
+                proposalId: proposal.id,
+                status: proposal.status,
+                featureId: proposal.featureId,
+              });
             } catch (error) {
               await client.respondError(request.id, {
                 code: -32603,
@@ -4822,6 +4951,25 @@ export function createZCodeAgentService(
           selection: params.selection,
         },
         zcodeProviderTestModelConnectivityResultSchema,
+        { signal: params.signal },
+      );
+    },
+
+    async embedText(params: ZCodeAgentEmbedTextParams) {
+      const client = await getClient(params);
+      await ensureAccountProviderConfigSynced({
+        client,
+        reason: "workspace_embed_text",
+        workspace: params,
+      });
+      return client.request(
+        zcodeProtocolMethods.workspaceEmbedText,
+        {
+          workspace: buildWorkspaceRef(params),
+          selection: params.selection,
+          texts: params.texts,
+        },
+        zcodeWorkspaceEmbedTextResultSchema,
         { signal: params.signal },
       );
     },

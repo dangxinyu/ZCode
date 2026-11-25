@@ -1,5 +1,6 @@
 // Model adapters backed by the Vercel AI SDK
 export * from "./errors.js";
+export * from "./embeddings.js";
 export * from "./model-execution.js";
 export * from "./runner.js";
 export * from "./model.js";

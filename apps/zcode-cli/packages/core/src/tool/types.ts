@@ -7,6 +7,7 @@ import type {
   AutomationPort,
   OffPeakPort,
   OrchestrationPort,
+  FeatureKnowledgePort,
   EmbeddedSearchBackend,
   ExecutionPort,
   BrowserControlPort,
@@ -167,6 +168,8 @@ export interface ToolExecutionContext {
   offPeakPort?: OffPeakPort;
   /** 编排任务端口；仅在 orchestration_parent 会话由宿主注入（taskType 门）。 */
   orchestrationPort?: OrchestrationPort;
+  /** 功能点知识库端口；所有会话可用（端口在场即启用，spec: feature-knowledge.md）。 */
+  featureKnowledgePort?: FeatureKnowledgePort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;

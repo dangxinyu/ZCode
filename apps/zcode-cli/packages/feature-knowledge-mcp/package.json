@@ -1,0 +1,30 @@
+{
+  "name": "@zcode/feature-knowledge-mcp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Outward-facing stdio MCP server for the feature knowledge base. Reads the global SQLite directly (read-only) and appends proposals; commit/reject stay in the ZCode UI human gate.",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts",
+    "./store": "./src/store.ts",
+    "./tool-contract": "./src/tool-contract.ts"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src --no-ignore",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "@zcode/services": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

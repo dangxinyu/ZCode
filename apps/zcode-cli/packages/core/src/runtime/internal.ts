@@ -15,6 +15,7 @@ import type {
   ContextSourcePort,
   ContextSourceSnapshot,
   ExecutionPort,
+  FeatureKnowledgePort,
   FileSystemPort,
   HookRunner,
   ImageProcessorPort,
@@ -111,6 +112,7 @@ export interface AgentRuntimeInternal
   runtimeTaskRegistry: RuntimeTaskRegistry;
   branchGeneration: number;
   artifactStore?: ToolArtifactStorePort;
+  featureKnowledgePort?: FeatureKnowledgePort;
   executionPort?: ExecutionPort;
   fileSystemPort?: FileSystemPort;
   imageProcessorPort?: ImageProcessorPort;

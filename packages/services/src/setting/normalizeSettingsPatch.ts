@@ -89,5 +89,17 @@ export function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<App
       trimmedProviderFamilyDomain.length > 0 ? normalizedPatch.providerFamilyDomain : undefined;
   }
 
+  if (
+    "featureKnowledgeEmbedding" in normalizedPatch &&
+    normalizedPatch.featureKnowledgeEmbedding
+  ) {
+    // 知识库语义召回引用需要支持清空回到降级态。RPC 传输会吞掉 undefined，
+    // 这里把任一必填项为空的引用归一成 undefined，避免旧 embedding 配置残留。
+    const ref = normalizedPatch.featureKnowledgeEmbedding;
+    if (!ref.providerId?.trim() || !ref.modelId?.trim() || !ref.workspacePath?.trim()) {
+      normalizedPatch.featureKnowledgeEmbedding = undefined;
+    }
+  }
+
   return normalizedPatch;
 }

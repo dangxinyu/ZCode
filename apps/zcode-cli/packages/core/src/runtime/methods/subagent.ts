@@ -322,6 +322,10 @@ export function createDefaultSubagentPort(
           // Explore 子运行时会暴露 WebFetch，但之前没有继承主 runtime 的
           // HTTP client port，导致工具在真正发请求前抛出配置错误，而不是网络请求失败。
           httpClientPort: deps.httpClientPort,
+          // 子 runtime 之前漏传功能点知识库端口，注册门 includeFeatureKnowledge 判 false，
+          // 提炼子智能体看不到 SearchFeatures/ReadFeatureDoc/ProposeFeatureUpdate，
+          // 转而拿其他 skill 的文件型知识库 improvising（用户反馈 2026-11-25 跑偏）。
+          featureKnowledgePort: deps.featureKnowledgePort,
           imageProcessorPort: deps.imageProcessorPort,
           pdfDocumentPort: deps.pdfDocumentPort,
           memoryRoot: persistentMemory?.rootDir,

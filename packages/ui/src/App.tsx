@@ -17,7 +17,7 @@ import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWorkspaceActiveTaskState } from "@/hooks/useWorkspaceActiveTaskState.js";
 import { useEnsureWorkspaceMcpLoaded } from "@/hooks/useEnsureWorkspaceMcpLoaded.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceReadOnly, isWorkspaceTab } from "@/store/tabStore.js";
+import { isWorkspaceReadOnly, isWorkspaceTab, KNOWLEDGE_TAB_ID } from "@/store/tabStore.js";
 import type { TaskChatMessage as TestChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
@@ -122,6 +122,7 @@ export function App({
   workspaceRemoteSessionId,
   workspaceIdentity: explicitWorkspaceIdentity,
   isWorkspaceVisible = true,
+  isKnowledgeTabActive = false,
   isDesktop,
   isMacDesktop,
   isWindowsDesktop,
@@ -416,6 +417,7 @@ export function App({
     setGitRefreshVersion((value) => value + 1);
   }, []);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
+  const closeTab = useTabStore((state) => state.closeTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
@@ -843,16 +845,19 @@ export function App({
   const handleNavigateToAutomationsMain = useCallback((target: AutomationsNavigationTarget) => {
     setOpenAutomationId(target.automationId ?? null);
     setOpenAutomationTab(target.automationTab ?? null);
+    // 知识库与自动化/插件市场同属主区视图，互斥：否则 KB tab 仍 active 会遮住新视图且双高亮。
+    closeTab(KNOWLEDGE_TAB_ID);
     setWorkspaceMainView("automations");
-  }, []);
+  }, [closeTab]);
   const handleNavigateToPluginStoreMain = useCallback(() => {
     // 通用入口没有 scope 上下文，默认回到 User；Settings 显式带 scope 的入口会在
     // 导航完成后覆盖这次默认值，避免沿用上一次 Workspace scope。
     setPluginStoreReturnScopeKey("user");
     setPluginStoreOpenVersion((version) => version + 1);
     preserveNextSettingsExit();
+    closeTab(KNOWLEDGE_TAB_ID);
     setWorkspaceMainView("plugin-store");
-  }, [preserveNextSettingsExit]);
+  }, [closeTab, preserveNextSettingsExit]);
   const handleOpenAutomationConsumed = useCallback(() => {
     setOpenAutomationId(null);
     setOpenAutomationTab(null);
@@ -897,6 +902,8 @@ export function App({
       // 目标统一归一为 User，避免旧 sessionStorage/同窗口事件把设置页带回失效 scope。
       const returnScopeKey = "user";
       if (workspaceMainView === "plugin-store") {
+        // KB tab 可能仍 active 遮住插件市场；重复点击入口也要先互斥关掉知识库。
+        closeTab(KNOWLEDGE_TAB_ID);
         setPluginStoreReturnScopeKey(returnScopeKey);
         setPluginStoreOpenVersion((version) => version + 1);
         return;
@@ -904,7 +911,7 @@ export function App({
       handleOpenPluginStore();
       setPluginStoreReturnScopeKey(returnScopeKey);
     },
-    [handleOpenPluginStore, workspaceMainView],
+    [closeTab, handleOpenPluginStore, workspaceMainView],
   );
   useEffect(
     () => addPluginStoreOpenListener(handleOpenPluginStoreForScope),
@@ -1179,6 +1186,7 @@ export function App({
         workspaceRemoteSessionId={workspaceRemoteSessionId}
         workspaceIdentity={workspaceIdentity}
         isWorkspaceVisible={isWorkspaceVisible}
+        isKnowledgeTabActive={isKnowledgeTabActive}
         isDesktop={isDesktop}
         isMacDesktop={isMacDesktop}
         isWindowsDesktop={isWindowsDesktop}

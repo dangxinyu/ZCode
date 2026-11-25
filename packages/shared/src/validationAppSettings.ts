@@ -400,9 +400,21 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
   return migrated;
 }
 
+// 功能点知识库语义召回 embedding 引用（spec: feature-knowledge.md）：复用 provider 鉴权/base，
+// modelId 为 embedding 模型名；workspacePath 指定借用哪个 workspace 的 CLI 通道。缺省→语义层降级。
+const featureKnowledgeEmbeddingSchema = z
+  .object({
+    providerId: nonEmptyStringSchema,
+    modelId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+  })
+  .strict();
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
+  featureKnowledgeEmbedding: featureKnowledgeEmbeddingSchema.optional(),
   // 快捷键用户覆盖（语义校验在 ui/src/shortcuts 生效表阶段容错，schema 只管形状）
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system"),
@@ -472,6 +484,7 @@ export const appSettingsSchema = z.preprocess(
 export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),
+  featureKnowledgeEmbedding: featureKnowledgeEmbeddingSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.optional(),
   terminalInheritSystemProfile: z.boolean().optional(),

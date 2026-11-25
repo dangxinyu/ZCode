@@ -2139,6 +2139,25 @@ export const zcodeWorkspaceCancelGenerateTextResultSchema = z
   .object({ operationId: nonEmptyString, cancelled: z.boolean() })
   .strict();
 
+// 一次性 embedding 通道（spec: feature-knowledge.md 语义向量层）：复用 provider 鉴权/base，
+// selection.modelId 为 embedding 模型名（不必是注册 chat 模型），texts 批量分块。
+export const zcodeWorkspaceEmbedTextParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+    selection: modelSelectionSchema,
+    texts: z.array(z.string()).min(1),
+    operationId: nonEmptyString.optional(),
+  })
+  .strict();
+export const zcodeWorkspaceEmbedTextResultSchema = z
+  .object({
+    vectors: z.array(z.array(z.number())),
+    model: z.string(),
+  })
+  .strict();
+export type ZCodeWorkspaceEmbedTextParams = z.infer<typeof zcodeWorkspaceEmbedTextParamsSchema>;
+export type ZCodeWorkspaceEmbedTextResult = z.infer<typeof zcodeWorkspaceEmbedTextResultSchema>;
+
 export const zcodeProviderTestModelConnectivityParamsSchema = z
   .object({
     workspace: zcodeWorkspaceRefSchema,
@@ -3740,6 +3759,10 @@ export const ORCHESTRATION_PLANS_CHANGED_BROADCAST_CHANNEL = "orchestration:plan
  * 与 workspace 定位。 */
 export const ORCHESTRATION_CHILDREN_CHANGED_BROADCAST_CHANNEL = "orchestration:children-changed";
 
+/** 功能点知识库变更广播：提案落库 / 提交 / 拒绝后发送，跨窗口 bump 刷新串号。
+ * payload 含 revision 与 reason（proposed|committed|rejected）。 */
+export const FEATURE_KNOWLEDGE_CHANGED_BROADCAST_CHANNEL = "feature-knowledge:changed";
+
 export const zcodeOrchestrationProposePlanParamsSchema = z
   .object({
     sessionId: nonEmptyString,
@@ -3915,6 +3938,123 @@ export const zcodeOffPeakListResultSchema = z
   .strict();
 export type ZCodeOffPeakListProtocolResult = z.infer<typeof zcodeOffPeakListResultSchema>;
 
+// ---- 功能点知识库（featureKnowledge）反向请求协议 ----
+// CLI 工具 SearchFeatures/ReadFeatureDoc/ProposeFeatureUpdate 经此请求 host 域执行；
+// 功能点状态唯一写入者在 host featureKnowledgeService（spec: packages/services/specs/feature-knowledge.md）。
+// 知识库是跨 workspace 全局库，search/read 不需 workspace 定位；propose 携 sessionId/traceId 记来源。
+// commit/reject 仅 UI 人闸，不进本协议。
+export const zcodeFeatureAnchorProtocolSchema = z
+  .object({
+    repo: z.string().optional(),
+    paths: z.array(z.string()),
+    symbols: z.array(z.string()).optional(),
+  })
+  .strict();
+export const zcodeFeatureRelationProtocolSchema = z
+  .object({ toId: nonEmptyString, kind: z.enum(["relates", "depends", "affects", "part_of"]) })
+  .strict();
+export const zcodeFeatureSummaryProtocolSchema = z
+  .object({
+    id: nonEmptyString,
+    name: z.string(),
+    domain: z.string(),
+    aliases: z.array(z.string()),
+    anchors: z.array(zcodeFeatureAnchorProtocolSchema),
+    currentVersion: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export const zcodeFeatureProtocolSchema = zcodeFeatureSummaryProtocolSchema
+  .extend({ docMd: z.string(), createdAt: z.number().int().nonnegative() })
+  .strict();
+export const zcodeProposalSourceProtocolSchema = z
+  .object({
+    sessionId: z.string().optional(),
+    taskId: z.string().optional(),
+    workspaceKey: z.string().optional(),
+    traceId: z.string().optional(),
+    origin: z.enum(["session", "mcp"]).optional(),
+  })
+  .strict();
+export const zcodeFeatureVersionProtocolSchema = z
+  .object({
+    featureId: nonEmptyString,
+    version: z.number().int().nonnegative(),
+    docMd: z.string(),
+    changeSummary: z.string(),
+    source: zcodeProposalSourceProtocolSchema,
+    createdAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export const zcodeFeatureSearchHitProtocolSchema = z
+  .object({
+    feature: zcodeFeatureSummaryProtocolSchema,
+    layers: z.array(z.enum(["lexical", "alias", "anchor", "vector"])),
+    score: z.number(),
+  })
+  .strict();
+
+export const zcodeFeatureKnowledgeSearchParamsSchema = z
+  .object({ query: z.string(), limit: z.number().int().positive().optional() })
+  .strict();
+export type ZCodeFeatureKnowledgeSearchProtocolParams = z.infer<
+  typeof zcodeFeatureKnowledgeSearchParamsSchema
+>;
+export const zcodeFeatureKnowledgeSearchResultSchema = z
+  .object({
+    hits: z.array(zcodeFeatureSearchHitProtocolSchema),
+    semanticEnabled: z.boolean(),
+  })
+  .strict();
+export type ZCodeFeatureKnowledgeSearchProtocolResult = z.infer<
+  typeof zcodeFeatureKnowledgeSearchResultSchema
+>;
+
+export const zcodeFeatureKnowledgeReadParamsSchema = z
+  .object({ featureId: nonEmptyString })
+  .strict();
+export type ZCodeFeatureKnowledgeReadProtocolParams = z.infer<
+  typeof zcodeFeatureKnowledgeReadParamsSchema
+>;
+export const zcodeFeatureKnowledgeReadResultSchema = z
+  .object({
+    feature: zcodeFeatureProtocolSchema.nullable(),
+    versions: z.array(zcodeFeatureVersionProtocolSchema),
+    relations: z.array(zcodeFeatureRelationProtocolSchema),
+  })
+  .strict();
+export type ZCodeFeatureKnowledgeReadProtocolResult = z.infer<
+  typeof zcodeFeatureKnowledgeReadResultSchema
+>;
+
+export const zcodeFeatureKnowledgeProposeParamsSchema = z
+  .object({
+    sessionId: nonEmptyString.optional(),
+    featureId: nonEmptyString.optional(),
+    proposedName: z.string().optional(),
+    proposedAliases: z.array(z.string()).optional(),
+    proposedDomain: z.string().optional(),
+    proposedAnchors: z.array(zcodeFeatureAnchorProtocolSchema).optional(),
+    proposedRelations: z.array(zcodeFeatureRelationProtocolSchema).optional(),
+    docMd: nonEmptyString,
+    changeSummary: z.string().optional(),
+    traceId: nonEmptyString.optional(),
+  })
+  .strict();
+export type ZCodeFeatureKnowledgeProposeProtocolParams = z.infer<
+  typeof zcodeFeatureKnowledgeProposeParamsSchema
+>;
+export const zcodeFeatureKnowledgeProposeResultSchema = z
+  .object({
+    proposalId: nonEmptyString,
+    status: z.enum(["pending", "committed", "rejected"]),
+    featureId: nonEmptyString.nullable(),
+  })
+  .strict();
+export type ZCodeFeatureKnowledgeProposeProtocolResult = z.infer<
+  typeof zcodeFeatureKnowledgeProposeResultSchema
+>;
+
 export const zcodeProtocolMethods = {
   runtimeCapabilities: "runtime/capabilities",
   computerUseOperationEvent: "computer-use/operation-event",
@@ -3967,6 +4107,7 @@ export const zcodeProtocolMethods = {
   // （commit message），待 v4 workspace 查询/命令面覆盖后移除。
   workspaceGenerateText: "workspace/generateText",
   workspaceCancelGenerateText: "workspace/cancelGenerateText",
+  workspaceEmbedText: "workspace/embedText",
   providerTestModelConnectivity: "provider/testModelConnectivity",
   mcpList: "mcp/list",
   pluginsList: "plugins/list",
@@ -4014,6 +4155,10 @@ export const zcodeProtocolMethods = {
   orchestrationSelectPlan: "orchestration/selectPlan",
   orchestrationMarkPlanNodesStale: "orchestration/markPlanNodesStale",
   orchestrationBindPlanNodes: "orchestration/bindPlanNodes",
+  // 功能点知识库检索/读取/提案：与 orchestration 同模式的独立方法族（spec: feature-knowledge.md）。
+  featureKnowledgeSearch: "featureKnowledge/search",
+  featureKnowledgeRead: "featureKnowledge/read",
+  featureKnowledgePropose: "featureKnowledge/propose",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。
   // 仅剩 CLI server 的 wire 兼容 case；随旧词整体删除时一并移除。
   usageStats: "usage/stats",

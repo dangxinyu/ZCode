@@ -19,6 +19,7 @@ interface RootWorkspaceContentProps {
   workspaceRemoteSessionId?: string;
   activeWorkspacePath: string | null;
   isSettingsTabActive: boolean;
+  isKnowledgeTabActive: boolean;
   handleConnectRemote: AppProps["onConnectRemote"];
   handleSelectRemoteProject: AppProps["onSelectRemoteProject"];
   handleCancelRemoteProject: AppProps["onCancelRemoteProject"];
@@ -57,6 +58,7 @@ export function RootWorkspaceContent({
   workspaceRemoteSessionId,
   activeWorkspacePath,
   isSettingsTabActive,
+  isKnowledgeTabActive,
   handleConnectRemote,
   handleSelectRemoteProject,
   handleCancelRemoteProject,
@@ -87,6 +89,10 @@ export function RootWorkspaceContent({
   windowsWindowControlsRightPaddingPx,
 }: RootWorkspaceContentProps) {
   const workspaceKey = workspaceIdentity?.trim() || workspaceShellPath;
+  // 设置页是覆盖在常驻 workspace 壳层上的全局页；打开时底层必须 inert，
+  // 避免底层权限/AskUserQuestion 卡片 autofocus 抢走全局页焦点。
+  // 知识库不再走整窗 overlay：它在主区开页、侧栏保留（用户指定 2026-11-25），经 App  prop 下发。
+  const isGlobalOverlayActive = isSettingsTabActive;
 
   useEffect(() => {
     logger.info("[RootWorkspaceContent] settings layer visibility changed", {
@@ -99,10 +105,10 @@ export function RootWorkspaceContent({
   return (
     <>
       <div
-        className={isSettingsTabActive ? "h-full opacity-0 pointer-events-none" : "h-full"}
-        aria-hidden={isSettingsTabActive}
-        data-root-workspace-surface={isSettingsTabActive ? "inert" : "interactive"}
-        inert={isSettingsTabActive ? true : undefined}
+        className={isGlobalOverlayActive ? "h-full opacity-0 pointer-events-none" : "h-full"}
+        aria-hidden={isGlobalOverlayActive}
+        data-root-workspace-surface={isGlobalOverlayActive ? "inert" : "interactive"}
+        inert={isGlobalOverlayActive ? true : undefined}
       >
         {/* 设置页之前通过条件分支直接替换整个 App，关闭设置时会把主界面整棵树卸载再重建，
             聊天区、终端等本地 UI 状态都会被当成一次“重新进入 workspace”。
@@ -123,7 +129,7 @@ export function RootWorkspaceContent({
             抢走设置表单焦点；设置页覆盖期间必须把整棵 workspace 标为 inert，等用户显式返回后再恢复交互。 */}
         <ConversationTelemetryWorkspaceAttachment
           enabled={isDesktop === true}
-          foregroundEnabled={!isSettingsTabActive}
+          foregroundEnabled={!isGlobalOverlayActive}
           services={workspaceScopedServices}
           workspacePath={workspaceShellPath}
           workspaceIdentity={workspaceIdentity}
@@ -167,7 +173,8 @@ export function RootWorkspaceContent({
                 allowOpenWorkspace={allowOpenWorkspace}
                 allowRemoteWorkspace={allowRemoteWorkspace}
                 remoteWorkspaceSessions={remoteWorkspaceSessions}
-                isWorkspaceVisible={!isSettingsTabActive}
+                isWorkspaceVisible={!isGlobalOverlayActive}
+                isKnowledgeTabActive={isKnowledgeTabActive}
                 isDesktop={isDesktop}
                 isMacDesktop={isMacDesktop}
                 isWindowsDesktop={isWindowsDesktop}

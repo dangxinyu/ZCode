@@ -14,6 +14,7 @@ import {
 import {
   Archive,
   Blocks,
+  BookOpen,
   CalendarClock,
   Clock3,
   Cloud,
@@ -59,6 +60,7 @@ import {
   TID_WORKSPACE_LIST,
 } from "@zcode/shared";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import {
@@ -77,8 +79,15 @@ import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { selectWorkspaceZCodeState, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceReadOnly, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
+import { useFeatureKnowledgeDistillStore } from "@/store/featureKnowledgeDistillStore.js";
+import {
+  isWorkspaceReadOnly,
+  isWorkspaceTab,
+  KNOWLEDGE_TAB_ID,
+  type WorkspaceTabState,
+} from "@/store/tabStore.js";
 import { useWorkspaceTaskLists } from "@/hooks/useWorkspaceTaskLists.js";
+import { useFeatureKnowledge } from "@/hooks/useFeatureKnowledge.js";
 import {
   persistSidebarTaskPreferences,
   readSidebarTaskPreferences,
@@ -266,6 +275,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenPluginStore,
   automationsActive = false,
   pluginStoreActive = false,
+  knowledgeActive = false,
   onFileTreeOpenChange,
 }: {
   workspacePath: string;
@@ -318,6 +328,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenPluginStore?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
+  knowledgeActive?: boolean;
   onFileTreeOpenChange?: (open: boolean) => void;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
@@ -370,9 +381,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const setTheme = useZCodeStore((state) => state.setTheme);
   const commandCenterShortcutLabel = useShortcutCommandLabel("openCommandCenter");
   const tabs = useTabStore((state) => state.tabs);
+  const activeTabId = useTabStore((state) => state.activeTabId);
   const activateTab = useTabStore((state) => state.activateTab);
   const closeTab = useTabStore((state) => state.closeTab);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
+  const openKnowledgeTab = useTabStore((state) => state.openKnowledgeTab);
+  const { pendingCount: knowledgePendingCount } = useFeatureKnowledge();
   const expandedWorkspacePaths = useTabStore((state) => state.expandedWorkspacePaths);
   const toggleWorkspaceExpanded = useTabStore((state) => state.toggleWorkspaceExpanded);
   const reorderWorkspaceTabs = useTabStore((state) => state.reorderWorkspaceTabs);
@@ -1435,6 +1449,42 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
             >
               <Blocks className="size-4" />
               {intl.formatMessage({ id: "workspace.openPluginsSettings" })}
+            </Button>
+            {/* 知识库入口（用户指定 2026-11-25：插件市场下方，与自动化/插件市场同排的主区视图导航）；
+                打开后知识库在右侧主区开页，侧栏任务列表保留不覆盖。 */}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (knowledgeActive) {
+                  closeTab(KNOWLEDGE_TAB_ID);
+                  return;
+                }
+                // 记住开 KB 前的工作会话，供 KB 页文档分析等动作回落发送。
+                useFeatureKnowledgeDistillStore
+                  .getState()
+                  .rememberWorkspaceTab(activeTabId ?? null);
+                openKnowledgeTab();
+              }}
+              data-icon="inline-start"
+              data-testid="knowledge-sidebar-open"
+              size="lg"
+              aria-pressed={knowledgeActive}
+              aria-label={intl.formatMessage({ id: "knowledge.title" })}
+              className={cn(
+                "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                knowledgeActive && "bg-selected text-foreground",
+              )}
+            >
+              <BookOpen className="size-4" />
+              {intl.formatMessage({ id: "knowledge.tabShort" })}
+              {knowledgePendingCount > 0 ? (
+                <Badge
+                  variant="destructive"
+                  className="pointer-events-none ml-auto h-4 min-w-4 px-1 text-ui-xs"
+                >
+                  {knowledgePendingCount}
+                </Badge>
+              ) : null}
             </Button>
           </div>
 

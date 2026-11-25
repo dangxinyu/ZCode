@@ -33,6 +33,7 @@ import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type {
   AutomationPort,
   OrchestrationPort,
+  FeatureKnowledgePort,
   OffPeakPort,
   BackgroundTaskCancelResult,
   CollaborationMode,
@@ -184,6 +185,8 @@ export interface ZCodeAppOptions {
   offPeakPort?: OffPeakPort;
   /** 编排任务端口；协议宿主仅对 orchestration_parent 会话注入（spec: orchestration-tasks.md）。 */
   orchestrationPort?: OrchestrationPort;
+  /** 功能点知识库端口；协议宿主对所有会话注入（spec: feature-knowledge.md）。 */
+  featureKnowledgePort?: FeatureKnowledgePort;
   /** 首次真实用户执行或 cold-resume fallback 时解析一次，之后由 app 生命周期缓存。 */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;
   /** Trusted embedder policy; workspace/project files cannot populate this field. */
@@ -537,6 +540,11 @@ export interface ZCodeApp {
     input: { selection: ModelSelection },
     options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
   ): Promise<void>;
+  /** 一次性 embedding（spec: feature-knowledge.md）：复用 provider 鉴权/base 调 /embeddings。 */
+  embedText(
+    input: { selection: ModelSelection; texts: string[] },
+    options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
+  ): Promise<{ vectors: number[][]; model: string }>;
   expertWorkflowStatus(options?: {
     abortSignal?: AbortSignal;
     definitionId?: string;

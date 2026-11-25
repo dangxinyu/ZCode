@@ -239,6 +239,13 @@ export interface AppSettings {
   startPlanRecommendationDismissed?: boolean;
   recentProjects: string[]; // 最近项目列表，最多保留 10 个
   locale: Locale; // 界面语言
+  /** 功能点知识库语义召回 embedding 引用；缺省时语义层降级到词面+词汇桥（spec: feature-knowledge.md）。 */
+  featureKnowledgeEmbedding?: {
+    providerId: string;
+    modelId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+  };
   /**
    * 用户覆盖的快捷键绑定（命令 ID → 绑定串数组，格式见 shortcutCommands.ts）。
    * 只存用户覆盖：未覆盖的命令不落盘，读取时与 SHORTCUT_COMMANDS 默认绑定合并；

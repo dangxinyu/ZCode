@@ -19,6 +19,7 @@ import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SSHDialog } from "@/SSHDialog.js";
 import { SettingsPage } from "@/SettingsPage.js";
+import { FeatureKnowledgePage } from "@/feature-knowledge/FeatureKnowledgePage.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
@@ -37,7 +38,7 @@ import { StoreProvider, useZCodeStore } from "@/store/StoreProvider.js";
 import { setMcpStorePlatform } from "@/store/mcpStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { TabStoreProvider, useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
-import { isSettingsTab, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
+import { isKnowledgeTab, isSettingsTab, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
 import { RootShell } from "@/root/RootShell.js";
 import { RootWorkspaceContent } from "@/root/RootWorkspaceContent.js";
@@ -326,6 +327,7 @@ function RootInner({
   const activeTab = activeTabId ? (tabs.find((tab) => tab.id === activeTabId) ?? null) : null;
   const activeWorkspaceTab = activeTab && isWorkspaceTab(activeTab) ? activeTab : null;
   const isSettingsTabActive = activeTab ? isSettingsTab(activeTab) : false;
+  const isKnowledgeTabActive = activeTab ? isKnowledgeTab(activeTab) : false;
   const {
     workspaceShellPath,
     workspaceIdentity: workspaceShellIdentity,
@@ -953,13 +955,22 @@ function RootInner({
       {directoryBrowserDialog}
       <OccupationOnboarding
         showWindowControls={Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop))}
-        showChildrenWhileLoading={!workspaceShellPath && isSettingsTabActive}
+        showChildrenWhileLoading={!workspaceShellPath && (isSettingsTabActive || isKnowledgeTabActive)}
         isMacDesktop={isMacDesktop}
         isWindowsDesktop={isWindowsDesktop}
       >
         {/* 新引导属于应用级偏好；无项目时也要挂载，才能响应设置页的手动打开请求。 */}
         {!workspaceShellPath ? (
-          isSettingsTabActive ? (
+          isKnowledgeTabActive ? (
+            <ScopedErrorBoundary
+              scope="knowledge-page"
+              resetKeys={["knowledge-root"]}
+              variant="panel"
+              className="h-full"
+            >
+              <FeatureKnowledgePage />
+            </ScopedErrorBoundary>
+          ) : isSettingsTabActive ? (
             <ScopedErrorBoundary
               scope="settings-page"
               resetKeys={["settings-root"]}
@@ -978,6 +989,7 @@ function RootInner({
             workspaceRemoteSessionId={workspaceShellRemoteSessionId}
             activeWorkspacePath={activeWorkspacePath}
             isSettingsTabActive={isSettingsTabActive}
+            isKnowledgeTabActive={isKnowledgeTabActive}
             handleConnectRemote={handleConnectRemote}
             handleSelectRemoteProject={handleSelectRemoteProject}
             handleCancelRemoteProject={handleCancelRemoteProject}

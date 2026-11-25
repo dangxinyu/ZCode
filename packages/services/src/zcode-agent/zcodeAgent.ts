@@ -62,6 +62,8 @@ import type {
   ZCodeWorkspacePresentation,
   ZCodeWorkspaceGenerateTextResult,
   ZCodeWorkspaceGenerateTextParams,
+  ZCodeWorkspaceEmbedTextParams,
+  ZCodeWorkspaceEmbedTextResult,
   ZCodeWorkspaceHookTrustGrantResult,
 } from "@zcode/shared";
 import type {
@@ -326,6 +328,12 @@ export interface ZCodeAgentGenerateWorkspaceTextParams extends ZCodeAgentWorkspa
 
 export interface ZCodeAgentTestModelConnectivityParams extends ZCodeAgentWorkspaceTarget {
   selection: ZCodeProviderTestModelConnectivityParams["selection"];
+  signal?: AbortSignal;
+}
+
+export interface ZCodeAgentEmbedTextParams extends ZCodeAgentWorkspaceTarget {
+  selection: ZCodeWorkspaceEmbedTextParams["selection"];
+  texts: string[];
   signal?: AbortSignal;
 }
 
@@ -694,6 +702,7 @@ export interface IZCodeAgentService {
   testModelConnectivity(
     params: ZCodeAgentTestModelConnectivityParams,
   ): Promise<ZCodeProviderTestModelConnectivityResult>;
+  embedText(params: ZCodeAgentEmbedTextParams): Promise<ZCodeWorkspaceEmbedTextResult>;
   /**
    * @deprecated：send 主路径已收敛 v4 sendText 命令。仅剩两个消费点——
    * adapter 带附件输入回退（待附件命令面落地后移除）与 zcodeSessionService

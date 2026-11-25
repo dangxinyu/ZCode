@@ -1,4 +1,5 @@
 import { updateUiLocaleInFileConfig, type ConfigResult } from "@zcode/adapters/config";
+import { requestProviderEmbeddings } from "@zcode/adapters/model";
 import type { AgentRuntime } from "@zcode/core";
 import { resolveLocale } from "@zcode/i18n";
 import { normalizeModelSelection, type ModelSelection } from "@zcode/provider";
@@ -53,6 +54,7 @@ type SessionFacade = Pick<
   | "disconnectMcpServer"
   | "generateWorkspaceText"
   | "testModelConnectivity"
+  | "embedText"
   | "forkFromCheckpoint"
   | "getMode"
   | "getModel"
@@ -421,6 +423,24 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
           traceContext: options?.traceContext ?? deps.traceContext,
         },
       );
+    },
+    embedText: async (input, options) => {
+      // embedding 模型名不必是注册 chat 模型：只借 provider 的 baseUrl/鉴权，modelId 直传 /embeddings。
+      const provider = deps.providerRegistry.getProvider(input.selection.providerId);
+      if (!provider) throw new Error(`embedding provider 不存在：${input.selection.providerId}`);
+      const access = provider.config.access;
+      if (access.type === "zhipu-account") {
+        throw new Error("account 鉴权 provider 暂不支持 embedding 通道");
+      }
+      return await requestProviderEmbeddings({
+        baseUrl: provider.config.api.baseUrl,
+        apiKey: access.apiKey,
+        headers: provider.config.api.headers ?? undefined,
+        model: input.selection.modelId,
+        texts: input.texts,
+        network: deps.configResult.config.network,
+        signal: options?.abortSignal ?? AbortSignal.timeout(60_000),
+      });
     },
     setMode: async (mode: CollaborationMode) => {
       const previousMode = deps.runtime.getMode();

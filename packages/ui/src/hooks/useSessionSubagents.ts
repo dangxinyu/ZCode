@@ -8,6 +8,7 @@ const MAX_PAGE_SIZE = 100;
 
 interface SessionSubagentsViewState {
   revision: number;
+  running: ZCodeSessionSubagentsResult["running"];
   ended: ZCodeSessionSubagentsResult["ended"];
   error: string | null;
   loading: boolean;
@@ -16,6 +17,7 @@ interface SessionSubagentsViewState {
 function emptyState(): SessionSubagentsViewState {
   return {
     revision: 0,
+    running: [],
     ended: { total: 0, items: [] },
     error: null,
     loading: false,
@@ -120,6 +122,7 @@ export function useSessionSubagents(options: {
       loadedEndedCountRef.current = Math.max(PAGE_SIZE, items.length);
       setState({
         revision: response.revision,
+        running: response.running,
         ended: {
           total: response.ended.total,
           items,
@@ -164,6 +167,7 @@ export function useSessionSubagents(options: {
       loadedEndedCountRef.current = Math.max(PAGE_SIZE, items.length);
       setState({
         revision: response.revision,
+        running: response.running,
         ended: {
           total: response.ended.total,
           items,
