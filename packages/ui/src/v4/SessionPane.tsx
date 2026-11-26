@@ -44,7 +44,6 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 import { FEATURE_DISTILL_DISPATCH_INSTRUCTION } from "@/feature-knowledge/distillInstruction.js";
-import { FeatureKnowledgeSessionProposalWatcher } from "@/feature-knowledge/FeatureKnowledgeSessionProposalWatcher.js";
 import { useFeatureKnowledgeDistillStore } from "@/store/featureKnowledgeDistillStore.js";
 import { useFeatureAnalysisStore } from "@/store/featureKnowledgeAnalysisStore.js";
 import {
@@ -4787,12 +4786,6 @@ export function SessionPane({
       onDrop={effectiveDropTargetController?.onDrop}
       className="relative flex h-full min-h-0 flex-col"
     >
-      <FeatureKnowledgeSessionProposalWatcher
-        sessionId={sessionId}
-        focused={focused}
-        workspacePath={workspacePath}
-        workspaceIdentity={workspaceIdentity}
-      />
       {effectiveDropTargetController?.active ? (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-accent/55 backdrop-blur-sm">
           <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">

@@ -68,6 +68,34 @@ export async function sendCorrectionToSession(
   });
 }
 const LAND_VERIFY_MS = 6000;
+const SPAWN_VERIFY_MS = 30000;
+
+/** 派发回执校验（防「口头交付」：主 agent 声称派了子智能体但没真调 Agent 工具）。
+ *  发送 ack/主回合结束都不算派发；必须子智能体目录真出现 child 才算成功。 */
+export async function verifySubagentSpawned(
+  services: ReturnType<typeof useServices>,
+  sessionId: string,
+  workspace: { workspacePath: string; workspaceIdentity?: string },
+): Promise<boolean> {
+  const deadline = Date.now() + SPAWN_VERIFY_MS;
+  while (Date.now() < deadline) {
+    try {
+      const sub = await services.zcodeAgentService.listSessionSubagents({
+        workspacePath: workspace.workspacePath,
+        ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
+        sessionId,
+        endedLimit: 1,
+      });
+      if (sub.childSessionIds.length > 0 || sub.running.length > 0 || sub.ended.total > 0) {
+        return true;
+      }
+    } catch {
+      // 读失败继续轮询，超时判未派发
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
+}
 
 /** 发送 ack 不等于执行：坏模型/未就绪 runtime 会静默丢指令；校验真落库或 lastError。 */
 export async function verifyInstructionLanded(

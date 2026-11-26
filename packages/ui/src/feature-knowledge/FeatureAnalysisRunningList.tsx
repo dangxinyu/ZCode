@@ -2,13 +2,17 @@
 // running 态进「分析中」，跑完进「分析完成」（spec: feature-knowledge.md，用户确认 2026-11-25）。
 import { useEffect } from "react";
 import { Badge } from "@/components/ui/badge.js";
+import { toast } from "@/components/ui/toast.js";
 import { useFeatureKnowledge } from "@/hooks/useFeatureKnowledge.js";
+import { useServices } from "@/hooks/useServices.js";
 import { useSessionSubagents } from "@/hooks/useSessionSubagents.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   useFeatureAnalysisStore,
   type FeatureAnalysisEntry,
 } from "@/store/featureKnowledgeAnalysisStore.js";
+import { useFeatureDocAnalysisDialogStore } from "@/store/featureKnowledgeDocAnalysisDialogStore.js";
+import { dispatchDocThemes } from "./dispatchDocThemes.js";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -23,7 +27,9 @@ function AnalysisRow({
 }) {
   const { intl } = useZCodeIntl();
   const dismiss = useFeatureAnalysisStore((state) => state.dismiss);
-  const { proposals } = useFeatureKnowledge();
+  const services = useServices();
+  const kb = useFeatureKnowledge();
+  const { proposals } = kb;
   const { running, ended, refresh } = useSessionSubagents({
     sessionId: entry.sessionId,
     workspacePath: entry.workspacePath,
@@ -53,9 +59,11 @@ function AnalysisRow({
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{entry.label}</span>
           <Badge variant={active ? "default" : "secondary"} className="h-4 px-1.5 text-ui-xs">
-            {active
-              ? intl.formatMessage({ id: "knowledge.analyzingRunning" }, { count: running.length })
-              : intl.formatMessage({ id: "knowledge.analyzingDone" })}
+            {entry.status === "waiting"
+              ? intl.formatMessage({ id: "knowledge.analyzingWaiting" })
+              : active
+                ? intl.formatMessage({ id: "knowledge.analyzingRunning" }, { count: running.length })
+                : intl.formatMessage({ id: "knowledge.analyzingDone" })}
           </Badge>
         </span>
         <span className="mt-0.5 block truncate text-ui-xs text-foreground-subtle">
@@ -98,6 +106,42 @@ function AnalysisRow({
       >
         {intl.formatMessage({ id: "knowledge.analyzingDismiss" })}
       </button>
+      {entry.status === "waiting" ? (
+        <button
+          type="button"
+          onClick={() => {
+            void (async () => {
+              const scout = useFeatureDocAnalysisDialogStore.getState().scout;
+              if (!scout || scout.sessionId !== entry.sessionId) return;
+              const plan = await kb.readDocThemePlan(scout.planPath);
+              if (!plan || plan.themes.length === 0) {
+                toast(intl.formatMessage({ id: "knowledge.analyzeThemesNone" }), {
+                  variant: "warning",
+                });
+                return;
+              }
+              try {
+                await dispatchDocThemes(services, scout, plan.themes);
+                useFeatureDocAnalysisDialogStore.getState().reset();
+                toast(
+                  intl.formatMessage(
+                    { id: "knowledge.analyzeAutoDispatched" },
+                    { count: plan.themes.length },
+                  ),
+                  { variant: "info" },
+                );
+              } catch {
+                toast(intl.formatMessage({ id: "knowledge.analyzeAutoDispatchFailed" }), {
+                  variant: "warning",
+                });
+              }
+            })();
+          }}
+          className="mt-1 ml-2 text-ui-xs text-foreground underline hover:text-foreground"
+        >
+          {intl.formatMessage({ id: "knowledge.analyzingContinue" })}
+        </button>
+      ) : null}
     </li>
   );
 }

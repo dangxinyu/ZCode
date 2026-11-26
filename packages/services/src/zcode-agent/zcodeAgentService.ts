@@ -2872,6 +2872,7 @@ export function createZCodeAgentService(
                 proposedDomain: params.proposedDomain,
                 proposedAnchors: params.proposedAnchors,
                 proposedRelations: params.proposedRelations,
+                proposedParentName: params.proposedParentName,
                 docMd: params.docMd,
                 changeSummary: params.changeSummary,
                 source: {

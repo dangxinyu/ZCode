@@ -86,6 +86,8 @@ export interface FeatureProposal {
   proposedDomain: string;
   proposedAnchors: FeatureAnchor[];
   proposedRelations: FeatureRelationInput[];
+  /** 功能分类父按名指定（同批新建父尚未提交、无 id 时用）；提交时按名找父，缺则建骨架。 */
+  proposedParentName: string;
   docMd: string;
   changeSummary: string;
   source: ProposalSource;
@@ -101,6 +103,7 @@ export interface ProposeInput {
   proposedDomain?: string;
   proposedAnchors?: FeatureAnchor[];
   proposedRelations?: FeatureRelationInput[];
+  proposedParentName?: string;
   docMd: string;
   changeSummary?: string;
   source?: ProposalSource;

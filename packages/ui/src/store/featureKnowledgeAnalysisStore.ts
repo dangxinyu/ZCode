@@ -3,7 +3,8 @@
 // 登记经 sessionStorage 跨重载保留；live 状态由列表轮询刷新；提案事实以 host 库为准。
 import { create } from "zustand";
 
-export type FeatureAnalysisStatus = "unknown" | "running" | "done";
+// waiting = 第一阶段（侦察/分类）完成、第二阶段（主题派发）尚未开始；留在「分析中」，不算分析完成。
+export type FeatureAnalysisStatus = "unknown" | "running" | "waiting" | "done";
 
 export interface FeatureAnalysisEntry {
   sessionId: string;

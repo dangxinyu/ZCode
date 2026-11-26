@@ -98,3 +98,104 @@ test("part_of 层级：migration 0003 允许 part_of，parentFeatureId 投影到
     repo.close();
   }
 });
+test("parentName：同批新父无 id 时按名建骨架挂 part_of；同名复用不重复建父", async () => {
+  const repo = new FeatureKnowledgeRepo(":memory:");
+  try {
+    const childA = await repo.commitProposal(
+      (
+        await repo.propose({
+          proposedName: "组合促销架构",
+          proposedDomain: "供应链",
+          proposedParentName: "组合促销",
+          docMd: "## 业务规则\n子A\n",
+        })
+      ).id,
+    );
+    assert.ok(childA.parentFeatureId, "子A 应挂上按名新建的分类父");
+    const parent = repo.getFeature(childA.parentFeatureId!);
+    assert.equal(parent?.name, "组合促销");
+    assert.equal(parent?.domain, "供应链");
+
+    const childB = await repo.commitProposal(
+      (
+        await repo.propose({
+          proposedName: "组合促销互斥",
+          proposedDomain: "供应链",
+          proposedParentName: "组合促销",
+          docMd: "## 业务规则\n子B\n",
+        })
+      ).id,
+    );
+    assert.equal(childB.parentFeatureId, childA.parentFeatureId, "同名父应复用而非重复建");
+    const categories = repo
+      .listFeatures()
+      .filter((f) => f.name === "组合促销");
+    assert.equal(categories.length, 1);
+  } finally {
+    repo.close();
+  }
+});
+
+test("deleteFeature：末级删除清掉投影/账本/关系/FTS，检索不再命中", async () => {
+  const repo = new FeatureKnowledgeRepo(":memory:");
+  try {
+    const feature = await repo.commitProposal(
+      (
+        await repo.propose({
+          proposedName: "库存成本核算",
+          docMd: "## 业务规则\n存货计价口径\n",
+          proposedRelations: [],
+        })
+      ).id,
+    );
+    // 再提交一版，验证版本账本一并删除（FTS 只认当前版，旧词在 v2 后本就不可检索）。
+    assert.ok(repo.searchFeatures("存货计价").length > 0);
+    await repo.commitProposal(
+      (await repo.propose({ featureId: feature.id, docMd: "## 业务规则\n新口径\n" })).id,
+    );
+    assert.ok(repo.searchFeatures("新口径").length > 0);
+    await repo.deleteFeature(feature.id);
+    assert.equal(repo.getFeature(feature.id), null);
+    assert.deepEqual(repo.getVersionHistory(feature.id), []);
+    assert.deepEqual(repo.listRelations(feature.id), []);
+    assert.equal(repo.listFeatures().length, 0);
+    assert.equal(repo.searchFeatures("存货计价").length, 0);
+    assert.equal(repo.searchFeatures("新口径").length, 0);
+  } finally {
+    repo.close();
+  }
+});
+
+test("deleteFeature：有子文档的父拒绝删除；不存在报 featureNotFound", async () => {
+  const repo = new FeatureKnowledgeRepo(":memory:");
+  try {
+    const parent = await repo.commitProposal(
+      (await repo.propose({ proposedName: "直运分类", docMd: "## 业务规则\n父\n" })).id,
+    );
+    const child = await repo.commitProposal(
+      (
+        await repo.propose({
+          proposedName: "直运结算",
+          docMd: "## 业务规则\n子\n",
+          proposedRelations: [{ toId: parent.id, kind: "part_of" }],
+        })
+      ).id,
+    );
+    await assert.rejects(
+      () => repo.deleteFeature(parent.id),
+      (error: { code?: string }) => error.code === "kb_invalid_input",
+    );
+    assert.ok(repo.getFeature(parent.id), "拒绝后父与子均保持原状");
+    assert.ok(repo.getFeature(child.id));
+    // 先删子再删父可行。
+    await repo.deleteFeature(child.id);
+    await repo.deleteFeature(parent.id);
+    assert.equal(repo.listFeatures().length, 0);
+    await assert.rejects(
+      () => repo.deleteFeature(child.id),
+      (error: { code?: string }) => error.code === "kb_feature_not_found",
+    );
+  } finally {
+    repo.close();
+  }
+});

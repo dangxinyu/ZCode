@@ -86,6 +86,12 @@ const FEATURE_RELATIONS_PART_OF_SQL = `
   CREATE INDEX IF NOT EXISTS idx_feature_relations_to ON feature_relations(to_id);
 `;
 
+// 0004：提案可按名指定功能分类父（proposed_parent_name）。同批新建父尚未提交、无 id，
+// 子提案无法用 relations.toId 挂父；提交时按名找父、缺则建骨架再挂 part_of（三层归属落地）。
+const FEATURE_PROPOSALS_PARENT_NAME_SQL = `
+  ALTER TABLE feature_proposals ADD COLUMN proposed_parent_name TEXT NOT NULL DEFAULT '';
+`;
+
 const definitions = [
   {
     id: "0001_feature_knowledge_init",
@@ -101,6 +107,11 @@ const definitions = [
     id: "0003_feature_relations_part_of",
     checksumInput: [FEATURE_RELATIONS_PART_OF_SQL],
     sql: FEATURE_RELATIONS_PART_OF_SQL,
+  },
+  {
+    id: "0004_feature_proposals_parent_name",
+    checksumInput: [FEATURE_PROPOSALS_PARENT_NAME_SQL],
+    sql: FEATURE_PROPOSALS_PARENT_NAME_SQL,
   },
 ] as const;
 

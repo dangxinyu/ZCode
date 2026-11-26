@@ -18,12 +18,18 @@ import {
   parsePromptPptxElementReferences,
   type PptxElementReference,
 } from "@/lib/pptxElementReference.js";
+import {
+  buildPromptWithFeatureCorrection,
+  parsePromptFeatureCorrection,
+  type FeatureCorrectionComposerAttachment,
+} from "@/lib/featureCorrectionContext.js";
 
 interface ComposerPromptContexts {
   codeComments: readonly CodeCommentComposerAttachment[];
   conversationSelections: readonly ConversationSelectionDisplayReference[];
   webElements: readonly WebElementContextComposerAttachment[];
   pptxElements: readonly PptxElementReference[];
+  featureCorrections: readonly FeatureCorrectionComposerAttachment[];
 }
 
 export function countComposerPromptContexts(contexts: {
@@ -31,17 +37,19 @@ export function countComposerPromptContexts(contexts: {
   conversationSelections: readonly unknown[];
   webElements: readonly unknown[];
   pptxElements: readonly unknown[];
+  featureCorrections: readonly unknown[];
 }) {
   return (
     contexts.codeComments.length +
     contexts.conversationSelections.length +
     contexts.webElements.length +
-    contexts.pptxElements.length
+    contexts.pptxElements.length +
+    contexts.featureCorrections.length
   );
 }
 
 /**
- * 四类 context parser 都只识别 prompt 尾块，因此序列化顺序和解析顺序必须严格相反。
+ * 五类 context parser 都只识别 prompt 尾块，因此序列化顺序和解析顺序必须严格相反。
  */
 export function serializeComposerPromptContexts(
   text: string,
@@ -53,7 +61,8 @@ export function serializeComposerPromptContexts(
   );
   const withCodeComments = buildPromptWithCodeComments(withSelections, contexts.codeComments);
   const withWebElements = buildPromptWithWebElementContexts(withCodeComments, contexts.webElements);
-  return buildPromptWithPptxElementReferences(withWebElements, contexts.pptxElements);
+  const withPptxElements = buildPromptWithPptxElementReferences(withWebElements, contexts.pptxElements);
+  return buildPromptWithFeatureCorrection(withPptxElements, contexts.featureCorrections);
 }
 
 export function parseComposerPromptContexts(
@@ -65,8 +74,10 @@ export function parseComposerPromptContexts(
   conversationSelections: readonly ConversationSelectionDisplayReference[];
   webElements: WebElementContextComposerAttachment[];
   pptxElements: PptxElementReference[];
+  featureCorrections: FeatureCorrectionComposerAttachment[];
 } {
-  const pptx = parsePromptPptxElementReferences(content);
+  const correction = parsePromptFeatureCorrection(content);
+  const pptx = parsePromptPptxElementReferences(correction.visibleContent);
   const web = parsePromptWebElementContexts(pptx.visibleContent, workspace);
   const code = parsePromptCodeComments(web.visibleContent, workspace);
   const selections = parsePromptConversationSelections(code.visibleContent);
@@ -76,5 +87,6 @@ export function parseComposerPromptContexts(
     conversationSelections: selections.references,
     webElements: web.webElementContexts,
     pptxElements: pptx.pptxElementReferences,
+    featureCorrections: correction.featureCorrections,
   };
 }

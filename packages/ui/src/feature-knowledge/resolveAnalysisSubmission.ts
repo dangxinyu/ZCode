@@ -7,6 +7,10 @@ import type { ComposerSubmissionConfig } from "@/v4/composer/composerSubmissionC
 import { logger } from "@/logger.js";
 import { readV4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
 
+// 知识库工作会话（文档分析 / 订正）的默认模型；account provider 强制 reasoningLevel，
+// 高档变体个人套餐无 entitlement，统一 low 档（2026-11-25 日志+数据证实）。
+export const FEATURE_ANALYSIS_DEFAULT_MODEL_ID = "GLM-5.4";
+
 export async function resolveAnalysisSubmission(
   services: ReturnType<typeof useServices>,
   tabStore: ReturnType<typeof useTabStoreApi>,

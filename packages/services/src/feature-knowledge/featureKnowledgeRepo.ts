@@ -8,6 +8,8 @@ import { mergeFeatureDocSections } from "@zcode/shared";
 import { getFeatureKnowledgeDatabasePath } from "#src/paths.js";
 import { runFeatureKnowledgeMigrations } from "./schema.js";
 import { insertProposal } from "./propose.js";
+import { deleteFeatureSync } from "./deletion.js";
+import { insertCategorySkeletonSync, resolveCategoryParentSync } from "./category.js";
 import { encodeVector } from "./embeddings.js";
 import {
   getFeature,
@@ -248,6 +250,21 @@ export class FeatureKnowledgeRepo {
         ).run(featureId, relation.toId, relation.kind, now);
       }
 
+      // 按名挂功能分类父（同批新建父无 id 时的三层归属落地）；替换旧 part_of，保证单父。
+      if (proposal.proposedParentName.trim()) {
+        const parentId = resolveCategoryParentSync(
+          db,
+          proposal.proposedParentName,
+          domain,
+          featureId,
+          now,
+        );
+        db.prepare("DELETE FROM feature_relations WHERE from_id=? AND kind='part_of'").run(featureId);
+        db.prepare(
+          "INSERT OR IGNORE INTO feature_relations (from_id, to_id, kind, created_at) VALUES(?,?, 'part_of', ?)",
+        ).run(featureId, parentId, now);
+      }
+
       db.prepare("DELETE FROM features_fts WHERE feature_id=?").run(featureId);
       db.prepare(
         "INSERT INTO features_fts (feature_id, name, aliases, doc_md) VALUES(?,?,?,?)",
@@ -326,25 +343,15 @@ export class FeatureKnowledgeRepo {
       if (!trimmed) {
         throw new FeatureKnowledgeError(KB_ERROR_CODES.invalidInput, "名称不能为空");
       }
-      const id = randomUUID();
-      const now = Date.now();
-      const docMd = `## 需求背景\n\n## 业务规则\n\n## 代码位置\n\n## 关键修改决策（含 why）\n\n## 坑与注意\n\n## 关联功能点\n`;
-      db.prepare(
-        `INSERT INTO features (id, name, aliases_json, domain, anchors_json, doc_md, current_version, created_at, updated_at)
-         VALUES(?,?,?,?,?,?,1,?,?)`,
-      ).run(id, trimmed, "[]", domain.trim(), "[]", docMd, now, now);
-      db.prepare(
-        `INSERT INTO feature_versions (feature_id, version, doc_md, change_summary, source_json, created_at)
-         VALUES(?,1,?,?,?,?)`,
-      ).run(id, docMd, "新建大分类父文档骨架", JSON.stringify({ origin: "session" }), now);
-      db.prepare("INSERT INTO features_fts (feature_id, name, aliases, doc_md) VALUES(?,?,?,?)").run(
-        id,
-        trimmed,
-        "",
-        docMd,
-      );
+      const id = insertCategorySkeletonSync(db, trimmed, domain.trim(), Date.now());
       return getFeature(db, id)!;
     });
+  }
+
+  /** 末级功能点删除（UI 人闸 + 二次确认）；库级事务，拒绝删有子文档的父。 */
+  async deleteFeature(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.enqueueWrite(() => deleteFeatureSync(this.getDatabase(), id));
   }
 
   async replaceEmbeddings(

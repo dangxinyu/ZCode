@@ -75,6 +75,7 @@ export function createProtocolFeatureKnowledgePort(
           ...(input.domain !== undefined ? { proposedDomain: input.domain } : {}),
           ...(input.anchors !== undefined ? { proposedAnchors: input.anchors } : {}),
           ...(input.relations !== undefined ? { proposedRelations: input.relations } : {}),
+          ...(input.parentName !== undefined ? { proposedParentName: input.parentName } : {}),
           docMd: input.docMd,
           ...(input.changeSummary !== undefined ? { changeSummary: input.changeSummary } : {}),
         }),

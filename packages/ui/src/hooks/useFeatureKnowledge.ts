@@ -51,6 +51,8 @@ export interface UseFeatureKnowledgeResult {
   scanFeatureDocs: (paths: readonly string[]) => Promise<FeatureDocScanResult | null>;
   readDocThemePlan: (path: string) => Promise<FeatureDocThemePlan | null>;
   rejectProposal: (id: string) => Promise<FeatureKnowledgeMutationResult>;
+  /** 末级功能点删除（UI 二次确认后调用）；host 拒绝删有子文档的父。 */
+  deleteFeature: (id: string) => Promise<FeatureKnowledgeMutationResult>;
 }
 
 export function useFeatureKnowledge(): UseFeatureKnowledgeResult {
@@ -221,6 +223,23 @@ export function useFeatureKnowledge(): UseFeatureKnowledgeResult {
     [service, refresh],
   );
 
+  const deleteFeature = useCallback(
+    async (id: string): Promise<FeatureKnowledgeMutationResult> => {
+      if (!service) {
+        return { ok: false, code: KB_ERROR_CODES.notReady, message: "feature knowledge unavailable" };
+      }
+      try {
+        await service.deleteFeature(id);
+        refresh();
+        return { ok: true };
+      } catch (error) {
+        logger.warn("[feature-knowledge] deleteFeature failed", { error });
+        return toMutationError(error);
+      }
+    },
+    [service, refresh],
+  );
+
   const scanFeatureDocs = useCallback(
     async (paths: readonly string[]): Promise<FeatureDocScanResult | null> => {
       if (!service) return null;
@@ -263,6 +282,7 @@ export function useFeatureKnowledge(): UseFeatureKnowledgeResult {
     propose,
     commitProposal,
     rejectProposal,
+    deleteFeature,
     scanFeatureDocs,
     readDocThemePlan,
   };

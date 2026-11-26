@@ -197,6 +197,10 @@ export function createFeatureKnowledgeService(options: {
       void reindexFeature(feature);
       return feature;
     },
+    async deleteFeature(id: string): Promise<void> {
+      await repo.deleteFeature(id);
+      bump("deleted", id, undefined);
+    },
     async ensureDocAnalysisWorkspace(): Promise<{ workspacePath: string }> {
       const workspacePath = join(homedir(), "zcode-kb");
       await mkdir(workspacePath, { recursive: true });

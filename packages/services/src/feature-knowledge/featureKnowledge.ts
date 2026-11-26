@@ -19,7 +19,7 @@ import type {
 
 export interface FeatureKnowledgeChanged {
   revision: number;
-  reason: "proposed" | "committed" | "rejected";
+  reason: "proposed" | "committed" | "rejected" | "deleted";
   featureId?: string;
   proposalId?: string;
 }
@@ -67,6 +67,8 @@ export interface IFeatureKnowledgeService {
   setFeatureParent(featureId: string, parentFeatureId: string | null): Promise<Feature>;
   /** 新建大分类父文档骨架（空活文档固定结构），供挂子主题。 */
   createFeatureCategory(name: string, domain: string): Promise<Feature>;
+  /** 末级功能点删除（UI 人闸 + 二次确认，不进 CLI 协议）；有子文档的父拒绝删除。 */
+  deleteFeature(id: string): Promise<void>;
   readFeature(id: string): Promise<FeatureDetail | null>;
   listProposals(status?: ProposalStatus): Promise<FeatureProposal[]>;
   getProposal(id: string): Promise<FeatureProposal | null>;

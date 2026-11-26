@@ -3962,6 +3962,7 @@ export const zcodeFeatureSummaryProtocolSchema = z
     anchors: z.array(zcodeFeatureAnchorProtocolSchema),
     currentVersion: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    parentFeatureId: nonEmptyString.nullable().optional(),
   })
   .strict();
 export const zcodeFeatureProtocolSchema = zcodeFeatureSummaryProtocolSchema
@@ -4036,6 +4037,7 @@ export const zcodeFeatureKnowledgeProposeParamsSchema = z
     proposedDomain: z.string().optional(),
     proposedAnchors: z.array(zcodeFeatureAnchorProtocolSchema).optional(),
     proposedRelations: z.array(zcodeFeatureRelationProtocolSchema).optional(),
+    proposedParentName: z.string().optional(),
     docMd: nonEmptyString,
     changeSummary: z.string().optional(),
     traceId: nonEmptyString.optional(),

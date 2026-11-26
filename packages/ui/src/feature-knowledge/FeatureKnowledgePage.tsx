@@ -3,24 +3,29 @@
 // + 活文档阅读 + 版本历史 + 关联跳转 + 待确认提案区。数据经 useFeatureKnowledge（base host）。
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
-import type { FeatureDetail, FeatureProposal, FeatureSummary, SearchHit } from "@zcode/services";
-import { Badge } from "@/components/ui/badge.js";
+import type { FeatureDetail, FeatureProposal, FeatureSummary } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { useFeatureKnowledge } from "@/hooks/useFeatureKnowledge.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { KNOWLEDGE_TAB_ID } from "@/store/tabStore.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { useTheme } from "@/useTheme.js";
 import { FeatureKnowledgeDetail } from "./FeatureKnowledgeDetail.js";
 import { FeatureAnalysisRunningList } from "./FeatureAnalysisRunningList.js";
 import { useFeatureAnalysisStore } from "@/store/featureKnowledgeAnalysisStore.js";
 import { FeatureKnowledgeGroupedList } from "./FeatureKnowledgeGroupedList.js";
+import { HitList, ProposalList, SegmentButton } from "./FeatureKnowledgeLists.js";
 import { useFeatureAnalysisStatusPolling } from "./useFeatureAnalysisStatusPolling.js";
 import { useFeatureDocAnalysisDialogStore } from "@/store/featureKnowledgeDocAnalysisDialogStore.js";
 import { FeatureKnowledgeEmbeddingSetting } from "./FeatureKnowledgeEmbeddingSetting.js";
 import { FeatureProposalConfirmDialog } from "./FeatureProposalConfirmDialog.js";
+import { FeatureDeleteConfirmDialog } from "./FeatureDeleteConfirmDialog.js";
+import { startFeatureCorrection } from "./startFeatureCorrection.js";
+import { useBatchConfirmProposals } from "./useBatchConfirmProposals.js";
+import { dispatchDocThemes } from "./dispatchDocThemes.js";
+import { toast } from "@/components/ui/toast.js";
 
 type Segment = "features" | "proposals" | "analysis" | "analysisDone";
 
@@ -48,22 +53,39 @@ export function FeatureKnowledgePage({
   const { theme } = useTheme();
   const closeTab = useTabStore((state) => state.closeTab);
   const kb = useFeatureKnowledge();
+  const batch = useBatchConfirmProposals(kb);
   const services = useServices();
+  const tabStore = useTabStoreApi();
   const analysisEntries = useFeatureAnalysisStore((state) => state.entries);
   useFeatureAnalysisStatusPolling();
   const scout = useFeatureDocAnalysisDialogStore((state) => state.scout);
-  const themePlan = useFeatureDocAnalysisDialogStore((state) => state.plan);
-  // 侦察计划落盘后重开弹窗到主题勾选步（等待期间弹窗关闭，用户落在会话里看侦察）。
+  // 全自动（除提案确认）：侦察计划落盘即自动派发全部主题；失败/未派发留 waiting，行内手动派发兜底。
   useEffect(() => {
-    if (!scout || themePlan) return;
+    if (!scout) return;
     let cancelled = false;
+    let failNotified = false;
     const tick = async () => {
       const next = await kb.readDocThemePlan(scout.planPath);
-      if (cancelled || !next) return;
-      const store = useFeatureDocAnalysisDialogStore.getState();
-      store.setPlan(next);
-      store.setStep("themes");
-      store.setOpen(true);
+      if (cancelled || !next || next.themes.length === 0) return;
+      try {
+        await dispatchDocThemes(services, scout, next.themes);
+        useFeatureDocAnalysisDialogStore.getState().reset();
+        toast(
+          intl.formatMessage(
+            { id: "knowledge.analyzeAutoDispatched" },
+            { count: next.themes.length },
+          ),
+          { variant: "info" },
+        );
+      } catch {
+        // 自动派发失败：不 reset，entry 留 waiting，「分析中」行手动派发兜底；只提示一次防刷屏。
+        if (!failNotified) {
+          failNotified = true;
+          toast(intl.formatMessage({ id: "knowledge.analyzeAutoDispatchFailed" }), {
+            variant: "warning",
+          });
+        }
+      }
     };
     void tick();
     const timer = setInterval(() => void tick(), 3000);
@@ -71,7 +93,7 @@ export function FeatureKnowledgePage({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [scout, themePlan, kb]);
+  }, [scout, kb, services, intl]);
 
   const [segment, setSegment] = useState<Segment>("features");
   const [query, setQuery] = useState("");
@@ -79,6 +101,8 @@ export function FeatureKnowledgePage({
   const [detail, setDetail] = useState<FeatureDetail | null>(null);
   const [confirmProposal, setConfirmProposal] = useState<FeatureProposal | null>(null);
   const [embeddingOpen, setEmbeddingOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<FeatureSummary | null>(null);
+  const [correcting, setCorrecting] = useState(false);
 
 
   const featureNameById = useMemo(() => {
@@ -106,6 +130,59 @@ export function FeatureKnowledgePage({
       await kb.search(query);
     },
     [kb, query],
+  );
+
+  // 末级右键删除：二次确认后走 host 事务删除（hook 内部已 refresh）；正打开的被删文档清空详情。
+  const confirmDelete = useCallback(
+    async (id: string): Promise<boolean> => {
+      const target = kb.features.find((f) => f.id === id);
+      const result = await kb.deleteFeature(id);
+      if (!result.ok) {
+        toast(`${intl.formatMessage({ id: "knowledge.deleteFailed" })}: ${result.message}`, {
+          variant: "warning",
+        });
+        return false;
+      }
+      if (selectedId === id) {
+        setSelectedId(null);
+        setDetail(null);
+      }
+      toast(
+        intl.formatMessage({ id: "knowledge.deleteDone" }, { name: target?.name ?? id }),
+        { variant: "info" },
+      );
+      return true;
+    },
+    [kb, intl, selectedId],
+  );
+
+  // 末级右键订正：新建会话 + 隐藏上下文（不自动发送）；correcting 防连点重复建会话。
+  const correctFeature = useCallback(
+    async (feature: FeatureSummary) => {
+      if (correcting) return;
+      setCorrecting(true);
+      try {
+        const result = await startFeatureCorrection(feature, {
+          services,
+          tabStore,
+          readFeature: kb.readFeature,
+          onJumpToSession,
+        });
+        if (!result.ok) {
+          toast(intl.formatMessage({ id: result.messageKey }), { variant: "warning" });
+        } else {
+          toast(
+            intl.formatMessage({
+              id: result.jumped ? "knowledge.correctStarted" : "knowledge.correctNoJump",
+            }),
+            { variant: "info" },
+          );
+        }
+      } finally {
+        setCorrecting(false);
+      }
+    },
+    [correcting, services, tabStore, kb.readFeature, onJumpToSession, intl],
   );
 
   const pendingProposals = kb.proposals.filter((proposal) => proposal.status === "pending");
@@ -199,11 +276,27 @@ export function FeatureKnowledgePage({
                   {intl.formatMessage({ id: "knowledge.loading" })}
                 </p>
               ) : segment === "proposals" ? (
-                <ProposalList
-                  proposals={pendingProposals}
-                  featureNameById={featureNameById}
-                  onOpen={setConfirmProposal}
-                />
+                <div className="space-y-2">
+                  <div className="flex justify-end px-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={batch.busy || pendingProposals.length === 0}
+                      onClick={() => void batch.confirmAll()}
+                    >
+                      {intl.formatMessage(
+                        { id: "knowledge.batchConfirm" },
+                        { count: pendingProposals.length },
+                      )}
+                    </Button>
+                  </div>
+                  <ProposalList
+                    proposals={pendingProposals}
+                    featureNameById={featureNameById}
+                    onOpen={setConfirmProposal}
+                  />
+                </div>
               ) : segment === "analysis" || segment === "analysisDone" ? (
                 <FeatureAnalysisRunningList
                   mode={segment === "analysisDone" ? "done" : "running"}
@@ -226,6 +319,8 @@ export function FeatureKnowledgePage({
                   groups={groupByDomain(kb.features)}
                   selectedId={selectedId}
                   onOpen={openFeature}
+                  onDelete={setDeleteTarget}
+                  onCorrect={(feature) => void correctFeature(feature)}
                 />
               )}
             </div>
@@ -236,7 +331,12 @@ export function FeatureKnowledgePage({
                   detail={detail}
                   parent={kb.features.find((f) => f.id === detail.feature.parentFeatureId) ?? null}
                   children={kb.features.filter((f) => f.parentFeatureId === detail.feature.id)}
-                  categoryOptions={kb.features.filter((f) => f.id !== detail.feature.id)}
+                  categoryOptions={kb.features.filter(
+                    (f) =>
+                      f.id !== detail.feature.id &&
+                      // 父候选只列分类（有子文档的父节点），不列叶子知识文件（用户确认 2026-11-26）。
+                      kb.features.some((c) => c.parentFeatureId === f.id),
+                  )}
                   onSetParent={(featureId, parentFeatureId) => {
                     void services.featureKnowledgeService
                       ?.setFeatureParent(featureId, parentFeatureId)
@@ -280,124 +380,15 @@ export function FeatureKnowledgePage({
         onReject={kb.rejectProposal}
         onClose={() => setConfirmProposal(null)}
       />
+      <FeatureDeleteConfirmDialog
+        feature={deleteTarget}
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
       <FeatureKnowledgeEmbeddingSetting
         open={embeddingOpen}
         onClose={() => setEmbeddingOpen(false)}
       />
     </div>
-  );
-}
-
-function SegmentButton({
-  active,
-  label,
-  count,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  count?: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-ui-sm ${
-        // 本仓库主题没有 --color-muted* token，bg-muted/text-muted-foreground 是死类，
-        // 激活态曾与未激活完全同色；改用真实 token 的底色+字色双重色差标示当前 tab。
-        active
-          ? "bg-secondary font-medium text-foreground"
-          : "text-foreground-subtle hover:bg-hover hover:text-foreground"
-      }`}
-    >
-      {label}
-      {count != null && count > 0 ? (
-        <Badge variant="destructive" className="h-4 px-1.5 text-ui-xs">
-          {count}
-        </Badge>
-      ) : null}
-    </button>
-  );
-}
-
-
-
-function HitList({ hits, onOpen }: { hits: SearchHit[]; onOpen: (id: string) => void }) {
-  const { intl } = useZCodeIntl();
-  if (hits.length === 0) {
-    return (
-      <p className="text-ui-sm text-muted-foreground">
-        {intl.formatMessage({ id: "knowledge.noResults" })}
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-1">
-      {hits.map((hit) => (
-        <li key={hit.feature.id}>
-          <button
-            type="button"
-            onClick={() => onOpen(hit.feature.id)}
-            className="w-full rounded-md px-2 py-1.5 text-left hover:bg-surface-hover"
-          >
-            <span className="block text-ui-sm text-foreground">{hit.feature.name}</span>
-            <span className="mt-0.5 flex flex-wrap gap-1">
-              {hit.layers.map((layer) => (
-                <Badge key={layer} variant="outline" className="h-4 px-1.5 text-ui-xs">
-                  {intl.formatMessage({ id: `knowledge.layer.${layer}` })}
-                </Badge>
-              ))}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function ProposalList({
-  proposals,
-  featureNameById,
-  onOpen,
-}: {
-  proposals: FeatureProposal[];
-  featureNameById: Record<string, string>;
-  onOpen: (proposal: FeatureProposal) => void;
-}) {
-  const { intl } = useZCodeIntl();
-  if (proposals.length === 0) {
-    return (
-      <p className="text-ui-sm text-muted-foreground">
-        {intl.formatMessage({ id: "knowledge.proposalsEmpty" })}
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-1">
-      {proposals.map((proposal) => {
-        const name =
-          (proposal.featureId ? featureNameById[proposal.featureId] : null) ?? proposal.proposedName;
-        return (
-          <li key={proposal.id}>
-            <button
-              type="button"
-              onClick={() => onOpen(proposal)}
-              className="w-full rounded-md border border-border px-2 py-1.5 text-left hover:bg-surface-hover"
-            >
-              <span className="block text-ui-sm text-foreground">{name}</span>
-              <span className="mt-0.5 block text-ui-xs text-muted-foreground">
-                {proposal.changeSummary || intl.formatMessage({ id: "knowledge.openProposal" })}
-              </span>
-              {proposal.source.origin === "mcp" ? (
-                <Badge variant="secondary" className="mt-1 h-4 px-1.5 text-ui-xs">
-                  {intl.formatMessage({ id: "knowledge.sourceMcp" })}
-                </Badge>
-              ) : null}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

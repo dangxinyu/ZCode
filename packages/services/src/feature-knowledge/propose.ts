@@ -35,9 +35,9 @@ export function insertProposal(db: DatabaseSync, input: ProposeInput): FeaturePr
   db.prepare(
     `INSERT INTO feature_proposals
       (id, feature_id, base_version, proposed_name, proposed_aliases_json, proposed_domain,
-       proposed_anchors_json, proposed_relations_json, doc_md, change_summary, source_json,
+       proposed_anchors_json, proposed_relations_json, proposed_parent_name, doc_md, change_summary, source_json,
        status, created_at, resolved_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending',?,NULL)`,
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,NULL)`,
   ).run(
     id,
     input.featureId ?? null,
@@ -47,6 +47,7 @@ export function insertProposal(db: DatabaseSync, input: ProposeInput): FeaturePr
     input.proposedDomain?.trim() ?? "",
     JSON.stringify(input.proposedAnchors ?? []),
     JSON.stringify(input.proposedRelations ?? []),
+    input.proposedParentName?.trim() ?? "",
     docMd,
     input.changeSummary?.trim() ?? "",
     JSON.stringify(input.source ?? {}),

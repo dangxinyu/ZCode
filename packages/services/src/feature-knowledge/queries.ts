@@ -119,6 +119,7 @@ interface ProposalRow {
   proposed_domain: string;
   proposed_anchors_json: string;
   proposed_relations_json: string;
+  proposed_parent_name: string;
   doc_md: string;
   change_summary: string;
   source_json: string;
@@ -139,6 +140,7 @@ export function toProposal(row: ProposalRow): FeatureProposal {
     proposedRelations: parseJson<FeatureRelationInput[]>(row.proposed_relations_json, []).filter(
       (relation) => RELATION_KINDS.includes(relation.kind),
     ),
+    proposedParentName: row.proposed_parent_name ?? "",
     docMd: row.doc_md,
     changeSummary: row.change_summary,
     source: parseJson<ProposalSource>(row.source_json, {}),

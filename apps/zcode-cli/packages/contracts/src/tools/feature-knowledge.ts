@@ -118,6 +118,12 @@ export const ProposeFeatureUpdateInputSchema = z
     domain: z.string().optional().describe("Business domain grouping (e.g. 供应链)."),
     anchors: z.array(featureAnchorSchema).optional().describe("Code paths/symbols implementing it."),
     relations: z.array(featureRelationSchema).optional().describe("Links to existing features."),
+    parentName: z
+      .string()
+      .optional()
+      .describe(
+        "Name of the 功能分类 (category) parent this feature belongs under. Use when the parent is new in this same batch (not yet committed, so it has no id for relations): the host resolves it by name in the same domain and creates a skeleton category if missing, then links part_of. Every feature must sit under a category parent (three layers: domain → category → doc).",
+      ),
     docMd: nonEmptyString.describe(
       "The COMPLETE new living document after a section-scoped rewrite (merge-on-write, not an appended section). Fixed sections: 需求背景 / 业务规则 / 代码位置 / 关键修改决策(含 why) / 坑与注意 / 关联功能点. Read the old doc first; rewrite only sections relevant to this work (dedupe/compress within them) and keep unrelated sections verbatim (wording and order) so the confirm diff shows only relevant hunks. Fidelity fields (code paths, decision rationale, pitfalls) must NOT be lost. Target ~300 lines.",
     ),

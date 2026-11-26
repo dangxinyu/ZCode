@@ -146,6 +146,7 @@ import {
 } from "@/v4/composer/composerPromptContexts.js";
 import { useCodeCommentContexts } from "@/v4/composer/useCodeCommentContexts.js";
 import { useWebElementContexts } from "@/v4/composer/useWebElementContexts.js";
+import { useFeatureCorrectionContexts } from "@/v4/composer/useFeatureCorrectionContexts.js";
 import { usePptxElementReferences } from "@/v4/composer/usePptxElementReferences.js";
 import { PptxElementReferenceChip } from "@/v4/composer/PptxElementReferenceChip.js";
 import { useOpenPptxElementReference } from "@/v4/composer/useOpenPptxElementReference.js";
@@ -165,6 +166,7 @@ import {
   type V4ComposerConfigPicker,
 } from "@/v4/composer/configPickerState.js";
 import { WebElementContextAttachmentChip } from "@/v4/composer/WebElementContextAttachmentChip.js";
+import { FeatureCorrectionAttachmentChip } from "@/v4/composer/FeatureCorrectionAttachmentChip.js";
 import { ConversationSelectionReferenceChip } from "@/v4/composer/ConversationSelectionReferenceChip.js";
 import type { AttachmentPutFn } from "@/v4/composer/attachmentUpload.js";
 import { useScopedConversationTelemetrySupervisor } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
@@ -737,6 +739,17 @@ function ConversationComposerImpl({
     listenAddToChatEvents: listenAddToChatEvents && !disabled,
     scopeId: draftScopeId,
   });
+  // 订正隐藏上下文：真值在 per-scope store（订正入口跳转前写入），这里只读 + 移除。
+  const {
+    contexts: featureCorrectionContexts,
+    hasContexts: hasFeatureCorrectionContexts,
+    removeContext: removeFeatureCorrectionContext,
+    clearContexts: clearFeatureCorrectionContexts,
+  } = useFeatureCorrectionContexts({
+    workspacePath,
+    workspaceIdentity,
+    scopeId: draftScopeId,
+  });
   const {
     references: pptxElementReferences,
     hasReferences: hasPptxElementReferences,
@@ -911,7 +924,8 @@ function ConversationComposerImpl({
           codeCommentContexts.length > 0 ||
           webElementContexts.length > 0 ||
           pptxElementReferences.length > 0 ||
-          conversationSelectionReferences.length > 0,
+          conversationSelectionReferences.length > 0 ||
+          featureCorrectionContexts.length > 0,
         inputApi: inputApiRef.current,
         request: composerRestoreRequest,
         requestFocus: requestComposerFocus,
@@ -953,6 +967,7 @@ function ConversationComposerImpl({
     updateText,
     webElementContexts.length,
     pptxElementReferences.length,
+    featureCorrectionContexts.length,
     workspaceKey,
   ]);
 
@@ -1131,6 +1146,7 @@ function ConversationComposerImpl({
     hasWebElementContexts ||
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
+    hasFeatureCorrectionContexts ||
     Boolean(pendingShareContext);
   const hasComposerDraftContent =
     text.length > 0 ||
@@ -1139,6 +1155,7 @@ function ConversationComposerImpl({
     hasWebElementContexts ||
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
+    hasFeatureCorrectionContexts ||
     Boolean(pendingShareContext);
   useEffect(() => {
     onDraftStateChange?.({
@@ -1184,6 +1201,8 @@ function ConversationComposerImpl({
       const hasPendingPptxElementReferences = currentPptxElementReferences.length > 0;
       const currentConversationSelections = conversationSelectionReferences;
       const hasPendingConversationSelections = currentConversationSelections.length > 0;
+      const currentFeatureCorrectionContexts = featureCorrectionContexts;
+      const hasPendingFeatureCorrectionContexts = currentFeatureCorrectionContexts.length > 0;
       const submittedShareContext = pendingShareContext;
       // 草稿首发 accepted 后同一 composer 会原地从 __draft__ promotion 到
       // session scope；若成功清理时再读可变 ref，会误清新 scope，并把首条输入残留在
@@ -1199,6 +1218,7 @@ function ConversationComposerImpl({
           !hasPendingWebElementContexts &&
           !hasPendingPptxElementReferences &&
           !hasPendingConversationSelections &&
+          !hasPendingFeatureCorrectionContexts &&
           !submittedShareContext) ||
         pendingRef.current ||
         !submissionReady ||
@@ -1325,7 +1345,7 @@ function ConversationComposerImpl({
           sendAction.fail({ failureStage: "attachment_not_ready" });
           return;
         }
-        // 外部上下文不走协议附件；按 selection -> code comment -> web -> PPTX 的固定尾块顺序
+        // 外部上下文不走协议附件；按 selection -> code comment -> web -> PPTX -> 订正 的固定尾块顺序
         // 序列化，历史 user row 才能按相反顺序无损解析并隐藏内部 prompt block。
         //
         // 分享 handover 不在这里序列化：share URL 块纯粹是 renderer 自产自销（CLI/shared
@@ -1337,6 +1357,7 @@ function ConversationComposerImpl({
           conversationSelections: currentConversationSelections,
           webElements: currentWebElementContexts,
           pptxElements: currentPptxElementReferences,
+          featureCorrections: currentFeatureCorrectionContexts,
         });
         const contextAttachmentCount =
           countComposerPromptContexts({
@@ -1344,6 +1365,7 @@ function ConversationComposerImpl({
             conversationSelections: currentConversationSelections,
             webElements: currentWebElementContexts,
             pptxElements: currentPptxElementReferences,
+            featureCorrections: currentFeatureCorrectionContexts,
           }) + (submittedShareContext ? 1 : 0);
         if (trimmed) {
           promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
@@ -1439,6 +1461,9 @@ function ConversationComposerImpl({
         currentConversationSelections.forEach((reference) =>
           removeConversationSelectionReference(reference.id),
         );
+        currentFeatureCorrectionContexts.forEach((context) =>
+          removeFeatureCorrectionContext(context.id),
+        );
         // 发送成功：清本次提交捕获的 scope 草稿；prompt history 已在真实发送前同步写盘，
         // 避免首发 promote 丢失或误清 promotion 后的新 scope。
         finalizeSubmittedDraft();
@@ -1481,12 +1506,14 @@ function ConversationComposerImpl({
       removeConversationSelectionReference,
       removePptxElementReference,
       removeWebElementContext,
+      removeFeatureCorrectionContext,
       sessionId,
       snapshotDraftOfEditor,
       updateText,
       updateComposerContent,
       webElementContexts,
       pptxElementReferences,
+      featureCorrectionContexts,
       workspaceIdentity,
       workspacePath,
     ],
@@ -1724,7 +1751,8 @@ function ConversationComposerImpl({
       codeCommentContexts.length === 0 &&
       webElementContexts.length === 0 &&
       pptxElementReferences.length === 0 &&
-      conversationSelectionReferences.length === 0
+      conversationSelectionReferences.length === 0 &&
+      featureCorrectionContexts.length === 0
     ) {
       return null;
     }
@@ -1992,7 +2020,8 @@ function ConversationComposerImpl({
         {codeCommentContexts.length > 0 ||
         webElementContexts.length > 0 ||
         pptxElementReferences.length > 0 ||
-        conversationSelectionReferences.length > 0 ? (
+        conversationSelectionReferences.length > 0 ||
+        featureCorrectionContexts.length > 0 ? (
           <div
             className="flex max-w-full flex-wrap items-center gap-2"
             data-composer-context-attachments-row="true"
@@ -2018,6 +2047,11 @@ function ConversationComposerImpl({
               onRemove={removeConversationSelectionReference}
               onRemoveAll={clearConversationSelectionReferences}
             />
+            <FeatureCorrectionAttachmentChip
+              contexts={featureCorrectionContexts}
+              onRemove={removeFeatureCorrectionContext}
+              onRemoveAll={clearFeatureCorrectionContexts}
+            />
           </div>
         ) : null}
       </div>
@@ -2029,6 +2063,7 @@ function ConversationComposerImpl({
     clearConversationSelectionReferences,
     clearWebElementContexts,
     clearPptxElementReferences,
+    clearFeatureCorrectionContexts,
     codeCommentContexts,
     composerAttachments,
     composerMediaPreviewItems,
@@ -2039,10 +2074,12 @@ function ConversationComposerImpl({
     removeConversationSelectionReference,
     removeWebElementContext,
     removePptxElementReference,
+    removeFeatureCorrectionContext,
     conversationSelectionReferences,
     pendingShareContext,
     webElementContexts,
     pptxElementReferences,
+    featureCorrectionContexts,
     onOpenCodeViewer,
     openPptxElementReference,
   ]);
@@ -2320,7 +2357,8 @@ function ConversationComposerImpl({
             hasAttachments ||
             hasWebElementContexts ||
             hasPptxElementReferences ||
-            hasConversationSelectionReferences
+            hasConversationSelectionReferences ||
+            hasFeatureCorrectionContexts
           }
           enterSubmits={enterSubmits}
           onModifiedSubmit={modifiedEnterSubmits ? handleModifiedEditorSubmit : undefined}

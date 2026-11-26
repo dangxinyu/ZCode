@@ -1,6 +1,6 @@
 // 知识库页「分析现有文档」入口（spec: feature-knowledge.md，用户确认 2026-11-25）。
-// 四步：路径/目录 → 扫描勾选（>20）→ 侦察子智能体读大概按主题聚类落盘 → 主题清单人闸 → 按主题派发。
-// 派发后关闭弹窗（用户落在会话里看分析）；侦察计划落盘后 KB 页轮询重开弹窗到主题步。
+// 全自动（用户确认 2026-11-26：除提案确认外全自动）：路径/目录 → 扫描勾选（>20）→ 侦察子智能体读大概按主题聚类落盘；
+// 计划落盘后由 KB 页轮询直接自动派发主题提炼，不再做主题勾选人闸。派发后关闭弹窗（用户落在会话里看分析）。
 // 模型在弹窗里显式选择（默认健康 GLM-5.4），不依赖脆弱继承（全局默认账号鉴权失败）。
 import { useEffect, useMemo, useState } from "react";
 import { DOC_SCAN_DIRECT_LIMIT, DOC_SCAN_MAX_DOCS } from "@zcode/services";
@@ -20,22 +20,18 @@ import { useFeatureKnowledge } from "@/hooks/useFeatureKnowledge.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useFeatureAnalysisStore } from "@/store/featureKnowledgeAnalysisStore.js";
-import {
-  useFeatureDocAnalysisDialogStore,
-  type DocAnalysisStep,
-} from "@/store/featureKnowledgeDocAnalysisDialogStore.js";
+import { useFeatureDocAnalysisDialogStore } from "@/store/featureKnowledgeDocAnalysisDialogStore.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { logger } from "@/logger.js";
 import {
   buildFeatureDistillDocInstruction,
-  buildFeatureDistillThemeInstruction,
   buildFeatureDocScoutInstruction,
 } from "./distillInstruction.js";
-import { FeatureDocThemePicker } from "./FeatureDocThemePicker.js";
-import { verifyInstructionLanded } from "./proposalCorrection.js";
-import { resolveAnalysisSubmission } from "./resolveAnalysisSubmission.js";
-
-const DEFAULT_MODEL_ID = "GLM-5.4";
+import { verifyInstructionLanded, verifySubagentSpawned } from "./proposalCorrection.js";
+import {
+  FEATURE_ANALYSIS_DEFAULT_MODEL_ID,
+  resolveAnalysisSubmission,
+} from "./resolveAnalysisSubmission.js";
 
 export function FeatureDocAnalysisDialog() {
   const { intl } = useZCodeIntl();
@@ -44,14 +40,11 @@ export function FeatureDocAnalysisDialog() {
   const kb = useFeatureKnowledge();
   const open = useFeatureDocAnalysisDialogStore((s) => s.open);
   const step = useFeatureDocAnalysisDialogStore((s) => s.step);
-  const scout = useFeatureDocAnalysisDialogStore((s) => s.scout);
-  const plan = useFeatureDocAnalysisDialogStore((s) => s.plan);
   const [pathsText, setPathsText] = useState("");
   const [busy, setBusy] = useState(false);
   const [docs, setDocs] = useState<FeatureDocScanEntry[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [docSelection, setDocSelection] = useState<Record<string, boolean>>({});
-  const [themeSelection, setThemeSelection] = useState<Record<string, boolean>>({});
   const [modelView, setModelView] = useState<ModelSelectionView | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
 
@@ -65,7 +58,9 @@ export function FeatureDocAnalysisDialog() {
         // 残留的无档位选择会被 account provider 拒绝（Reasoning level is required）：缺档补 low。
         if (current?.options?.reasoningLevel) return current;
         for (const provider of view.providers) {
-          const healthy = provider.models.find((m) => m.modelId === DEFAULT_MODEL_ID);
+          const healthy = provider.models.find(
+            (m) => m.modelId === FEATURE_ANALYSIS_DEFAULT_MODEL_ID,
+          );
           if (healthy) {
             // account provider 强制要求 reasoningLevel（日志：Reasoning level is required）；
             // 高档变体 $max/$high 个人套餐无 entitlement，用默认 low 档（2026-11-25 日志+数据证实）。
@@ -83,12 +78,6 @@ export function FeatureDocAnalysisDialog() {
       cancelled = true;
     };
   }, [open, services]);
-
-  useEffect(() => {
-    if (plan) {
-      setThemeSelection(Object.fromEntries(plan.themes.map((t) => [t.name, true])));
-    }
-  }, [plan]);
 
   const modelOptions = useMemo(() => {
     if (!modelView) return [];
@@ -171,6 +160,28 @@ export function FeatureDocAnalysisDialog() {
       finish(false, "knowledge.analyzeDocsNotLanded");
       return null;
     }
+    // 派发回执校验：确认真有子智能体 spawn，防主 agent「口头交付」；未 spawn 重发一次指令再校验。
+    let spawned = await verifySubagentSpawned(services, sessionId, { workspacePath });
+    if (!spawned) {
+      try {
+        await services.zcodeTaskService.enqueueTaskCommand({
+          workspacePath,
+          taskId: sessionId,
+          commandId: crypto.randomUUID(),
+          traceId: crypto.randomUUID() as TraceId,
+          type: "send_prompt",
+          content: build(workspacePath),
+          clientLabel: "feature-knowledge-doc-analysis",
+        });
+      } catch {
+        // 重发失败按未派发处理
+      }
+      spawned = await verifySubagentSpawned(services, sessionId, { workspacePath });
+    }
+    if (!spawned) {
+      finish(false, "knowledge.analyzeNotSpawned");
+      return null;
+    }
     useFeatureAnalysisStore.getState().record({
       sessionId,
       workspacePath,
@@ -236,39 +247,12 @@ export function FeatureDocAnalysisDialog() {
       planPath: `${ok.workspacePath}/.zcode/doc-themes-plan.json`,
       workspacePath: ok.workspacePath,
     });
-    state.setStep("waiting");
+    // 全自动：关闭弹窗，计划落盘后 KB 页轮询自动派发主题，无需主题勾选人闸。
     state.setOpen(false);
     toast(intl.formatMessage({ id: "knowledge.analyzeScoutDispatched" }), { variant: "info" });
   };
 
-  const runThemes = async () => {
-    if (!scout || !plan) return;
-    const themes = plan.themes.filter((t) => themeSelection[t.name]);
-    if (themes.length === 0) {
-      toast(intl.formatMessage({ id: "knowledge.analyzeThemesNone" }), { variant: "warning" });
-      return;
-    }
-    setBusy(true);
-    try {
-      await services.zcodeTaskService.enqueueTaskCommand({
-        workspacePath: scout.workspacePath,
-        taskId: scout.sessionId,
-        commandId: crypto.randomUUID(),
-        traceId: crypto.randomUUID() as TraceId,
-        type: "send_prompt",
-        content: buildFeatureDistillThemeInstruction(themes),
-        clientLabel: "feature-knowledge-doc-analysis",
-      });
-      setBusy(false);
-      finish(true, "knowledge.analyzeThemesSent");
-    } catch (error) {
-      logger.warn("[feature-knowledge] 主题提炼指令投递失败", { error });
-      setBusy(false);
-      finish(false, "knowledge.analyzeDocsFailed");
-    }
-  };
-
-  const setStep = (next: DocAnalysisStep) =>
+  const setStep = (next: "paths" | "docs") =>
     useFeatureDocAnalysisDialogStore.getState().setStep(next);
 
   return (
@@ -369,24 +353,9 @@ export function FeatureDocAnalysisDialog() {
             </div>
           </>
         ) : null}
-        {step === "themes" && plan ? (
-          <FeatureDocThemePicker
-            plan={plan}
-            selection={themeSelection}
-            busy={busy}
-            onToggle={(name, checked) =>
-              setThemeSelection((current) => ({ ...current, [name]: checked }))
-            }
-          />
-        ) : null}
         <DialogFooter>
-          {step === "docs" || step === "themes" ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setStep(step === "themes" ? "docs" : "paths")}
-            >
+          {step === "docs" ? (
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep("paths")}>
               {intl.formatMessage({ id: "knowledge.analyzeDocsBack" })}
             </Button>
           ) : null}
@@ -401,9 +370,7 @@ export function FeatureDocAnalysisDialog() {
           <Button
             type="button"
             disabled={busy}
-            onClick={() =>
-              void (step === "paths" ? runScan() : step === "docs" ? runScout() : runThemes())
-            }
+            onClick={() => void (step === "paths" ? runScan() : runScout())}
           >
             {intl.formatMessage({ id: "knowledge.analyzeDocsStart" })}
           </Button>

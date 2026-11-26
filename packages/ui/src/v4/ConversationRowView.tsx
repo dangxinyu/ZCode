@@ -110,6 +110,7 @@ import {
   serializeComposerPromptContexts,
 } from "@/v4/composer/composerPromptContexts.js";
 import { WebElementContextAttachmentChip } from "@/v4/composer/WebElementContextAttachmentChip.js";
+import { FeatureCorrectionAttachmentChip } from "@/v4/composer/FeatureCorrectionAttachmentChip.js";
 import { ConversationSelectionReferenceChip } from "@/v4/composer/ConversationSelectionReferenceChip.js";
 import { PptxElementReferenceChip } from "@/v4/composer/PptxElementReferenceChip.js";
 import { useOpenPptxElementReference } from "@/v4/composer/useOpenPptxElementReference.js";
@@ -915,6 +916,7 @@ const UserInputRowView = memo(function UserInputRowView({
   const codeCommentContexts = parsedPrompt.codeComments;
   const webElementContexts = parsedPrompt.webElements;
   const pptxElementReferences = parsedPrompt.pptxElements;
+  const featureCorrectionContexts = parsedPrompt.featureCorrections;
   const conversationSelections = parsedPrompt.conversationSelections;
   const hasAttachments = (row.attachments?.length ?? 0) > 0;
   const hasMediaAttachments =
@@ -935,7 +937,8 @@ const UserInputRowView = memo(function UserInputRowView({
     codeCommentContexts.length > 0 ||
     webElementContexts.length > 0 ||
     pptxElementReferences.length > 0 ||
-    conversationSelections.length > 0;
+    conversationSelections.length > 0 ||
+    featureCorrectionContexts.length > 0;
   const hasAttachmentArea = hasAttachments || hasContextReferences;
   const hasAttachmentPills = hasFileAttachments || hasContextReferences;
   const openPptxElementReference = useOpenPptxElementReference({
@@ -1142,6 +1145,23 @@ const UserInputRowView = memo(function UserInputRowView({
                         }))
                       }
                     />
+                    <FeatureCorrectionAttachmentChip
+                      contexts={editPromptContexts.featureCorrections}
+                      onRemove={(id) =>
+                        setEditPromptContexts((current) => ({
+                          ...current,
+                          featureCorrections: current.featureCorrections.filter(
+                            (item) => item.id !== id,
+                          ),
+                        }))
+                      }
+                      onRemoveAll={() =>
+                        setEditPromptContexts((current) => ({
+                          ...current,
+                          featureCorrections: [],
+                        }))
+                      }
+                    />
                   </div>
                 ) : null}
               </div>
@@ -1245,6 +1265,10 @@ const UserInputRowView = memo(function UserInputRowView({
               />
               <ConversationSelectionReferenceChip
                 references={conversationSelections}
+                contentAlign="end"
+              />
+              <FeatureCorrectionAttachmentChip
+                contexts={featureCorrectionContexts}
                 contentAlign="end"
               />
             </div>

@@ -25,8 +25,10 @@ export declare const proposeFeatureUpdateInputSchema: z.ZodObject<{
             relates: "relates";
             depends: "depends";
             affects: "affects";
+            part_of: "part_of";
         }>;
     }, z.core.$strip>>>;
+    proposedParentName: z.ZodOptional<z.ZodString>;
     docMd: z.ZodString;
     changeSummary: z.ZodOptional<z.ZodString>;
 }, z.core.$strict>;
@@ -36,7 +38,7 @@ export declare const getProposalStatusInputSchema: z.ZodObject<{
 export declare const TOOL_DESCRIPTIONS: {
     readonly search_features: "检索功能点（词面倒排 + 别名 + 代码锚点并联召回）。query 可为业务词、同义词或代码路径；返回候选 id/name/domain/摘要/命中层。";
     readonly read_feature: "按 id 读功能点完整活文档（需求背景/业务规则/代码位置/关键修改决策/坑与注意/关联功能点）+ 版本历史 + 关联。";
-    readonly propose_feature_update: "提交功能点合并提案（append-only，pending）。带 featureId 合并到已有功能点，缺省则新建（须 proposedName）。docMd 为整篇重写后的新文档。需人在 ZCode 确认后生效。";
+    readonly propose_feature_update: "提交功能点合并提案（append-only，pending）。带 featureId 合并到已有功能点，缺省则新建（须 proposedName）。docMd 为段落级重写后的完整新文档：只改与本次工作相关的章节，无关章节逐字保留。proposedParentName 按名指定功能分类父（同批新建父无 id 时用，host 同域找父、缺则建骨架再挂 part_of）。需人在 ZCode 确认后生效。";
     readonly get_proposal_status: "按提案 id 轮询状态（pending/committed/rejected）。外部工具据此判断提案是否已被人确认。";
 };
 //# sourceMappingURL=tool-contract.d.ts.map
