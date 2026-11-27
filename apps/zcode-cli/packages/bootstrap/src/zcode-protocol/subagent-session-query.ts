@@ -295,7 +295,12 @@ function runningStatus(input: {
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
   parentProjection?: SessionProjection;
+  childSession?: { time?: { completed?: number } };
 }): ZCodeSessionRunningSubagent["status"] | undefined {
+  // 子会话自身已落库终态（time.completed）即结束：父 runtime 空闲释放后
+  // background/childProjection 皆缺、child 末条 assistant 又带 tool round 时，
+  // 下面的 background 兜底会把早已结束的 child 永久挂成 running（「已运行 N 千分钟」）。
+  if (input.childSession?.time?.completed) return undefined;
   if (input.background?.status === "running") {
     return input.background.blocked ? "blocked" : "running";
   }
@@ -355,11 +360,14 @@ function endedStatus(input: {
   candidate: SubagentCandidate;
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
+  childSession?: { time?: { completed?: number } };
 }): ZCodeSessionEndedSubagent["status"] {
   const backgroundStatus = terminalBackgroundStatus(input.background);
   if (backgroundStatus) return backgroundStatus;
   if (input.childProjection?.status === "error") return "failed";
   if (input.childProjection?.status === "completed") return "success";
+  // 子会话已落库终态：无 background/projection/outcome 时也不应标 lost。
+  if (input.childSession?.time?.completed) return input.childOutcome.status ?? "success";
   if (input.candidate.part.state.status === "error") {
     return CANCELLATION_PATTERN.test(input.candidate.part.state.error) ? "cancelled" : "failed";
   }
@@ -402,6 +410,7 @@ export function projectSessionSubagents(
       childOutcome,
       childProjection,
       parentProjection: input.parentProjection,
+      childSession,
     });
     const common = {
       childSessionId: candidate.childSessionId,
@@ -423,7 +432,7 @@ export function projectSessionSubagents(
         : undefined;
     ended.push({
       ...common,
-      status: endedStatus({ background, candidate, childOutcome, childProjection }),
+      status: endedStatus({ background, candidate, childOutcome, childProjection, childSession }),
       ...(candidate.summary || childOutcome.summary
         ? { summary: candidate.summary ?? childOutcome.summary }
         : {}),

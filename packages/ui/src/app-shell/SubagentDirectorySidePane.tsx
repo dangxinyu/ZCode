@@ -23,11 +23,16 @@ import { V4PaneConversationProvider, useV4Conversation } from "@/v4/V4Conversati
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
 
 type DirectoryItem = RunningSubagentSummary | ZCodeSessionEndedSubagent;
+export type SubagentDirectoryItem = DirectoryItem;
 
 const EMPTY_RUNNING: readonly RunningSubagentSummary[] = [];
 
-function buildSubagentDirectoryOpenRequest(
-  tab: SubagentDirectorySidePaneTab,
+/** 目录行跳转子智能体会话的请求构造；会话信息栏复用（tab 参数按结构收窄）。 */
+export function buildSubagentDirectoryOpenRequest(
+  tab: Pick<
+    SubagentDirectorySidePaneTab,
+    "workspacePath" | "workspaceIdentity" | "remoteSessionId" | "rootSessionId" | "parentSessionId"
+  >,
   item: DirectoryItem,
 ): OpenScopedSubagentSideTabRequest {
   return {

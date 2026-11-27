@@ -21,6 +21,7 @@ import {
 import { DiffViewer } from "@/components/ui/diff-viewer.js";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
+import { FeatureProposalAttribution } from "./FeatureProposalAttribution.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { resolveTheme, useTheme } from "@/useTheme.js";
@@ -323,6 +324,7 @@ export function FeatureProposalConfirmDialog({
         ) : null}
 
         <div className="grid gap-2 text-ui-xs text-muted-foreground">
+          <FeatureProposalAttribution proposal={proposal} features={features} />
           <span>
             {intl.formatMessage({ id: "knowledge.oldDoc" })}
             {isNew ? ` ${intl.formatMessage({ id: "knowledge.noOldDoc" })}` : ""}

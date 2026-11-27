@@ -22,8 +22,11 @@ import type {
   Feature,
   FeatureDocScanResult,
   FeatureDocThemePlan,
+  FeatureKbUsage,
   FeatureProposal,
   FeatureSummary,
+  KbUsageContext,
+  KbUsageTool,
   ProposeInput,
   ProposalStatus,
   SearchHit,
@@ -109,6 +112,21 @@ export function createFeatureKnowledgeService(options: {
     }
   };
 
+  // usage best-effort（spec）：sessionId 在场才记录；写失败仅 warn，不阻断主流程、不发广播。
+  const recordUsage = (tool: KbUsageTool, context?: KbUsageContext): void => {
+    const sessionId = context?.sessionId?.trim();
+    if (!sessionId) return;
+    void repo
+      .recordUsage({ sessionId, workspaceKey: context?.workspaceKey, tool })
+      .catch((error) => {
+        logger.warn("KB usage record failed", {
+          event: "feature-knowledge.usage.failed",
+          tool,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  };
+
   const searchWithVector = async (query: string): Promise<FeatureKnowledgeSearchResult> => {
     const baseHits = repo.searchFeatures(query);
     if (!embedder) return { hits: baseHits, semanticEnabled: false };
@@ -175,9 +193,13 @@ export function createFeatureKnowledgeService(options: {
       await repo.ensureReady();
       return repo.listFeatures(domain);
     },
-    async searchFeatures(query: string): Promise<FeatureKnowledgeSearchResult> {
+    async searchFeatures(query: string, context?: KbUsageContext): Promise<FeatureKnowledgeSearchResult> {
       await repo.ensureReady();
-      return searchWithVector(query);
+      const result = await searchWithVector(query);
+      // 自动召回仅命中记录（spec：未命中不记，避免每轮空召回刷屏）；主动检索始终记录。
+      const tool: KbUsageTool = context?.tool === "recall" ? "recall" : "search";
+      if (tool !== "recall" || result.hits.length > 0) recordUsage(tool, context);
+      return result;
     },
     async scanFeatureDocs(paths: readonly string[]): Promise<FeatureDocScanResult> {
       await repo.ensureReady();
@@ -206,10 +228,11 @@ export function createFeatureKnowledgeService(options: {
       await mkdir(workspacePath, { recursive: true });
       return { workspacePath };
     },
-    async readFeature(id: string): Promise<FeatureDetail | null> {
+    async readFeature(id: string, context?: KbUsageContext): Promise<FeatureDetail | null> {
       await repo.ensureReady();
       const feature = repo.getFeature(id);
       if (!feature) return null;
+      recordUsage("read", context);
       return {
         feature,
         versions: repo.getVersionHistory(id),
@@ -224,8 +247,16 @@ export function createFeatureKnowledgeService(options: {
       await repo.ensureReady();
       return repo.getProposal(id);
     },
+    async listUsage(sessionIds: readonly string[]): Promise<FeatureKbUsage[]> {
+      await repo.ensureReady();
+      return repo.listUsage(sessionIds);
+    },
     async propose(input: ProposeInput): Promise<FeatureProposal> {
       const proposal = await repo.propose(input);
+      recordUsage("propose", {
+        sessionId: input.source?.sessionId,
+        workspaceKey: input.source?.workspaceKey,
+      });
       bump("proposed", proposal.featureId ?? undefined, proposal.id);
       return proposal;
     },

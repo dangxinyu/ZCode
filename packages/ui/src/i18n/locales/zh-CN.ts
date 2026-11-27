@@ -31,6 +31,9 @@ const zhCN: Record<string, string> = {
   "knowledge.layer.anchor": "锚点",
   "knowledge.layer.vector": "语义",
   "knowledge.changeSummary": "变更摘要",
+  "knowledge.attribution": "归属",
+  "knowledge.attributionNewCategory": "新建分类「{name}」",
+  "knowledge.attributionNoParent": "无功能分类父",
   "knowledge.entityMerge": "合并到「{name}」",
   "knowledge.entityCreate": "新建功能点「{name}」",
   "knowledge.confirm": "确认合并",
@@ -750,6 +753,20 @@ const zhCN: Record<string, string> = {
   "subagentDirectory.status.failed": "失败",
   "subagentDirectory.status.cancelled": "已取消",
   "subagentDirectory.status.lost": "已丢失",
+  "sidePane.sessionInfo": "会话信息",
+  "sessionInfo.title": "会话信息",
+  "sessionInfo.subagents": "子智能体",
+  "sessionInfo.subagentsEmpty": "无子智能体",
+  "sessionInfo.subagentsRunning": "运行中",
+  "sessionInfo.subagentsEnded": "已结束",
+  "knowledge.sidePanel.title": "知识库",
+  "knowledge.sidePanel.empty": "未调用知识库",
+  "knowledge.sidePanel.unavailable": "知识库服务不可用",
+  "knowledge.sidePanel.lastUsed": "最近调用",
+  "knowledge.sidePanel.tool.search": "检索",
+  "knowledge.sidePanel.tool.recall": "自动召回",
+  "knowledge.sidePanel.tool.read": "阅读",
+  "knowledge.sidePanel.tool.propose": "提案",
   "chat.statusPanel.endedAgents": "已结束",
   // workflow run 目录（任务页脚行 → 这一页 → 详情页）。状态词复用
   // chat.toolCall.workflow.run.status.*，这里只有页面自己的结构文案。
@@ -1689,6 +1706,11 @@ const zhCN: Record<string, string> = {
   "chat.pendingCommand.discarded": "CLI 重启前已提交的输入没有进入对话。请确认是否重新发送。",
   "chat.pendingCommand.resend": "重新发送",
   "chat.pendingCommand.dismiss": "稍后",
+  // 后台运行时（app-server）意外退出的会话横幅；0xE0000008 为系统内存不足。
+  "chat.runtimeExit.outOfMemory":
+    "后台运行时异常退出：系统内存不足，可能是其他程序占用了大量内存。正在运行的任务和子代理已中断。",
+  "chat.runtimeExit.generic": "后台运行时异常退出。正在运行的任务和子代理已中断。",
+  "chat.runtimeExit.dismiss": "关闭",
   // 软门禁：工作区 Hook 待审核时底部常驻提示条
   "chat.workspaceHookPending.message": "{count} 个工作区 Hook 待审核，本会话暂未启用",
   "chat.workspaceHookPending.review": "去审核",

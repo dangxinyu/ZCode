@@ -11,6 +11,26 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 export const SEARCH_LAYERS = ["lexical", "alias", "anchor", "vector"] as const;
 export type SearchLayer = (typeof SEARCH_LAYERS)[number];
 
+/** 知识库调用记录工具类别（spec usage）：主动检索 / 阅读 / 提案 / 自动召回（仅命中记录）。 */
+export const KB_USAGE_TOOLS = ["search", "read", "propose", "recall"] as const;
+export type KbUsageTool = (typeof KB_USAGE_TOOLS)[number];
+
+/** 单条知识库调用记录（feature_kb_usage 行，append-only）。 */
+export interface FeatureKbUsage {
+  id: string;
+  sessionId: string;
+  workspaceKey: string;
+  tool: KbUsageTool;
+  createdAt: number;
+}
+
+/** 工具链路的 usage 记录上下文：sessionId 在场才记录；recall 由自动召回显式标记。 */
+export interface KbUsageContext {
+  sessionId?: string;
+  workspaceKey?: string;
+  tool?: KbUsageTool;
+}
+
 /** 活文档保真字段（重写契约不可丢失）：代码路径、关键决策依据、坑与注意。 */
 export const FIDELITY_SECTIONS = ["代码位置", "关键修改决策", "坑与注意"] as const;
 

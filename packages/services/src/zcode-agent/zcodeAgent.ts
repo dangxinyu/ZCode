@@ -187,6 +187,20 @@ export interface ZCodeAgentRuntimeLifecycleEvent extends ZCodeAgentWorkspaceTarg
   state: "available" | "unavailable";
 }
 
+/**
+ * runtime 进程意外退出（晚于同一进程的 unavailable，退出码已知）。只用于向用户说明原因；
+ * 回合、子代理的收口由 CLI 投影在重连后给出，界面不据此改写会话状态。
+ */
+export interface ZCodeAgentRuntimeExitedEvent extends ZCodeAgentWorkspaceTarget {
+  workspaceKey: string;
+  runtimeIdentity: ZCodeAgentWorkspaceRuntimeIdentity;
+  exitCode: number | null;
+  signal: string | null;
+  /** `native_out_of_memory`：Windows 0xE0000008，系统可提交内存耗尽。 */
+  cause?: "native_out_of_memory";
+  exitedAt: number;
+}
+
 export type ZCodeAgentCuaPermissionObservation = CuaPermissionObservation &
   ZCodeAgentWorkspaceTarget;
 
@@ -868,6 +882,8 @@ export interface IZCodeAgentService {
   onAgentRuntimeLifecycle?: (
     listener: (event: ZCodeAgentRuntimeLifecycleEvent) => void,
   ) => IDisposable;
+  /** 当前 runtime 进程意外退出；界面据此提示原因并提供重新连接。 */
+  onAgentRuntimeExited?: (listener: (event: ZCodeAgentRuntimeExitedEvent) => void) => IDisposable;
   /** 当前 desktop-local CUA turn 是否仍在执行，用于 Helper recovery 避免中途回收 Agent。 */
   hasActiveCuaOperationTurn(): boolean;
   disposeWorkspace(params: ZCodeAgentWorkspaceTarget): Promise<void>;

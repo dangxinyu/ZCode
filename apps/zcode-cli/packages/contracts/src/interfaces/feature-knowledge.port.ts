@@ -15,10 +15,12 @@ import type {
 } from "../tools/feature-knowledge.js";
 
 export interface FeatureKnowledgeContext {
-  /** 发起工具调用的会话；host 记入提案 source_json。 */
+  /** 发起工具调用的会话；host 记入提案 source_json 与知识库调用记录（usage）。 */
   sessionId: string;
   /** 工具调用 traceId，全程携带供诊断与提案溯源。 */
   traceId?: string;
+  /** search 的 usage 类别标记：自动召回传 recall（host 仅命中记录），缺省按主动检索 search。 */
+  usageTool?: "search" | "recall";
 }
 
 export interface FeatureKnowledgePort {

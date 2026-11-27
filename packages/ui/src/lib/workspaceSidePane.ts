@@ -166,6 +166,20 @@ export interface SubagentDirectorySidePaneTab {
   parentSessionId: string;
 }
 
+/** 会话信息右栏（知识库调用 + 子智能体概览）；按 rootSessionId 作用域，与子智能体目录同构。 */
+export interface SessionInfoSidePaneTab {
+  id: string;
+  type: "session-info";
+  ownerTaskId?: string | null;
+  openedAt?: number;
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId: string;
+  parentSessionId: string;
+}
+
 export interface SelectionSideChatPaneTab {
   id: string;
   type: "selection-side-chat";
@@ -501,6 +515,16 @@ export interface OpenScopedSubagentDirectorySideTabRequest extends OpenSubagentD
   remoteSessionId?: string;
 }
 
+export interface OpenScopedSessionInfoSideTabRequest {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId?: string;
+  parentSessionId: string;
+  /** false = 只登记不抢焦点（默认打开会话信息栏时已有其他激活 tab 的场景）。 */
+  activate?: boolean;
+}
+
 export interface SyncSubagentSessionTabsRequest {
   rootSessionId: string;
   parentSessionId: string;
@@ -526,6 +550,7 @@ export type WorkspaceSidePaneTab =
   | BrowserUseSidePaneTab
   | SubagentSessionSidePaneTab
   | SubagentDirectorySidePaneTab
+  | SessionInfoSidePaneTab
   | SelectionSideChatPaneTab
   | PlanDetailSidePaneTab
   | WorkflowRunSidePaneTab
@@ -741,6 +766,33 @@ function createSubagentDirectorySidePaneTab(options: {
       encodeSidePaneTabIdPart(options.parentSessionId),
     ].join(":"),
     type: "subagent-directory",
+    openedAt: Date.now(),
+    workspaceKey: options.workspaceKey,
+    workspacePath: options.workspacePath,
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+    rootSessionId,
+    parentSessionId: options.parentSessionId,
+  };
+}
+
+function createSessionInfoSidePaneTab(options: {
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId?: string;
+  parentSessionId: string;
+}): SessionInfoSidePaneTab {
+  const rootSessionId = options.rootSessionId ?? options.parentSessionId;
+  return {
+    id: [
+      "session-info",
+      encodeSidePaneTabIdPart(options.workspaceKey),
+      encodeSidePaneTabIdPart(rootSessionId),
+      encodeSidePaneTabIdPart(options.parentSessionId),
+    ].join(":"),
+    type: "session-info",
     openedAt: Date.now(),
     workspaceKey: options.workspaceKey,
     workspacePath: options.workspacePath,
@@ -1114,6 +1166,7 @@ function getVisibleSidePaneTabsByScope(
     if (
       tab.type === "subagent-session" ||
       tab.type === "subagent-directory" ||
+      tab.type === "session-info" ||
       tab.type === "bash-output"
     ) {
       return tab.rootSessionId === scope.ownerTaskId;
@@ -1651,6 +1704,33 @@ export function openSubagentDirectorySidePane(
   return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
 }
 
+export function openSessionInfoSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: {
+    workspaceKey: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+    rootSessionId?: string;
+    parentSessionId: string;
+    activate?: boolean;
+  },
+): WorkspaceSidePaneState {
+  const nextTab = createSessionInfoSidePaneTab(options);
+  const existing = current?.tabs.find(
+    (tab): tab is SessionInfoSidePaneTab => tab.type === "session-info" && tab.id === nextTab.id,
+  );
+  const merged = existing ? { ...existing, ...nextTab } : nextTab;
+  // 默认打开场景不抢焦点：已有其他激活 tab 时只登记；没有任何激活 tab 时仍激活，避免空栏。
+  if (options.activate === false && current && current.activeTabId) {
+    const tabs = existing
+      ? current.tabs.map((tab) => (tab.id === merged.id ? merged : tab))
+      : [...current.tabs, merged];
+    return { ...current, tabs };
+  }
+  return activateSidePaneTab(current, merged);
+}
+
 export function syncSubagentSessionSidePaneTabs(
   current: WorkspaceSidePaneState | null,
   options: SyncSubagentSessionTabsRequest,
@@ -1914,6 +1994,7 @@ export function isSidePaneTabVisibleForParent(
   if (
     tab.type === "subagent-session" ||
     tab.type === "subagent-directory" ||
+    tab.type === "session-info" ||
     tab.type === "bash-output"
   ) {
     return tab.rootSessionId === parentSessionId;

@@ -11,6 +11,7 @@ import { insertProposal } from "./propose.js";
 import { deleteFeatureSync } from "./deletion.js";
 import { insertCategorySkeletonSync, resolveCategoryParentSync } from "./category.js";
 import { encodeVector } from "./embeddings.js";
+import { insertKbUsage, listKbUsage } from "./usage.js";
 import {
   getFeature,
   getProposal,
@@ -26,10 +27,12 @@ import {
   FeatureKnowledgeError,
   KB_ERROR_CODES,
   type Feature,
+  type FeatureKbUsage,
   type FeatureProposal,
   type FeatureRelationInput,
   type FeatureSummary,
   type FeatureVersion,
+  type KbUsageTool,
   type ProposeInput,
   type ProposalStatus,
   type SearchHit,
@@ -136,8 +139,22 @@ export class FeatureKnowledgeRepo {
   listFeaturesNeedingEmbed(model: string): Feature[] {
     return listFeaturesNeedingEmbed(this.getDatabase(), model);
   }
+  /** 知识库调用记录读侧：按会话 id 集合返回 usage 行（会话信息侧栏聚合数据源）。 */
+  listUsage(sessionIds: readonly string[]): FeatureKbUsage[] {
+    return listKbUsage(this.getDatabase(), sessionIds);
+  }
 
   // ---- 写侧（单写链串行）----
+  /** 知识库调用记录（spec usage）：append-only，走单写链，不改功能点状态。 */
+  async recordUsage(input: {
+    sessionId: string;
+    workspaceKey?: string;
+    tool: KbUsageTool;
+  }): Promise<void> {
+    await this.ensureReady();
+    await this.enqueueWrite(() => insertKbUsage(this.getDatabase(), input));
+  }
+
   async propose(input: ProposeInput): Promise<FeatureProposal> {
     await this.ensureReady();
     return this.enqueueWrite(() => this.proposeSync(input));

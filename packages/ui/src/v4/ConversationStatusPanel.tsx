@@ -101,6 +101,10 @@ import {
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
 
+// 官方从本文件导出 ComposerStatusRow；实现按单文件行数约束拆在 ComposerStatusRow.tsx，
+// re-export 保持 SessionPane / ConversationComposer 的官方同款导入路径。
+export { ComposerStatusRow } from "@/v4/ComposerStatusRow.js";
+
 interface ConversationStatusPanelProps {
   workspacePath: string;
   workspaceIdentity?: string;

@@ -8,10 +8,12 @@ import type {
   Feature,
   FeatureDocScanResult,
   FeatureDocThemePlan,
+  FeatureKbUsage,
   FeatureProposal,
   FeatureRelationInput,
   FeatureSummary,
   FeatureVersion,
+  KbUsageContext,
   ProposeInput,
   ProposalStatus,
   SearchHit,
@@ -56,7 +58,8 @@ export type FeatureQueryExpander = (query: string, workspaceKey?: string) => Pro
 
 export interface IFeatureKnowledgeService {
   listFeatures(domain?: string): Promise<FeatureSummary[]>;
-  searchFeatures(query: string): Promise<FeatureKnowledgeSearchResult>;
+  /** context.sessionId 在场记 usage（tool 缺省 search，自动召回传 recall 且仅命中记录）。 */
+  searchFeatures(query: string, context?: KbUsageContext): Promise<FeatureKnowledgeSearchResult>;
   /** 文档来源提炼扫描阶段：目录展开 + 标题/开头行 + 候选归属（>20 份供清单勾选）。 */
   scanFeatureDocs(paths: readonly string[]): Promise<FeatureDocScanResult>;
   /** 读侦察子智能体落盘的主题计划（主题↔文档↔功能点多对多）；未产出返回 null。 */
@@ -69,7 +72,9 @@ export interface IFeatureKnowledgeService {
   createFeatureCategory(name: string, domain: string): Promise<Feature>;
   /** 末级功能点删除（UI 人闸 + 二次确认，不进 CLI 协议）；有子文档的父拒绝删除。 */
   deleteFeature(id: string): Promise<void>;
-  readFeature(id: string): Promise<FeatureDetail | null>;
+  readFeature(id: string, context?: KbUsageContext): Promise<FeatureDetail | null>;
+  /** 会话信息侧栏数据源：按会话 id 集合（父 + 子会话）返回知识库调用记录。 */
+  listUsage(sessionIds: readonly string[]): Promise<FeatureKbUsage[]>;
   listProposals(status?: ProposalStatus): Promise<FeatureProposal[]>;
   getProposal(id: string): Promise<FeatureProposal | null>;
   propose(input: ProposeInput): Promise<FeatureProposal>;

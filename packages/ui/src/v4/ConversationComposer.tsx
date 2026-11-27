@@ -90,6 +90,7 @@ import { ChatPromptEditor } from "@/prompt-editor/ChatPromptEditor.js";
 import { usePromptEditorDragState } from "@/prompt-editor/usePromptEditorDragState.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { advanceComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
+import { ComposerStatusRow } from "@/v4/ConversationStatusPanel.js";
 import type { AppSlashCommand } from "@/slashCommandHelpers.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
@@ -358,6 +359,10 @@ function arePromptHistoryEntriesEqual(left: readonly string[], right: readonly s
 }
 
 interface ConversationComposerProps {
+  /** 输入框上方状态胶囊内容（SessionPane statusCapsules）；额度横幅接管错误位时宿主置 null。 */
+  statusContent?: ReactNode;
+  /** 已接纳输入队列；紧邻输入 surface 渲染，负下边距衔接输入框。阻塞交互时宿主置 null。 */
+  queueContent?: ReactNode;
   snapshot: ConversationSnapshot | null;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
   sessionId?: string | null;
@@ -489,6 +494,8 @@ function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: s
 }
 
 function ConversationComposerImpl({
+  statusContent,
+  queueContent,
   snapshot,
   sessionId = null,
   skillCatalogSessionId = sessionId,
@@ -2321,6 +2328,14 @@ function ConversationComposerImpl({
           />
         </div>
       ) : null}
+      {/* 与横幅实际渲染条件一致，仅隐藏入口，不清除任务状态。 */}
+      {!visibleError ? (
+        <ComposerStatusRow key={JSON.stringify([workspaceIdentity, workspacePath, sessionId])}>
+          {statusContent}
+        </ComposerStatusRow>
+      ) : null}
+      {/* 队列的负下边距用于衔接输入框；必须紧邻输入框，避免遮挡状态胶囊。 */}
+      {queueContent}
       <div
         className={cn(
           "chat-composer-input-surface w-full",

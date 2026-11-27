@@ -25,12 +25,15 @@ export function createProtocolFeatureKnowledgePort(
   context: ZCodeProtocolAgentServerContext,
 ): FeatureKnowledgePort {
   return {
-    async searchFeatures(input, _taskContext): Promise<SearchFeaturesOutput> {
+    async searchFeatures(input, taskContext): Promise<SearchFeaturesOutput> {
       const result = await context.requestClient(
         zcodeProtocolMethods.featureKnowledgeSearch,
         zcodeFeatureKnowledgeSearchParamsSchema.parse({
           query: input.query,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          // usage 记录（spec）：透传会话 id；自动召回标记 recall，host 仅命中记录。
+          sessionId: taskContext.sessionId,
+          ...(taskContext.usageTool ? { tool: taskContext.usageTool } : {}),
         }),
         zcodeFeatureKnowledgeSearchResultSchema,
       );
@@ -43,10 +46,13 @@ export function createProtocolFeatureKnowledgePort(
             : "No feature point matched. Try another phrasing, a synonym, or a code path; if none exists, propose a new feature.",
       };
     },
-    async readFeatureDoc(input, _taskContext): Promise<ReadFeatureDocOutput> {
+    async readFeatureDoc(input, taskContext): Promise<ReadFeatureDocOutput> {
       const result = await context.requestClient(
         zcodeProtocolMethods.featureKnowledgeRead,
-        zcodeFeatureKnowledgeReadParamsSchema.parse({ featureId: input.featureId }),
+        zcodeFeatureKnowledgeReadParamsSchema.parse({
+          featureId: input.featureId,
+          sessionId: taskContext.sessionId,
+        }),
         zcodeFeatureKnowledgeReadResultSchema,
       );
       return {

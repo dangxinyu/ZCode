@@ -375,6 +375,8 @@ export const backgroundWorkSummarySchema = z.object({
   blocked: z.boolean().optional(),
   anchorRowId: z.number().nullable(),
   childSessionId: z.string().optional(),
+  // 进程 pid（bash）：runtime 释放丢 Completed 事件时，读取侧按进程存活销账 stale running。
+  pid: z.number().int().positive().optional(),
 });
 export type BackgroundWorkSummary = z.infer<typeof backgroundWorkSummarySchema>;
 

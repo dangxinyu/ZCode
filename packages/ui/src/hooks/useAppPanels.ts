@@ -209,6 +209,8 @@ export function useAppPanels(options: {
     RecentClosedSidePaneTab[]
   >([]);
   const lastActiveSubagentTabByRootRef = useRef<Map<string, string>>(new Map());
+  // 用户显式关闭过「会话信息」的 owner：本次运行内不再自动重建（可从最近关闭重开）。
+  const dismissedSessionInfoOwnersRef = useRef<Set<string>>(new Set());
   const sidePaneOwnerIdRef = useRef(sidePaneOwnerId);
   sidePaneOwnerIdRef.current = sidePaneOwnerId;
   const activeWorkspaceKeyRef = useRef(activeWorkspaceKey);
@@ -345,6 +347,9 @@ export function useAppPanels(options: {
       return resolved.sidePaneState;
     });
   }, [activeTaskId, activeWorkspaceKey, commitSidePaneState, sidePaneOwnerId]);
+
+  // 会话信息块已按用户要求移除（2026-11-27：右栏默认展开很烦）；右栏显隐完全交还原有
+  // 「切换面板」手动控制，不再自动 reveal / 登记 session-info tab。
 
   const handleOpenCodeViewer = useCallback(
     (source: CodeViewerSource) => {
@@ -1395,6 +1400,8 @@ export function useAppPanels(options: {
   const handleCloseSidePaneTab = useCallback(
     (tabId: string) => {
       const closingTab = sidePaneState?.tabs.find((tab) => tab.id === tabId);
+      // 会话信息是会话界面固有右栏，不可关闭（用户反馈 2026-11-27）；忽略任何关闭请求。
+      if (closingTab?.type === "session-info") return;
       if (closingTab?.type === "selection-side-chat") {
         closeSelectionSideChatRuntime(closingTab);
       }
@@ -1442,6 +1449,9 @@ export function useAppPanels(options: {
         if (!authorized) return;
         for (const tab of closingTabs) {
           if (tab.type === "selection-side-chat") closeSelectionSideChatRuntime(tab);
+          if (tab.type === "session-info") {
+            dismissedSessionInfoOwnersRef.current.add(`${tab.workspaceKey}::${tab.rootSessionId}`);
+          }
         }
         // 保活：批量关闭其他 tab 时，回收其中 terminal tab 的常驻 PTY/xterm。
         for (const tab of closingTabs) {
@@ -1477,6 +1487,9 @@ export function useAppPanels(options: {
       if (!authorized) return;
       for (const tab of visibleTabs) {
         if (tab.type === "selection-side-chat") closeSelectionSideChatRuntime(tab);
+        if (tab.type === "session-info") {
+          dismissedSessionInfoOwnersRef.current.add(`${tab.workspaceKey}::${tab.rootSessionId}`);
+        }
       }
       // 保活：关闭全部 tab 时，回收其中 terminal tab 的常驻 PTY/xterm。
       for (const tab of visibleTabs) {

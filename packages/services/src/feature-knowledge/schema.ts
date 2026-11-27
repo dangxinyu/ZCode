@@ -92,6 +92,20 @@ const FEATURE_PROPOSALS_PARENT_NAME_SQL = `
   ALTER TABLE feature_proposals ADD COLUMN proposed_parent_name TEXT NOT NULL DEFAULT '';
 `;
 
+// 0005：知识库调用记录（会话信息侧栏数据源）。host 侧在工具链路携带 sessionId 时
+// append-only 记一条；recall 仅命中记录。独立表不影响功能点状态与广播。
+const FEATURE_KB_USAGE_SQL = `
+  CREATE TABLE IF NOT EXISTS feature_kb_usage (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    workspace_key TEXT NOT NULL DEFAULT '',
+    tool TEXT NOT NULL CHECK (tool IN ('search','read','propose','recall')),
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_feature_kb_usage_session
+    ON feature_kb_usage(session_id, created_at DESC);
+`;
+
 const definitions = [
   {
     id: "0001_feature_knowledge_init",
@@ -112,6 +126,11 @@ const definitions = [
     id: "0004_feature_proposals_parent_name",
     checksumInput: [FEATURE_PROPOSALS_PARENT_NAME_SQL],
     sql: FEATURE_PROPOSALS_PARENT_NAME_SQL,
+  },
+  {
+    id: "0005_feature_kb_usage",
+    checksumInput: [FEATURE_KB_USAGE_SQL],
+    sql: FEATURE_KB_USAGE_SQL,
   },
 ] as const;
 

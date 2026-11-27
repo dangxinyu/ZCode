@@ -3996,7 +3996,13 @@ export const zcodeFeatureSearchHitProtocolSchema = z
   .strict();
 
 export const zcodeFeatureKnowledgeSearchParamsSchema = z
-  .object({ query: z.string(), limit: z.number().int().positive().optional() })
+  .object({
+    query: z.string(),
+    limit: z.number().int().positive().optional(),
+    // usage 记录（spec）：sessionId 在场 host 记一条调用；tool=recall 标记自动召回（仅命中记录）。
+    sessionId: nonEmptyString.optional(),
+    tool: z.enum(["search", "recall"]).optional(),
+  })
   .strict();
 export type ZCodeFeatureKnowledgeSearchProtocolParams = z.infer<
   typeof zcodeFeatureKnowledgeSearchParamsSchema
@@ -4012,7 +4018,7 @@ export type ZCodeFeatureKnowledgeSearchProtocolResult = z.infer<
 >;
 
 export const zcodeFeatureKnowledgeReadParamsSchema = z
-  .object({ featureId: nonEmptyString })
+  .object({ featureId: nonEmptyString, sessionId: nonEmptyString.optional() })
   .strict();
 export type ZCodeFeatureKnowledgeReadProtocolParams = z.infer<
   typeof zcodeFeatureKnowledgeReadParamsSchema
@@ -4055,6 +4061,29 @@ export const zcodeFeatureKnowledgeProposeResultSchema = z
   .strict();
 export type ZCodeFeatureKnowledgeProposeProtocolResult = z.infer<
   typeof zcodeFeatureKnowledgeProposeResultSchema
+>;
+
+// 知识库调用记录查询（会话信息侧栏数据源）：按会话 id 集合返回 usage 行。
+export const zcodeFeatureKnowledgeUsageRowSchema = z
+  .object({
+    id: nonEmptyString,
+    sessionId: nonEmptyString,
+    workspaceKey: z.string(),
+    tool: z.enum(["search", "read", "propose", "recall"]),
+    createdAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export const zcodeFeatureKnowledgeListUsageParamsSchema = z
+  .object({ sessionIds: z.array(nonEmptyString).min(1).max(64) })
+  .strict();
+export type ZCodeFeatureKnowledgeListUsageProtocolParams = z.infer<
+  typeof zcodeFeatureKnowledgeListUsageParamsSchema
+>;
+export const zcodeFeatureKnowledgeListUsageResultSchema = z
+  .object({ usage: z.array(zcodeFeatureKnowledgeUsageRowSchema) })
+  .strict();
+export type ZCodeFeatureKnowledgeListUsageProtocolResult = z.infer<
+  typeof zcodeFeatureKnowledgeListUsageResultSchema
 >;
 
 export const zcodeProtocolMethods = {
@@ -4161,6 +4190,7 @@ export const zcodeProtocolMethods = {
   featureKnowledgeSearch: "featureKnowledge/search",
   featureKnowledgeRead: "featureKnowledge/read",
   featureKnowledgePropose: "featureKnowledge/propose",
+  featureKnowledgeListUsage: "featureKnowledge/listUsage",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。
   // 仅剩 CLI server 的 wire 兼容 case；随旧词整体删除时一并移除。
   usageStats: "usage/stats",

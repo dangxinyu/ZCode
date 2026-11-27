@@ -420,7 +420,8 @@ export function AnimatedSidePanePanel({
       getVisibleSidePaneTabs(tabs, {
         workspaceKey,
         ownerTaskId: sidePaneOwnerId,
-      }),
+      // 会话信息块已移除（用户反馈 2026-11-27）；过滤掉历史持久化的 session-info tab。
+      }).filter((tab) => tab.type !== "session-info"),
     [sidePaneOwnerId, tabs, workspaceKey],
   );
   const activeTabId = sidePaneState?.activeTabId ?? "";
@@ -890,6 +891,7 @@ export function AnimatedSidePanePanel({
         subagentDirectoryTitle: intl.formatMessage({
           id: "sidePane.subagentDirectory",
         }),
+        sessionInfoTitle: intl.formatMessage({ id: "sidePane.sessionInfo" }),
         selectionChatTitle: intl.formatMessage({
           id: "sidePane.selectionChat",
         }),
@@ -1058,7 +1060,9 @@ export function AnimatedSidePanePanel({
                 </TabsList>
 
                 <div className="relative min-h-0 flex-1 isolate">
-                  {tabs.map((tab) => {
+                  {tabs
+                    .filter((tab) => tab.type !== "session-info")
+                    .map((tab) => {
                     if (
                       (tab.type === "browser" || tab.type === "browser-use") &&
                       !shouldMountBrowserTabGuest(tab)

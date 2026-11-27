@@ -162,6 +162,7 @@ export type {
   ZCodeAgentInitializeResult,
   ZCodeAgentStorageStartupSnapshot,
   ZCodeAgentRuntimeLifecycleEvent,
+  ZCodeAgentRuntimeExitedEvent,
   ZCodeAgentRuntimePolicy,
   ZCodeAgentReadSessionParams,
   ZCodeAgentResumeSessionParams,
@@ -316,10 +317,13 @@ export type {
   FeatureDocScanResult,
   FeatureDocTheme,
   FeatureDocThemePlan,
+  FeatureKbUsage,
   FeatureProposal,
   FeatureRelationInput,
   FeatureSummary,
   FeatureVersion,
+  KbUsageContext,
+  KbUsageTool,
   ProposeInput,
   ProposalSource,
   ProposalStatus,
@@ -327,7 +331,11 @@ export type {
   SearchHit,
   SearchLayer,
 } from "./feature-knowledge/types.js";
-export { KB_ERROR_CODES, type KbErrorCode } from "./feature-knowledge/types.js";
+export {
+  KB_ERROR_CODES,
+  KB_USAGE_TOOLS,
+  type KbErrorCode,
+} from "./feature-knowledge/types.js";
 export {
   DOC_SCAN_DIRECT_LIMIT,
   DOC_SCAN_MAX_DOCS,

@@ -32,6 +32,9 @@ const enUS: Record<string, string> = {
   "knowledge.layer.anchor": "anchor",
   "knowledge.layer.vector": "vector",
   "knowledge.changeSummary": "Change summary",
+  "knowledge.attribution": "Attribution",
+  "knowledge.attributionNewCategory": "New category \"{name}\"",
+  "knowledge.attributionNoParent": "No category parent",
   "knowledge.entityMerge": "Merge into “{name}”",
   "knowledge.entityCreate": "New feature “{name}”",
   "knowledge.confirm": "Confirm merge",
@@ -809,6 +812,20 @@ const enUS: Record<string, string> = {
   "subagentDirectory.status.failed": "Failed",
   "subagentDirectory.status.cancelled": "Cancelled",
   "subagentDirectory.status.lost": "Lost",
+  "sidePane.sessionInfo": "Session info",
+  "sessionInfo.title": "Session info",
+  "sessionInfo.subagents": "Subagents",
+  "sessionInfo.subagentsEmpty": "No subagents",
+  "sessionInfo.subagentsRunning": "Running",
+  "sessionInfo.subagentsEnded": "Ended",
+  "knowledge.sidePanel.title": "Knowledge base",
+  "knowledge.sidePanel.empty": "No knowledge base calls yet",
+  "knowledge.sidePanel.unavailable": "Knowledge base service unavailable",
+  "knowledge.sidePanel.lastUsed": "Last call",
+  "knowledge.sidePanel.tool.search": "Search",
+  "knowledge.sidePanel.tool.recall": "Auto recall",
+  "knowledge.sidePanel.tool.read": "Read",
+  "knowledge.sidePanel.tool.propose": "Propose",
   "chat.statusPanel.endedAgents": "Ended",
   "chat.statusPanel.endedWorkflows": "Ended workflows",
   "workflowDirectory.title": "Workflow runs",
@@ -1804,6 +1821,12 @@ const enUS: Record<string, string> = {
     "An input submitted before the CLI restarted did not reach the conversation. Confirm whether to send it again.",
   "chat.pendingCommand.resend": "Send again",
   "chat.pendingCommand.dismiss": "Later",
+  // Session banner when the background runtime (app-server) exits unexpectedly; 0xE0000008 = system out of memory.
+  "chat.runtimeExit.outOfMemory":
+    "The background runtime exited unexpectedly because the system ran out of memory. Another program may be using a lot of memory. Running tasks and subagents were interrupted.",
+  "chat.runtimeExit.generic":
+    "The background runtime exited unexpectedly. Running tasks and subagents were interrupted.",
+  "chat.runtimeExit.dismiss": "Dismiss",
   // Soft gate: persistent banner when workspace hooks are pending review
   "chat.workspaceHookPending.message":
     "{count} workspace hook(s) pending review; disabled for this session",

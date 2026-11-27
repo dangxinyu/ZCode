@@ -8,6 +8,7 @@ import {
   BugIcon,
   FileCode2Icon,
   FileDiffIcon,
+  InfoIcon,
   MapIcon,
   MessageSquareTextIcon,
   ListTreeIcon,
@@ -128,6 +129,8 @@ export function SortableSidePaneTabTrigger({
         }}
         onAuxClick={(event) => {
           if (event.button !== 1) return;
+          // 会话信息是会话界面固有右栏，不可关闭（用户反馈 2026-11-27）。
+          if (tab.type === "session-info") return;
 
           // Side Pane tab 之前只有左键激活和显式关闭按钮，middle-click 会触发
           // 浏览器默认自动滚动，且部分浏览器还会先触发 tab 激活。统一在 auxclick 阶段
@@ -153,30 +156,32 @@ export function SortableSidePaneTabTrigger({
           tab={tab}
           title={title}
           diffBadgeLabel={diffBadgeLabel}
-          closeVisible={isActive}
+          closeVisible={isActive && tab.type !== "session-info"}
           revealCloseOnHover
         />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={closeTabLabel}
-          className={cn(
-            "absolute right-1 top-1/2 -translate-y-1/2 rounded-md",
-            !isActive &&
-              "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-          )}
-          onPointerDown={(event) => {
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onCloseTab(tab.id);
-          }}
-        >
-          <XIcon className="size-3" />
-        </Button>
+        {tab.type !== "session-info" ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={closeTabLabel}
+            className={cn(
+              "absolute right-1 top-1/2 -translate-y-1/2 rounded-md",
+              !isActive &&
+                "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+            )}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onCloseTab(tab.id);
+            }}
+          >
+            <XIcon className="size-3" />
+          </Button>
+        ) : null}
       </div>
     </TabsTrigger>
   );
@@ -187,7 +192,9 @@ export function SortableSidePaneTabTrigger({
         <ContextMenuTrigger asChild>{tabTrigger}</ContextMenuTrigger>
       </SidePaneTabTitleTooltip>
       <ContextMenuContent className="w-44">
-        <ContextMenuItem onSelect={() => onCloseTab(tab.id)}>{closeTabMenuLabel}</ContextMenuItem>
+        {tab.type !== "session-info" ? (
+          <ContextMenuItem onSelect={() => onCloseTab(tab.id)}>{closeTabMenuLabel}</ContextMenuItem>
+        ) : null}
         <ContextMenuItem disabled={!canCloseOtherTabs} onSelect={() => onCloseOtherTabs(tab.id)}>
           {closeOtherTabsLabel}
         </ContextMenuItem>
@@ -302,6 +309,11 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
 
   if (tab.type === "subagent-directory") {
     return <ListTreeIcon className="size-3.5" />;
+  }
+
+  // 会话信息栏（知识库调用 + 子智能体概览）；无 source 字段，必须在 fallthrough 前拦截。
+  if (tab.type === "session-info") {
+    return <InfoIcon className="size-3.5" />;
   }
 
   if (tab.type === "browser") {
@@ -509,6 +521,10 @@ export function getSidePaneTabTitle(
 
   if (tab.type === "subagent-directory") {
     return formatMessage({ id: "sidePane.subagentDirectory" });
+  }
+
+  if (tab.type === "session-info") {
+    return formatMessage({ id: "sidePane.sessionInfo" });
   }
 
   if (tab.type === "browser") {

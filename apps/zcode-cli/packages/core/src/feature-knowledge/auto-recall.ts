@@ -64,7 +64,8 @@ export async function injectFeatureKnowledgeRecall(
   try {
     const result = await runtime.featureKnowledgePort.searchFeatures(
       { query: input.trim().slice(0, AUTO_RECALL_QUERY_MAX_CHARS) },
-      { sessionId: runtime.sessionId },
+      // usage 标记 recall：host 仅在命中时记录，避免每轮空召回刷屏（spec usage）。
+      { sessionId: runtime.sessionId, usageTool: "recall" },
     );
     const reminder = buildFeatureKnowledgeRecallReminder(result.hits);
     if (!reminder) return false;

@@ -57,7 +57,10 @@ import {
   useBrowserScreenshotSurfaceRequest,
 } from "@/browser-use/useBrowserScreenshotSurfaceRequest.js";
 import { AnimatedTerminalPanel } from "@/app-shell/AnimatedTerminalPanel.js";
-import { SIDE_PANE_DEFAULT_EXPANDED_SIZE } from "@/app-shell/sidePaneLayout.js";
+import {
+  SESSION_INFO_SIDE_PANE_WIDTH_PX,
+  SIDE_PANE_DEFAULT_EXPANDED_SIZE,
+} from "@/app-shell/sidePaneLayout.js";
 import { useAnimatedResizablePanel } from "@/app-shell/useAnimatedResizablePanel.js";
 import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
 
@@ -413,6 +416,10 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     expandedSize: "30%",
     rememberExpandedSize: true,
   });
+  // 会话信息栏固定约 300px（spec）；其他 tab 沿用默认 45% 与用户拖拽宽度记忆。
+  const isSessionInfoSidePaneActive =
+    sidePaneState?.tabs.find((tab) => tab.id === sidePaneState.activeTabId)?.type ===
+    "session-info";
   const {
     panelRef: sidePanePanelRef,
     panelElementRef: sidePanePanelElementRef,
@@ -422,10 +429,37 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     // ResizablePanel 撑开；否则自动化页会闪出空白的 tab 栏，且面板过渡期间 guest surface
     // 仍可能被 Chromium 判定为不可合成。
     open: workspaceMainView === "chat" && isSidePaneOpen,
-    expandedSize: SIDE_PANE_DEFAULT_EXPANDED_SIZE,
+    expandedSize: isSessionInfoSidePaneActive
+      ? `${SESSION_INFO_SIDE_PANE_WIDTH_PX}px`
+      : SIDE_PANE_DEFAULT_EXPANDED_SIZE,
     rememberExpandedSize: true,
     resizeOnInitialVisibleMount: false,
   });
+  // 面板可见期间切换 tab 类型时，useAnimatedResizablePanel 只在显隐变化时 resize，
+  // 这里补上「会话信息 ↔ 其他 tab」的宽度切换：进入会话信息记住原宽度，离开时恢复。
+  const wasSessionInfoSidePaneActiveRef = useRef(isSessionInfoSidePaneActive);
+  const sidePaneSizeBeforeSessionInfoRef = useRef<string | null>(null);
+  useEffect(() => {
+    const wasActive = wasSessionInfoSidePaneActiveRef.current;
+    wasSessionInfoSidePaneActiveRef.current = isSessionInfoSidePaneActive;
+    const panel = sidePanePanelRef.current;
+    if (!panel || !isSidePaneVisible) return;
+    if (isSessionInfoSidePaneActive) {
+      // 从其他 tab 切入时记住原宽度，离开会话信息时恢复；首次可见即会话信息则无宽度可记。
+      if (!wasActive) {
+        const currentSize = panel.getSize().asPercentage;
+        if (Number.isFinite(currentSize) && currentSize > 0) {
+          sidePaneSizeBeforeSessionInfoRef.current = `${currentSize}%`;
+        }
+      }
+      panel.resize(`${SESSION_INFO_SIDE_PANE_WIDTH_PX}px`);
+      return;
+    }
+    if (wasActive) {
+      panel.resize(sidePaneSizeBeforeSessionInfoRef.current ?? SIDE_PANE_DEFAULT_EXPANDED_SIZE);
+      sidePaneSizeBeforeSessionInfoRef.current = null;
+    }
+  }, [isSessionInfoSidePaneActive, isSidePaneVisible, sidePanePanelRef]);
   const workspaceSessionActionDisabled =
     Boolean(workspaceReadOnlyReason) || reloadSessionDisabled || reloadSessionPending;
   // 文件树打开时任务列表整屏滑出，侧栏里的 New Task 入口也随之不可见。

@@ -39,6 +39,11 @@
 - **对外 MCP**（用户确认 2026-11-24：ZCode 内置可视化 + 向外提供 MCP）：独立 stdio MCP server 进程，读操作直读 SQLite（ro），写操作仅插入提案（append-only）。**提交/拒绝只在 ZCode UI**（人闸），外部工具经 `get_proposal_status` 轮询结果。ZCode 未运行时外部仍可读、可提案。
 - 开工自动注入相关功能点、存量散落文档批量导入、功能点拆合 UI、agent 侧提案结果通知：均为 v2，本期不做。**例外（用户确认 2026-11-25「1+2」）：开工自动召回已落地**——每轮用户输入提交时（turn.ts，`inputVisibility!=model-only`）以本轮问题经 `featureKnowledgePort.searchFeatures` 检索，top-3 摘要+代码锚点+命中层作为当轮 system reminder（source `feature_knowledge_recall`，per_current_turn）注入；全文不注入、按需 ReadFeatureDoc；子代理/工作流 actor、空输入、slash 命令不召回；检索失败不阻断对话。配合常设指令（SearchFeatures description/modelInstructions：分析需求/bug/评审前先检索）兜底自动召回未命中时的主动搜索。
 
+- **知识库调用记录（usage，用户需求 2026-11-26：会话右侧要看到本会话有没有用知识库）**：host 侧记录，不解析转录。`SearchFeatures` / `ReadFeatureDoc` / `ProposeFeatureUpdate` 三个内置工具在**携带 sessionId** 时各记一条 usage（tool=search/read/propose）；自动召回经 port search 走同一链路，**命中（hits>0）时记 tool=recall**，未命中不记（避免每轮空召回刷屏）。无 sessionId（外部 MCP 只读直读、UI 搜索框）不记。记录为 best-effort：写失败仅 warn 日志，不阻断检索/读取/提案主流程，不发 changed 广播（usage 不是功能点状态变更）。
+- **会话信息侧栏（session-info side pane tab，用户需求 2026-11-26）**：会话视图右侧新增「会话信息」tab（复用 `workspaceSidePane` tab 体系，先例子智能体目录 tab），**进入会话默认打开**（用户显式关闭后本次运行内不再自动重建，可从「最近关闭」重开；其他 tab 已激活时只登记不抢焦点）。tab 按 rootSessionId 作用域可见（与子智能体目录一致）。激活该 tab 时右栏固定约 300px 宽（会话区左移收窄），切到其他 tab 恢复原宽度记忆；折叠/展开把手行为保留。内容两块分组卡片：
+  - **知识库**：查询 `listUsage([当前 sessionId, ...子会话 childSessionIds])`（子会话 id 来自 `useSessionSubagents`），聚合展示 是否调用 / 总次数 / 按工具（检索/召回/阅读/提案）计数 / 最近调用时间；未调用显示「未调用知识库」空态。usage 刷新：挂载/ids 变化时查询 + 5s 轮询（先例 KB 页分析目录轮询）+ changed 广播触发。
+  - **子智能体**：复用 `useSessionSubagents`（projection lease 范式，先例 `SubagentDirectorySidePane`），展示 总数 / 运行中 / 已结束 + 列表（名称 + 状态点），点击行复用子智能体目录跳转（`OpenScopedSubagentSideTabRequest`）。无子智能体显示「无子智能体」空态。
+
 ## 状态所有者
 
 | 状态 | 唯一所有者 | 说明 |
@@ -50,6 +55,8 @@
 | 检索索引 | FTS5 虚表 | features 投影的派生，提交事务内重建该行 |
 | 语义向量 | `feature_embeddings` 表 | 文档分块 embedding 的派生，host 提交后异步写入；embed 失败不阻塞提交，标记待重试 |
 | 提案确认 UI 态 | renderer 局部状态 | dialog 开关/选中提案；事实以 host 广播为准 |
+| 知识库调用记录 | `feature_kb_usage` 表 | append-only；唯一写入者 host `featureKnowledgeService`（工具链路携带 sessionId 时记录）；MCP ro 直读不记 |
+| 会话信息侧栏 UI 态 | renderer（side pane tab 体系 + 局部聚合） | usage 事实以 host 库为准；子智能体事实以 projection/session 目录为准 |
 
 ## 数据模型（独立全局库）
 
@@ -61,6 +68,7 @@
 - `feature_proposals`：`id`（uuid PK）、`feature_id`（可空 = 新建）、`proposed_name`、`proposed_aliases_json`、`proposed_domain`、`proposed_anchors_json`、`proposed_relations_json`、`doc_md`、`change_summary`、`source_json`、`status`（pending | committed | rejected）、`created_at`、`resolved_at`。
 - `features_fts`：FTS5 trigram 虚表（name + aliases + doc_md），features 投影派生。
 - `feature_embeddings`：`feature_id` + `chunk_idx`（PK）、`chunk_text`、`vector`（blob）、`model`、`created_at`；当前版提交后异步重建该功能点全部分块。corpus 小，cosine 在 JS 内算即可，不引向量库。
+- `feature_kb_usage`（migration 0005）：`id`（uuid PK）、`session_id`、`workspace_key`（默认 ''）、`tool`（CHECK：search | read | propose | recall）、`created_at`；索引 `(session_id, created_at DESC)`。append-only，不更新不删除（随库文件整体回滚）。
 
 ## 接口
 
@@ -68,14 +76,15 @@
 
 新增 `IFeatureKnowledgeService`（`packages/services/src/feature-knowledge/`），`node.ts` 注册 + `ServiceChannels.FeatureKnowledge` 常量，host `host/index.ts` 与 server `http.ts` 按 ZCodeTask 同款暴露（ProxyChannel 自动代理，**无新 preload**）。方法族：
 
-- `listFeatures(domain?)` / `searchFeatures(query)`（三层并联召回 + RRF 融合 + 锚点加权，返回命中来源层）/ `readFeature(id)`（含版本历史与关联）
+- `listFeatures(domain?)` / `searchFeatures(query, context?)`（三层并联召回 + RRF 融合 + 锚点加权，返回命中来源层；context 含 sessionId/workspaceKey/tool 时记 usage，tool 缺省 search、自动召回传 recall）/ `readFeature(id, context?)`（含版本历史与关联；context.sessionId 在场记 usage）
+- `listUsage(sessionIds)`（读侧：按会话 id 集合返回 usage 行，供会话信息侧栏聚合；单次上限 64 个 id）
 - `listProposals(status?)` / `commitProposal(id)` / `rejectProposal(id)`
 - `deleteFeature(id)`（末级文档删除，UI 人闸 + 二次确认；库级事务，拒绝删有子文档的父）
 - 事件：`onDynamicFeatureKnowledgeChanged`（bump 串号广播，先例编排 planSync；reason 含 `deleted`）。
 
 ### v1 协议（CLI 反向 RPC，`packages/shared/src/zcode-protocol/index.ts`）
 
-新增方法（模板：`orchestration/spawnSubTask`）：`featureKnowledge/search`、`featureKnowledge/read`、`featureKnowledge/propose`。zod params/result schema + `zcodeProtocolMethods` 登记 + host `zcodeAgentService` if 分支（safeParse → resolver → respond）。commit/reject 仅 UI 服务面，不进 CLI 协议。
+新增方法（模板：`orchestration/spawnSubTask`）：`featureKnowledge/search`、`featureKnowledge/read`、`featureKnowledge/propose`、`featureKnowledge/listUsage`。zod params/result schema + `zcodeProtocolMethods` 登记 + host `zcodeAgentService` if 分支（safeParse → resolver → respond）。commit/reject 仅 UI 服务面，不进 CLI 协议。search/read params additive optional `sessionId`（port 透传 `taskContext.sessionId`，先例 propose）；search 另有 optional `tool`（search | recall，自动召回标记）；`listUsage` 入参 `sessionIds`（1..64），出参 usage 行数组。
 
 ### embedding 一次性通道（host → CLI，复用 provider runtime）
 
@@ -153,6 +162,15 @@ TS stdio 进程（`@modelcontextprotocol/server` + `serveStdio`，先例 node-re
 外部：Qoder agent → MCP search_features/read_feature（ro 直读）
   → propose_feature_update（INSERT 提案）→ ZCode 侧角标/toast → 人确认同上
   → MCP get_proposal_status 轮询 committed/rejected
+
+usage：agent SearchFeatures/ReadFeatureDoc/ProposeFeatureUpdate（port 携带 taskContext.sessionId）
+  → 反向 RPC host → 主操作成功后 best-effort INSERT feature_kb_usage（失败仅 warn）
+  自动召回：turn.ts → port.searchFeatures({usageTool:"recall"}) → 同一 search 链路
+  → hits>0 才记 tool=recall；UI 搜索框/MCP 直读无 sessionId 不记
+
+会话信息侧栏：进入会话 → scope-sync 默认登记并激活 session-info tab（约 300px）
+  → useFeatureKnowledgeUsage.listUsage([sessionId, ...childSessionIds]) 聚合计数
+  → useSessionSubagents 渲染子智能体列表 → 点击行复用子智能体目录跳转
 ```
 
 ## 不变量与失败语义
@@ -166,11 +184,12 @@ TS stdio 进程（`@modelcontextprotocol/server` + `serveStdio`，先例 node-re
 - MCP 进程与 host 并发：读不阻塞写（WAL）；提案插入 busy 重试有界；host 未运行不影响读与提案。
 - 检索降级：embedding 未配置/调用失败/向量缺失 → 自动退到词面+词汇桥层，结果标注命中层，UI 明示语义召回状态；**不得静默返回空假装无命中**。embed 异步失败标记待重试，下次提交或启动补 embed。
 - 普通任务零回归：不改动既有任务/编排/协议字段；新协议方法与新服务全部 additive。
+- usage best-effort：记录失败不影响主操作结果；usage 不参与功能点状态/广播；无 sessionId 不记；recall 仅命中记录。
 - 跨平台：路径经标准库解析；MCP server 与 host 在 Windows/macOS/Linux 同行为；不新增环境变量（DB 路径走 paths.ts 统一解析）。
 
 ## 迁移边界
 
-- 独立库自有账本 0001：建全部表 + FTS。tasks-index 不动（当前最大 0010，不占用）。
+- 独立库自有账本 0001：建全部表 + FTS。tasks-index 不动（当前最大 0010，不占用）。0005 追加 `feature_kb_usage`（冻结账本 append-only，不改既有编号/checksum）。
 - 协议 additive optional；既有会话/任务/编排行为不变。
 - 回滚策略：库文件独立，删除即完全回滚；版本账本 append-only 支持内容级回滚（以旧版提交新版）。
 
@@ -189,10 +208,13 @@ TS stdio 进程（`@modelcontextprotocol/server` + `serveStdio`，先例 node-re
 11. 别名沉淀：提炼提案含同义/黑话/英文/缩写别名，确认后这些词均可检索命中。
 12. 末级文档行右键出「删除 / 订正」菜单；父节点（有子文档）行无菜单。删除需 Dialog 二次确认，确认后列表/检索不再命中该功能点；取消零副作用。
 13. 订正开新 session（~/zcode-kb，yolo），composer 只显示「订正 · {文档名}」chip、输入框无上下文文字、不自动发送；用户描述修改后发送，agent 基于隐藏全文提案，走确认人闸；chip 可移除；历史消息正文不显示上下文尾块。
+14. 会话视图默认打开右侧「会话信息」栏（约 300px，会话区收窄）；未调用知识库显示「未调用知识库」、无子智能体显示「无子智能体」；折叠把手可收起、可再展开；用户关闭 tab 后本次运行不自动重建，可从最近关闭重开。
+15. 会话内 agent 调 SearchFeatures/ReadFeatureDoc/ProposeFeatureUpdate 后，侧栏知识库块出现总次数与按工具计数、最近调用时间；内联子智能体的调用计入父会话聚合；自动召回命中记 recall、未命中不记；UI 搜索框搜索不产生 usage。
+16. 子智能体块总数/运行中/已结束与目录一致，点击行跳转到对应子智能体会话。
 
 ## 测试与验证
 
-- repo 单测（node:sqlite 内存库）：migration、提交事务原子性、版本单调、提案状态机、并发提案冲突、FTS 中文检索。
+- repo 单测（node:sqlite 内存库）：migration、提交事务原子性、版本单调、提案状态机、并发提案冲突、FTS 中文检索、usage 记录与按会话集合查询。
 - 检索分层测试：词面/别名/锚点/向量各层召回与 RRF 融合排序；换说法召回用例；embedding 未配置/失败的降级路径与命中层标注。
 - MCP server 契约测试：四个工具输入输出、ro 连接、提案插入、错误形态。
 - E2E：提炼按钮 → 提案 → 确认 → 知识库页可见全链路（先例 desktop e2e）。

@@ -199,3 +199,28 @@ test("deleteFeature：有子文档的父拒绝删除；不存在报 featureNotFo
     repo.close();
   }
 });
+
+test("usage：migration 0005 建表，recordUsage append-only，listUsage 按会话集合过滤", async () => {
+  const repo = new FeatureKnowledgeRepo(":memory:");
+  try {
+    await repo.recordUsage({ sessionId: "s-1", workspaceKey: "w", tool: "search" });
+    await repo.recordUsage({ sessionId: "s-1", tool: "recall" });
+    await repo.recordUsage({ sessionId: "s-2", tool: "read" });
+    await repo.recordUsage({ sessionId: "s-3", tool: "propose" });
+
+    const parent = repo.listUsage(["s-1", "s-2"]);
+    assert.equal(parent.length, 3);
+    assert.ok(parent.every((row) => row.sessionId === "s-1" || row.sessionId === "s-2"));
+    // 倒序：最近记录在前。
+    assert.ok(parent[0]!.createdAt >= parent[parent.length - 1]!.createdAt);
+    assert.equal(parent.find((row) => row.tool === "search")?.workspaceKey, "w");
+    assert.equal(parent.find((row) => row.tool === "recall")?.workspaceKey, "");
+
+    // 去重 + 空集合：不产生重复行，空入参直接返回空。
+    assert.equal(repo.listUsage(["s-1", "s-1"]).length, 2);
+    assert.deepEqual(repo.listUsage([]), []);
+    assert.deepEqual(repo.listUsage(["missing"]), []);
+  } finally {
+    repo.close();
+  }
+});

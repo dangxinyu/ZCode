@@ -496,7 +496,25 @@ export class ProductProjection {
   }
 
   getSnapshot(): ConversationSnapshot {
+    this.reconcileStaleBackgroundWorks();
     return this.snapshot;
+  }
+
+  // runtime 释放会丢 BackgroundTaskCompleted 事件，持久化重建的 backgroundWorks 把早已
+  // 结束的 bash 永久挂 running（「打包后台进行中」假态）。读取侧按 pid 存活销账：
+  // 进程已不存在 ⇒ 终态（cancelled + endedAt），面板不再显示假进行中。
+  private reconcileStaleBackgroundWorks(): void {
+    const now = Date.now();
+    let changed = false;
+    const next = this.snapshot.backgroundWorks.map((work) => {
+      if (work.kind !== "bash" || work.status !== "running" || work.pid === undefined) {
+        return work;
+      }
+      if (isProcessAlive(work.pid)) return work;
+      changed = true;
+      return { ...work, status: "cancelled" as const, endedAt: work.endedAt ?? now };
+    });
+    if (changed) this.snapshot = { ...this.snapshot, backgroundWorks: next };
   }
 
   /** assistant 守恒：被拒收的正文流事件数（>0 = 投影可能缺段，需重 hydration）。 */
@@ -4246,6 +4264,7 @@ export class ProductProjection {
       cancellable?: boolean;
       blocked?: boolean;
       childSessionId?: string;
+      pid?: number;
     };
     const workId = payload.taskId;
     if (!workId) return [];
@@ -4307,6 +4326,11 @@ export class ProductProjection {
         ? { childSessionId: payload.childSessionId }
         : existing?.childSessionId
           ? { childSessionId: existing.childSessionId }
+          : {}),
+      ...(typeof payload.pid === "number"
+        ? { pid: payload.pid }
+        : existing?.pid !== undefined
+          ? { pid: existing.pid }
           : {}),
     };
     // 幂等：内容无变化不产 delta。
@@ -5481,4 +5505,14 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** pid 存活探测（signal 0 不发信号）；ESRCH/EPERM 之外的错误保守视为存活。 */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }

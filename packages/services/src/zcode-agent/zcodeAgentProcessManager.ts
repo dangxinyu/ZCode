@@ -15,6 +15,10 @@ import {
   ZCODE_PROCESS_DIAGNOSTIC_STACK_MAX_CHARS,
 } from "@zcode/shared/process-diagnostic";
 import {
+  classifyAgentProcessExitCause,
+  type AgentProcessExitCause,
+} from "@zcode/shared/agent-crash-diagnostic";
+import {
   ZCODE_AGENT_RUNTIME,
   ZCODE_AGENT_PROVIDER,
   ZCODE_RUNTIME_ENV_KEY,
@@ -215,6 +219,22 @@ export interface ZCodeAgentRuntimeLifecycleEvent {
   workspaceKey: string;
   runtimeIdentity: ZCodeAgentRuntimeIdentity;
   state: "available" | "unavailable";
+}
+
+/**
+ * 当前 runtime 进程意外退出（不是回收、换代或关闭）。在 stderr 收齐、退出码可用之后发布，
+ * 因此晚于同一进程的 unavailable；界面据此说明原因，状态收口仍以 CLI 投影为准。
+ */
+export interface ZCodeAgentRuntimeExitedEvent {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  workspaceKey: string;
+  runtimeIdentity: ZCodeAgentRuntimeIdentity;
+  exitCode: number | null;
+  signal: string | null;
+  /** 退出码能确定的原因；目前只有 Windows 0xE0000008（系统可提交内存耗尽）。 */
+  cause?: AgentProcessExitCause;
+  exitedAt: number;
 }
 
 interface ZCodeAgentRuntimeIdentity {
@@ -576,6 +596,7 @@ export class ZCodeAgentProcessManager {
   private readonly idleTimeoutMs: number | undefined;
   private readonly runtimeRestartedEmitter = new Emitter<ZCodeAgentRuntimeRestartedEvent>();
   private readonly runtimeLifecycleEmitter = new Emitter<ZCodeAgentRuntimeLifecycleEvent>();
+  private readonly runtimeExitedEmitter = new Emitter<ZCodeAgentRuntimeExitedEvent>();
   private disposeAllInFlight: Promise<void> | undefined;
   private disposed = false;
 
@@ -583,6 +604,8 @@ export class ZCodeAgentProcessManager {
   readonly onRuntimeRestarted = this.runtimeRestartedEmitter.event;
   /** 进程真实 spawn 后 available，当前 protocol client 关闭后 unavailable。 */
   readonly onRuntimeLifecycle = this.runtimeLifecycleEmitter.event;
+  /** 主泳道 runtime 意外退出；只在 terminationKind=unexpected 时发布。 */
+  readonly onRuntimeExited = this.runtimeExitedEmitter.event;
 
   constructor(options?: ZCodeAgentProcessManagerOptions) {
     this.commandResolver = options?.commandResolver ?? resolveDefaultZCodeAgentCommand;
@@ -703,6 +726,25 @@ export class ZCodeAgentProcessManager {
       workspaceKey,
       runtimeIdentity: managed.runtimeIdentity,
       state: "unavailable",
+    });
+  }
+
+  private reportRuntimeExited(
+    managed: ManagedZCodeAgentProcess,
+    exit: { code: number | null; signal: string | null; endedAt: number },
+  ): void {
+    const cause = classifyAgentProcessExitCause(exit.code);
+    // 本仓库一个 managed 进程只归属一个 workspace（官方按 bindings 多 attachment 展开）；
+    // workspaceKey 与 services 发布事件同口径：identity 优先，否则路径。
+    const workspaceKey = resolveWorkspaceKey(managed.workspace);
+    this.runtimeExitedEmitter.fire({
+      ...managed.workspace,
+      workspaceKey,
+      runtimeIdentity: { ...managed.runtimeIdentity, workspaceKey },
+      exitCode: exit.code,
+      signal: exit.signal,
+      ...(cause ? { cause } : {}),
+      exitedAt: exit.endedAt,
     });
   }
 
@@ -1248,6 +1290,9 @@ export class ZCodeAgentProcessManager {
             stderr,
           },
         );
+      }
+      if (terminationKind === "unexpected" && !this.lane) {
+        this.reportRuntimeExited(managed, { code, signal, endedAt });
       }
       if (typeof child.pid === "number") {
         this.reportProcessLifecycle((reporter) =>

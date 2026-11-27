@@ -2076,3 +2076,10 @@ body {
   pointer-events: all;
   opacity: 1;
 }
+
+/* 文本选中色对齐官方桌面端观感（2026-11-27）：web 端 Chromium 默认饱和蓝与官方
+   macOS 原生半透明选中差异大；复用 app 终端选中同款半透明 sky 色系。 */
+::selection {
+  background: color-mix(in oklab, var(--color-sky-500) 30%, transparent);
+  color: inherit;
+}

@@ -77,6 +77,7 @@ import {
   zcodeFeatureKnowledgeSearchParamsSchema,
   zcodeFeatureKnowledgeReadParamsSchema,
   zcodeFeatureKnowledgeProposeParamsSchema,
+  zcodeFeatureKnowledgeListUsageParamsSchema,
   OFF_PEAK_PROVIDER_IDS,
   zcodeComputerUseOperationEventSchema,
   zcodeProviderRuntimeHeadersCancelledSchema,
@@ -156,6 +157,7 @@ import type {
   ZCodeAgentBackgroundBashOutputParams,
   ZCodeAgentAppRuntimePreferences,
   ZCodeAgentRuntimeLifecycleEvent,
+  ZCodeAgentRuntimeExitedEvent,
   ZCodeAgentAddPluginMarketplaceParams,
   ZCodeAgentAppUsageParams,
   ZCodeAgentCancelPluginOperationParams,
@@ -2796,7 +2798,11 @@ export function createZCodeAgentService(
                 });
                 return;
               }
-              const result = await service.searchFeatures(parsed.data.query);
+              const result = await service.searchFeatures(parsed.data.query, {
+                sessionId: parsed.data.sessionId,
+                workspaceKey: workspace.workspaceIdentity?.trim() || workspace.workspacePath,
+                tool: parsed.data.tool,
+              });
               await client.respond(request.id, result);
             } catch (error) {
               await client.respondError(request.id, {
@@ -2828,7 +2834,10 @@ export function createZCodeAgentService(
                 });
                 return;
               }
-              const detail = await service.readFeature(parsed.data.featureId);
+              const detail = await service.readFeature(parsed.data.featureId, {
+                sessionId: parsed.data.sessionId,
+                workspaceKey: workspace.workspaceIdentity?.trim() || workspace.workspacePath,
+              });
               await client.respond(request.id, {
                 feature: detail?.feature ?? null,
                 versions: detail?.versions ?? [],
@@ -2887,6 +2896,38 @@ export function createZCodeAgentService(
                 status: proposal.status,
                 featureId: proposal.featureId,
               });
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          })();
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.featureKnowledgeListUsage) {
+          const parsed = zcodeFeatureKnowledgeListUsageParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid featureKnowledge listUsage params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const service = options?.resolveFeatureKnowledgeService?.();
+              if (!service) {
+                await client.respondError(request.id, {
+                  code: -32601,
+                  message: "Feature knowledge service is unavailable on this host",
+                });
+                return;
+              }
+              const usage = await service.listUsage(parsed.data.sessionIds);
+              await client.respond(request.id, { usage });
             } catch (error) {
               await client.respondError(request.id, {
                 code: -32603,
@@ -6159,6 +6200,10 @@ export function createZCodeAgentService(
 
     onAgentRuntimeLifecycle(listener: (event: ZCodeAgentRuntimeLifecycleEvent) => void) {
       return processManager.onRuntimeLifecycle(listener);
+    },
+
+    onAgentRuntimeExited(listener: (event: ZCodeAgentRuntimeExitedEvent) => void) {
+      return processManager.onRuntimeExited(listener);
     },
 
     async disposeWorkspace(params): Promise<void> {

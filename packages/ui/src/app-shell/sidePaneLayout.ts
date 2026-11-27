@@ -1,5 +1,7 @@
 export const SIDE_PANE_DEFAULT_EXPANDED_SIZE = "45%";
 export const SIDE_PANE_DEFAULT_EXPANDED_RATIO = 0.45;
+/** 会话信息栏固定宽度（spec：约 280-320px 的右栏信息列，会话区左移收窄）。 */
+export const SESSION_INFO_SIDE_PANE_WIDTH_PX = 300;
 
 const SIDE_PANE_TAB_MIN_WIDTH_PX = 60;
 const SIDE_PANE_TAB_GAP_PX = 4;
